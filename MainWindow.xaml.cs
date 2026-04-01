@@ -17,6 +17,7 @@ using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
 using Microsoft.Win32;
 using Noted.Models;
+using Ookii.Dialogs.Wpf;
 
 namespace Noted;
 
@@ -30,8 +31,17 @@ public partial class MainWindow : Window
     private bool _startMaximized = false;
     private bool _sessionSaved = false;
 
-    private const string BackupFolder = @"c:\tools\backup2\noted";
-    private const string SettingsFile = @"c:\tools\backup2\noted\settings.json";
+    private static string AppSettingsDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Noted");
+
+    private static string AppSettingsFilePath => Path.Combine(AppSettingsDirectory, "settings.json");
+
+    private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
+
+    /// <summary>Previous default; used only to migrate existing settings.json.</summary>
+    private const string LegacySettingsFile = @"c:\tools\backup2\noted\settings.json";
+
+    private string _backupFolder = DefaultBackupFolder();
     private const int MaxBackups = 100;
     private const int DefaultAutoSaveSeconds = 30;
     private const int DefaultInitialLines = 50;
@@ -484,10 +494,10 @@ public partial class MainWindow : Window
             foreach (var doc in _docs.Values)
                 doc.CachedText = RemoveTrailingWhitespaces(doc.Editor.Text);
 
-            Directory.CreateDirectory(BackupFolder);
+            Directory.CreateDirectory(_backupFolder);
 
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var path = Path.Combine(BackupFolder, $"noted_{timestamp}.txt");
+            var path = Path.Combine(_backupFolder, $"noted_{timestamp}.txt");
 
             using var sw = new StreamWriter(path, append: false, System.Text.Encoding.UTF8);
             foreach (var item in MainTabControl.Items)
@@ -528,9 +538,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
-    private static void PruneBackups()
+    private void PruneBackups()
     {
-        var files = Directory.GetFiles(BackupFolder, "noted_*.txt")
+        if (!Directory.Exists(_backupFolder)) return;
+
+        var files = Directory.GetFiles(_backupFolder, "noted_*.txt")
                             .OrderBy(f => f)            // lexicographical = chronological
                             .ToList();
 
@@ -544,9 +556,9 @@ public partial class MainWindow : Window
     /// <summary>Restores all tabs from the most recent backup file, if one exists.</summary>
     private void LoadSession()
     {
-        if (!Directory.Exists(BackupFolder)) return;
+        if (!Directory.Exists(_backupFolder)) return;
 
-        var latest = Directory.GetFiles(BackupFolder, "noted_*.txt")
+        var latest = Directory.GetFiles(_backupFolder, "noted_*.txt")
                             .OrderByDescending(f => f)
                             .FirstOrDefault();
 
@@ -619,8 +631,8 @@ public partial class MainWindow : Window
 
     private void MenuOpenLastBackup_Click(object sender, RoutedEventArgs e)
     {
-        if (!Directory.Exists(BackupFolder)) return;
-        var latest = Directory.GetFiles(BackupFolder, "noted_*.txt").OrderByDescending(f => f).FirstOrDefault();
+        if (!Directory.Exists(_backupFolder)) return;
+        var latest = Directory.GetFiles(_backupFolder, "noted_*.txt").OrderByDescending(f => f).FirstOrDefault();
         if (latest != null)
         {
             try
@@ -664,7 +676,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            Directory.CreateDirectory(BackupFolder);
+            Directory.CreateDirectory(AppSettingsDirectory);
             var state = new WindowSettings
             {
                 Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
@@ -676,9 +688,10 @@ public partial class MainWindow : Window
                 InitialLines = _initialLines,
                 FontFamily = _fontFamily,
                 FontSize = _fontSize,
-                FontWeight = _fontWeight
+                FontWeight = _fontWeight,
+                BackupFolder = _backupFolder
             };
-            File.WriteAllText(SettingsFile,
+            File.WriteAllText(AppSettingsFilePath,
                 JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { /* non-critical */ }
@@ -688,9 +701,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!File.Exists(SettingsFile)) return;
+            var settingsPath = ResolveSettingsFilePath();
+            if (settingsPath == null) return;
             var state = JsonSerializer.Deserialize<WindowSettings>(
-                File.ReadAllText(SettingsFile));
+                File.ReadAllText(settingsPath));
             if (state == null) return;
 
             Left = state.Left;
@@ -708,10 +722,29 @@ public partial class MainWindow : Window
                 _fontSize = state.FontSize;
             if (state.FontWeight >= 100 && state.FontWeight <= 900)
                 _fontWeight = state.FontWeight;
+            if (!string.IsNullOrWhiteSpace(state.BackupFolder))
+            {
+                try
+                {
+                    _backupFolder = Path.GetFullPath(state.BackupFolder.Trim());
+                }
+                catch
+                {
+                    /* keep constructor default */
+                }
+            }
+
             // Don't maximize here - defer to Loaded so the window is on the right monitor first
             _startMaximized = state.Maximized;
         }
         catch { /* ignore corrupt settings */ }
+    }
+
+    private static string? ResolveSettingsFilePath()
+    {
+        if (File.Exists(AppSettingsFilePath)) return AppSettingsFilePath;
+        if (File.Exists(LegacySettingsFile)) return LegacySettingsFile;
+        return null;
     }
 
     private sealed class WindowSettings
@@ -726,6 +759,7 @@ public partial class MainWindow : Window
         public string FontFamily { get; set; } = DefaultFontFamily;
         public double FontSize { get; set; } = DefaultFontSize;
         public int FontWeight { get; set; } = DefaultFontWeight;
+        public string? BackupFolder { get; set; }
     }
 
     // --- Settings dialog ----------------------------------------------------
@@ -735,7 +769,7 @@ public partial class MainWindow : Window
         var dlg = new Window
         {
             Title = "Settings",
-            Width = 380, Height = 340,
+            Width = 800, Height = 480,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
@@ -744,24 +778,49 @@ public partial class MainWindow : Window
         var grid = new Grid { Margin = new Thickness(16) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var lblBackup = new TextBlock { Text = "Backup folder:", VerticalAlignment = VerticalAlignment.Top };
+        Grid.SetRow(lblBackup, 0);
+        Grid.SetColumn(lblBackup, 0);
+        var txtBackup = new TextBox
+        {
+            Text = _backupFolder,
+            Margin = new Thickness(0, 0, 8, 8),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetRow(txtBackup, 0);
+        Grid.SetColumn(txtBackup, 1);
+
+        var btnBrowseBackup = new Button
+        {
+            Content = "Browse…",
+            Padding = new Thickness(10, 2, 10, 2),
+            Margin = new Thickness(0, 0, 0, 8),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetRow(btnBrowseBackup, 0);
+        Grid.SetColumn(btnBrowseBackup, 2);
 
         var lblAutoSave = new TextBlock { Text = "Auto-save interval (seconds):" };
-        Grid.SetRow(lblAutoSave, 0);
+        Grid.SetRow(lblAutoSave, 1);
         Grid.SetColumn(lblAutoSave, 0);
         var txtAutoSave = new TextBox
         {
             Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(),
             VerticalAlignment = VerticalAlignment.Top
         };
-        Grid.SetRow(txtAutoSave, 0);
+        Grid.SetRow(txtAutoSave, 1);
         Grid.SetColumn(txtAutoSave, 1);
+        Grid.SetColumnSpan(txtAutoSave, 2);
 
         var lblLines = new TextBlock { Text = "Initial lines per new tab:" };
-        Grid.SetRow(lblLines, 1);
+        Grid.SetRow(lblLines, 2);
         Grid.SetColumn(lblLines, 0);
         var txtLines = new TextBox
         {
@@ -769,11 +828,12 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 8),
             VerticalAlignment = VerticalAlignment.Top
         };
-        Grid.SetRow(txtLines, 1);
+        Grid.SetRow(txtLines, 2);
         Grid.SetColumn(txtLines, 1);
+        Grid.SetColumnSpan(txtLines, 2);
 
         var lblFont = new TextBlock { Text = "Font family:", Margin = new Thickness(0, 0, 8, 8) };
-        Grid.SetRow(lblFont, 2);
+        Grid.SetRow(lblFont, 3);
         Grid.SetColumn(lblFont, 0);
         var cmbFont = new ComboBox
         {
@@ -789,8 +849,9 @@ public partial class MainWindow : Window
         foreach (var f in popularFonts)
             cmbFont.Items.Add(f);
         cmbFont.Text = _fontFamily;
-        Grid.SetRow(cmbFont, 2);
+        Grid.SetRow(cmbFont, 3);
         Grid.SetColumn(cmbFont, 1);
+        Grid.SetColumnSpan(cmbFont, 2);
 
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -798,15 +859,16 @@ public partial class MainWindow : Window
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var lblFontSize = new TextBlock { Text = "Font size:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontSize, 3);
+        Grid.SetRow(lblFontSize, 4);
         Grid.SetColumn(lblFontSize, 0);
 
         var txtFontSize = new TextBox { Text = _fontSize.ToString(), Margin = new Thickness(0, 0, 0, 8), VerticalAlignment = VerticalAlignment.Center };
-        Grid.SetRow(txtFontSize, 3);
+        Grid.SetRow(txtFontSize, 4);
         Grid.SetColumn(txtFontSize, 1);
+        Grid.SetColumnSpan(txtFontSize, 2);
 
         var lblFontWeight = new TextBlock { Text = "Font weight:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontWeight, 4);
+        Grid.SetRow(lblFontWeight, 5);
         Grid.SetColumn(lblFontWeight, 0);
 
         var cmbFontWeight = new ComboBox
@@ -833,8 +895,9 @@ public partial class MainWindow : Window
             if (weights[i].Value == _fontWeight) selectedIdx = i;
         }
         cmbFontWeight.SelectedIndex = selectedIdx;
-        Grid.SetRow(cmbFontWeight, 4);
+        Grid.SetRow(cmbFontWeight, 5);
         Grid.SetColumn(cmbFontWeight, 1);
+        Grid.SetColumnSpan(cmbFontWeight, 2);
 
         var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 8, 8, 0), IsDefault = true };
         var btnCancel = new Button { Content = "Cancel", Width = 80, Margin = new Thickness(8, 8, 0, 0), IsCancel = true };
@@ -842,9 +905,12 @@ public partial class MainWindow : Window
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttonPanel.Children.Add(btnOk);
         buttonPanel.Children.Add(btnCancel);
-        Grid.SetRow(buttonPanel, 6);
-        Grid.SetColumnSpan(buttonPanel, 2);
+        Grid.SetRow(buttonPanel, 7);
+        Grid.SetColumnSpan(buttonPanel, 3);
 
+        grid.Children.Add(lblBackup);
+        grid.Children.Add(txtBackup);
+        grid.Children.Add(btnBrowseBackup);
         grid.Children.Add(lblAutoSave);
         grid.Children.Add(txtAutoSave);
         grid.Children.Add(lblLines);
@@ -859,13 +925,65 @@ public partial class MainWindow : Window
 
         dlg.Content = grid;
 
+        btnBrowseBackup.Click += (_, _) =>
+        {
+            var fbd = new VistaFolderBrowserDialog
+            {
+                Description = "Choose folder for session backups",
+                UseDescriptionForTitle = true
+            };
+            var cur = txtBackup.Text.Trim();
+            try
+            {
+                if (!string.IsNullOrEmpty(cur))
+                {
+                    var full = Path.GetFullPath(cur);
+                    if (Directory.Exists(full))
+                        fbd.SelectedPath = full;
+                    else
+                    {
+                        var parent = Path.GetDirectoryName(full);
+                        if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+                            fbd.SelectedPath = parent;
+                    }
+                }
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            if (fbd.ShowDialog(dlg) == true)
+                txtBackup.Text = fbd.SelectedPath;
+        };
+
         btnOk.Click += (_, _) =>
         {
+            if (string.IsNullOrWhiteSpace(txtBackup.Text))
+            {
+                MessageBox.Show("Backup folder cannot be empty.", "Invalid settings", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            string backupPath;
+            try
+            {
+                backupPath = Path.GetFullPath(txtBackup.Text.Trim());
+            }
+            catch
+            {
+                MessageBox.Show("Backup folder path is not valid.", "Invalid settings", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
                 && !string.IsNullOrWhiteSpace(cmbFont.Text))
             {
+                _backupFolder = backupPath;
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
                 _initialLines = lines;
                 _fontFamily = cmbFont.Text.Trim();
