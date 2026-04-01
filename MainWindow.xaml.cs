@@ -31,15 +31,9 @@ public partial class MainWindow : Window
     private bool _startMaximized = false;
     private bool _sessionSaved = false;
 
-    private static string AppSettingsDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Noted");
-
-    private static string AppSettingsFilePath => Path.Combine(AppSettingsDirectory, "settings.json");
+    private const string SettingsFileName = "settings.json";
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
-
-    /// <summary>Previous default; used only to migrate existing settings.json.</summary>
-    private const string LegacySettingsFile = @"c:\tools\backup2\noted\settings.json";
 
     private string _backupFolder = DefaultBackupFolder();
     private const int MaxBackups = 100;
@@ -79,6 +73,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        EnsureSettingsFileExists();
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
 
         // Restore previous session; if nothing to restore, open a blank tab
@@ -713,7 +708,8 @@ public partial class MainWindow : Window
     {
         try
         {
-            Directory.CreateDirectory(AppSettingsDirectory);
+            var opts = new JsonSerializerOptions { WriteIndented = true };
+            Directory.CreateDirectory(_backupFolder);
             var state = new WindowSettings
             {
                 Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
@@ -728,8 +724,16 @@ public partial class MainWindow : Window
                 FontWeight = _fontWeight,
                 BackupFolder = _backupFolder
             };
-            File.WriteAllText(AppSettingsFilePath,
-                JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            var primary = Path.Combine(_backupFolder, SettingsFileName);
+            File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
+
+            var def = DefaultBackupFolder();
+            if (!string.Equals(Path.GetFullPath(_backupFolder), Path.GetFullPath(def), StringComparison.OrdinalIgnoreCase))
+            {
+                Directory.CreateDirectory(def);
+                var bootstrap = new WindowSettings { BackupFolder = _backupFolder };
+                File.WriteAllText(Path.Combine(def, SettingsFileName), JsonSerializer.Serialize(bootstrap, opts));
+            }
         }
         catch { /* non-critical */ }
     }
@@ -738,17 +742,42 @@ public partial class MainWindow : Window
     {
         try
         {
-            var settingsPath = ResolveSettingsFilePath();
-            if (settingsPath == null) return;
-            var state = JsonSerializer.Deserialize<WindowSettings>(
-                File.ReadAllText(settingsPath));
+            _backupFolder = DefaultBackupFolder();
+            var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
+            if (!File.Exists(defaultPath))
+                return;
+
+            var boot = JsonSerializer.Deserialize<WindowSettings>(File.ReadAllText(defaultPath));
+            if (boot == null) return;
+
+            if (!string.IsNullOrWhiteSpace(boot.BackupFolder))
+            {
+                try
+                {
+                    _backupFolder = Path.GetFullPath(boot.BackupFolder.Trim());
+                }
+                catch
+                {
+                    _backupFolder = DefaultBackupFolder();
+                }
+            }
+
+            var canonicalPath = Path.Combine(_backupFolder, SettingsFileName);
+            WindowSettings? state = boot;
+            if (File.Exists(canonicalPath)
+                && !string.Equals(Path.GetFullPath(canonicalPath), Path.GetFullPath(defaultPath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                var full = JsonSerializer.Deserialize<WindowSettings>(File.ReadAllText(canonicalPath));
+                if (full != null) state = full;
+            }
+
             if (state == null) return;
 
             Left = state.Left;
             Top = state.Top;
             Width = state.Width;
             Height = state.Height;
-            // Apply auto-save interval
             if (state.AutoSaveSeconds > 0)
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(state.AutoSaveSeconds);
             if (state.InitialLines >= 1)
@@ -767,21 +796,37 @@ public partial class MainWindow : Window
                 }
                 catch
                 {
-                    /* keep constructor default */
+                    /* keep prior */
                 }
             }
 
-            // Don't maximize here - defer to Loaded so the window is on the right monitor first
             _startMaximized = state.Maximized;
         }
         catch { /* ignore corrupt settings */ }
     }
 
-    private static string? ResolveSettingsFilePath()
+    /// <summary>Creates <see cref="SettingsFileName"/> under the current backup folder when missing.</summary>
+    private void EnsureSettingsFileExists()
     {
-        if (File.Exists(AppSettingsFilePath)) return AppSettingsFilePath;
-        if (File.Exists(LegacySettingsFile)) return LegacySettingsFile;
-        return null;
+        try
+        {
+            if (File.Exists(Path.Combine(_backupFolder, SettingsFileName)))
+                return;
+            SaveWindowSettings();
+        }
+        catch
+        {
+            /* non-critical */
+        }
+    }
+
+    private static void CopySettingsFileToBackupFolder(string fromFolder, string toFolder)
+    {
+        var src = Path.Combine(fromFolder, SettingsFileName);
+        if (!File.Exists(src)) return;
+        Directory.CreateDirectory(toFolder);
+        var dst = Path.Combine(toFolder, SettingsFileName);
+        File.Copy(src, dst, overwrite: true);
     }
 
     private sealed class WindowSettings
@@ -1020,6 +1065,11 @@ public partial class MainWindow : Window
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
                 && !string.IsNullOrWhiteSpace(cmbFont.Text))
             {
+                var previousBackupFolder = _backupFolder;
+                if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
+                        StringComparison.OrdinalIgnoreCase))
+                    CopySettingsFileToBackupFolder(previousBackupFolder, backupPath);
+
                 _backupFolder = backupPath;
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
                 _initialLines = lines;
