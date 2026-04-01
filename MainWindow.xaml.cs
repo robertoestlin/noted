@@ -43,6 +43,10 @@ public partial class MainWindow : Window
 
     private string _backupFolder = DefaultBackupFolder();
     private const int MaxBackups = 100;
+
+    /// <summary>Filenames written by <see cref="SaveSession"/> (<c>noted_yyyyMMdd_HHmmss.txt</c>).</summary>
+    private static readonly Regex NotedBackupFileNameRegex =
+        new(@"^noted_\d{8}_\d{6}\.txt$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private const int DefaultAutoSaveSeconds = 30;
     private const int DefaultInitialLines = 50;
     private const string DefaultFontFamily = "Consolas, Courier New";
@@ -479,6 +483,43 @@ public partial class MainWindow : Window
 
     // -- Session serialisation ----------------------------------------------------
 
+    /// <summary>Most recently written <c>noted_*.txt</c> in the folder (by last write time).</summary>
+    private static string? GetLatestBackupFilePath(string folder)
+    {
+        if (!Directory.Exists(folder)) return null;
+
+        return Directory.GetFiles(folder, "noted_*.txt")
+            .Select(f => new FileInfo(f))
+            .OrderByDescending(fi => fi.LastWriteTimeUtc)
+            .ThenByDescending(fi => fi.FullName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault()?.FullName;
+    }
+
+    /// <summary>
+    /// Resolves a GUI editor executable so we do not spawn <c>code.cmd</c> (which leaves <c>cmd.exe</c> running).
+    /// </summary>
+    private static string? TryFindVsCodeOrCursorExecutable()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+
+        string[] candidates =
+        [
+            Path.Combine(local, "Programs", "Microsoft VS Code", "Code.exe"),
+            Path.Combine(pf, "Microsoft VS Code", "Code.exe"),
+            Path.Combine(pfx86, "Microsoft VS Code", "Code.exe"),
+            Path.Combine(local, "Programs", "Microsoft VS Code Insiders", "Code - Insiders.exe"),
+            Path.Combine(local, "Programs", "cursor", "Cursor.exe"),
+        ];
+        foreach (var c in candidates)
+        {
+            if (File.Exists(c)) return c;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Writes all open tabs into a single timestamped backup file.
     /// Format:
@@ -543,8 +584,9 @@ public partial class MainWindow : Window
         if (!Directory.Exists(_backupFolder)) return;
 
         var files = Directory.GetFiles(_backupFolder, "noted_*.txt")
-                            .OrderBy(f => f)            // lexicographical = chronological
-                            .ToList();
+            .Where(f => NotedBackupFileNameRegex.IsMatch(Path.GetFileName(f)))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // yyyyMMdd_HHmmss sorts chronologically
+            .ToList();
 
         while (files.Count > MaxBackups)
         {
@@ -558,10 +600,7 @@ public partial class MainWindow : Window
     {
         if (!Directory.Exists(_backupFolder)) return;
 
-        var latest = Directory.GetFiles(_backupFolder, "noted_*.txt")
-                            .OrderByDescending(f => f)
-                            .FirstOrDefault();
-
+        var latest = GetLatestBackupFilePath(_backupFolder);
         if (latest == null) return;
 
         try
@@ -632,22 +671,36 @@ public partial class MainWindow : Window
     private void MenuOpenLastBackup_Click(object sender, RoutedEventArgs e)
     {
         if (!Directory.Exists(_backupFolder)) return;
-        var latest = Directory.GetFiles(_backupFolder, "noted_*.txt").OrderByDescending(f => f).FirstOrDefault();
+        var latest = GetLatestBackupFilePath(_backupFolder);
         if (latest != null)
         {
             try
             {
-                Process.Start(new ProcessStartInfo
+                var editor = TryFindVsCodeOrCursorExecutable();
+                if (editor != null)
                 {
-                    FileName = "code",
-                    Arguments = $"\"{latest}\"",
-                    UseShellExecute = true,
-                    CreateNoWindow = true
-                });
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = editor,
+                        Arguments = $"\"{latest}\"",
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    // PATH shim is often code.cmd → cmd.exe; hide console if it appears.
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "code",
+                        Arguments = $"\"{latest}\"",
+                        UseShellExecute = true,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    });
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to open VS Code:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Failed to open editor:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }
