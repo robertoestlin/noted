@@ -65,7 +65,6 @@ public partial class MainWindow : Window
 
         // Routed commands -> our handlers
         CommandBindings.Add(new CommandBinding(ApplicationCommands.New, (_, _) => NewTab()));
-        CommandBindings.Add(new CommandBinding(ApplicationCommands.SaveAs, (_, _) => SaveCurrentAs()));
         CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (_, _) => CloseCurrentTab()));
         PreviewKeyDown += MainWindow_PreviewKeyDown;
 
@@ -243,7 +242,8 @@ public partial class MainWindow : Window
         CreateTab(null, null);
     }
 
-    private bool SaveCurrentAs()
+    /// <summary>Writes the current tab to a path chosen by the user; does not rename the tab, bind a path, or clear dirty state.</summary>
+    private bool ExportCurrentTabToFile()
     {
         var doc = CurrentDoc();
         if (doc == null) return false;
@@ -255,38 +255,22 @@ public partial class MainWindow : Window
         };
         if (dlg.ShowDialog() != true) return false;
 
-        doc.FilePath = dlg.FileName;
-        doc.Header = Path.GetFileName(dlg.FileName);
-        return WriteFile(doc, dlg.FileName);
-    }
-
-    private static string RemoveTrailingWhitespaces(string text)
-        => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
-
-    private bool WriteFile(TabDocument doc, string path)
-    {
         try
         {
             var textToSave = RemoveTrailingWhitespaces(doc.Editor.Text);
-            if (doc.Editor.Text != textToSave)
-            {
-                var currentCaret = doc.Editor.CaretOffset;
-                doc.Editor.Document.Text = textToSave;
-                doc.Editor.CaretOffset = Math.Min(currentCaret, doc.Editor.Document.TextLength);
-            }
-
-            File.WriteAllText(path, textToSave, System.Text.Encoding.UTF8);
-            doc.IsDirty = false;
-            RefreshTabHeader(doc);
+            File.WriteAllText(dlg.FileName, textToSave, System.Text.Encoding.UTF8);
             return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Could not save file:\n{ex.Message}", "Noted",
+            MessageBox.Show($"Could not export file:\n{ex.Message}", "Noted",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
     }
+
+    private static string RemoveTrailingWhitespaces(string text)
+        => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
 
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -466,7 +450,7 @@ public partial class MainWindow : Window
                 MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
 
             if (result == MessageBoxResult.Cancel) return false;
-            if (result == MessageBoxResult.Yes && !SaveCurrentAs()) return false;
+            if (result == MessageBoxResult.Yes && !ExportCurrentTabToFile()) return false;
         }
 
         _docs.Remove(tab);
@@ -666,7 +650,7 @@ public partial class MainWindow : Window
     }
 
     private void MenuNew_Click(object sender, RoutedEventArgs e) => NewTab();
-    private void MenuSaveAs_Click(object sender, RoutedEventArgs e) => SaveCurrentAs();
+    private void MenuExportToFile_Click(object sender, RoutedEventArgs e) => ExportCurrentTabToFile();
 
     private void MenuOpenLastBackup_Click(object sender, RoutedEventArgs e)
     {

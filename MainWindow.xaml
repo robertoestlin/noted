@@ -9,7 +9,6 @@
     <Window.InputBindings>
         <KeyBinding Key="N" Modifiers="Control" Command="ApplicationCommands.New"/>
         <KeyBinding Key="T" Modifiers="Control" Command="ApplicationCommands.New"/>
-        <KeyBinding Key="S" Modifiers="Control+Shift" Command="ApplicationCommands.SaveAs"/>
         <KeyBinding Key="W" Modifiers="Control" Command="ApplicationCommands.Close"/>
     </Window.InputBindings>
 
@@ -19,7 +18,7 @@
                 <MenuItem Header="_File">
                     <MenuItem Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
                     <Separator/>
-                    <MenuItem Header="Save _As..." InputGestureText="Ctrl+Shift+S" Click="MenuSaveAs_Click"/>
+                    <MenuItem Header="Export to file..." Click="MenuExportToFile_Click"/>
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
                     <Separator/>

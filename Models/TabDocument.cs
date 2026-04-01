@@ -7,7 +7,7 @@ public class TabDocument
     /// <summary>Display name shown on the tab header (e.g. "file1").</summary>
     public string Header { get; set; } = string.Empty;
 
-    /// <summary>Full path if the user has explicitly saved with Save / Save As. Null for unsaved docs.</summary>
+    /// <summary>Optional bound file path (reserved; export does not set this).</summary>
     public string? FilePath { get; set; }
 
     /// <summary>Whether the content has changed since the last explicit save or session load.</summary>
