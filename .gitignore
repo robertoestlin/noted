@@ -482,3 +482,9 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Publish artifacts: keep only distributable exe
+dist/*
+!dist/win-x64/
+dist/win-x64/*
+!dist/win-x64/*.exe
