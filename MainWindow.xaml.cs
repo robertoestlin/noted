@@ -30,12 +30,18 @@ public partial class MainWindow : Window
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
     private bool _sessionSaved = false;
+    private bool _lastSaveIncludedCloudCopy = false;
 
     private const string SettingsFileName = "settings.json";
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
+    private static string DefaultCloudBackupFolder() => Path.Combine(DefaultBackupFolder(), "cloud");
 
     private string _backupFolder = DefaultBackupFolder();
+    private string _cloudBackupFolder = DefaultCloudBackupFolder();
+    private int _cloudSaveIntervalHours = 1;
+    private int _cloudSaveIntervalMinutes = 0;
+    private DateTime _lastCloudSaveUtc = DateTime.MinValue;
     private const int MaxBackups = 100;
 
     /// <summary>Filenames written by <see cref="SaveSession"/> (<c>noted_yyyyMMdd_HHmmss.txt</c>).</summary>
@@ -47,6 +53,7 @@ public partial class MainWindow : Window
     private const double DefaultFontSize = 13;
     private const int DefaultFontWeight = 400;
     private const string BundleDivider = "^---";
+    private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
@@ -193,6 +200,7 @@ public partial class MainWindow : Window
     {
         if (doc.IsDirty) return;
         doc.IsDirty = true;
+        _lastSaveIncludedCloudCopy = false;
         RefreshTabHeader(doc);
     }
 
@@ -209,7 +217,7 @@ public partial class MainWindow : Window
     {
         bool anyDirty = _docs.Values.Any(d => d.IsDirty);
         if (StatusUnsavedDot != null)
-            StatusUnsavedDot.Text = anyDirty ? "U" : "S";
+            StatusUnsavedDot.Text = _lastSaveIncludedCloudCopy ? "C" : (anyDirty ? "U" : "S");
     }
 
     private TabItem? GetTab(TabDocument doc)
@@ -511,6 +519,7 @@ public partial class MainWindow : Window
     {
         try
         {
+            _lastSaveIncludedCloudCopy = false;
             foreach (var doc in _docs.Values)
                 doc.CachedText = RemoveTrailingWhitespaces(doc.Editor.Text);
 
@@ -519,27 +528,30 @@ public partial class MainWindow : Window
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             var path = Path.Combine(_backupFolder, $"noted_{timestamp}.txt");
 
-            using var sw = new StreamWriter(path, append: false, System.Text.Encoding.UTF8);
-            foreach (var item in MainTabControl.Items)
             {
-                if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
-                    continue;
+                using var sw = new StreamWriter(path, append: false, System.Text.Encoding.UTF8);
+                foreach (var item in MainTabControl.Items)
+                {
+                    if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
+                        continue;
 
-                var text = doc.CachedText;
-                // Skip empty/whitespace-only tabs - never store them in the backup
-                if (IsEffectivelyEmpty(text)) continue;
+                    var text = doc.CachedText;
+                    // Skip empty/whitespace-only tabs - never store them in the backup
+                    if (IsEffectivelyEmpty(text)) continue;
 
-                // Divider format: ^---name^---
-                // Content format: plain text (verbatim)
-                sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
-                sw.Write(text);
+                    // Divider format: ^---name^---
+                    // Content format: plain text (verbatim)
+                    sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
+                    sw.Write(text);
 
-                // Guarantee next divider starts on its own line
-                if (text.Length > 0 && !text.EndsWith('\n'))
-                    sw.WriteLine();
+                    // Guarantee next divider starts on its own line
+                    if (text.Length > 0 && !text.EndsWith('\n'))
+                        sw.WriteLine();
+                }
             }
 
             PruneBackups();
+            TrySaveCloudBackup(path);
 
             // Bundle save is the "real" save - clear dirty flags
             foreach (var doc in _docs.Values)
@@ -554,6 +566,64 @@ public partial class MainWindow : Window
         {
             if (updateStatus && !Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
                 Dispatcher.Invoke(() => StatusAutoSave.Text = $"Save failed: {ex.Message}");
+        }
+    }
+
+    private TimeSpan CloudSaveInterval()
+        => TimeSpan.FromHours(_cloudSaveIntervalHours) + TimeSpan.FromMinutes(_cloudSaveIntervalMinutes);
+
+    private static DateTime GetLatestBackupWriteUtcOrMin(string folder)
+    {
+        var latest = GetLatestBackupFilePath(folder);
+        if (latest == null) return DateTime.MinValue;
+        try
+        {
+            return File.GetLastWriteTimeUtc(latest);
+        }
+        catch
+        {
+            return DateTime.MinValue;
+        }
+    }
+
+    private static string FormatCloudCopyTimestamp(DateTime utcTimestamp)
+        => utcTimestamp == DateTime.MinValue
+            ? "Never"
+            : utcTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private bool ShouldSaveCloudBackup()
+    {
+        if (string.IsNullOrWhiteSpace(_cloudBackupFolder)) return false;
+        if (_cloudSaveIntervalHours < 0 || _cloudSaveIntervalHours > 50) return false;
+        if (_cloudSaveIntervalMinutes < 0 || _cloudSaveIntervalMinutes > 55 || _cloudSaveIntervalMinutes % 5 != 0) return false;
+        if (_cloudSaveIntervalHours == 0 && _cloudSaveIntervalMinutes == 0) return false;
+
+        if (_lastCloudSaveUtc == DateTime.MinValue)
+            _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
+
+        if (_lastCloudSaveUtc == DateTime.MinValue)
+            return true;
+
+        return (DateTime.UtcNow - _lastCloudSaveUtc) >= CloudSaveInterval();
+    }
+
+    private void TrySaveCloudBackup(string justSavedBackupPath)
+    {
+        if (!ShouldSaveCloudBackup()) return;
+        if (!File.Exists(justSavedBackupPath)) return;
+
+        try
+        {
+            Directory.CreateDirectory(_cloudBackupFolder);
+            var targetPath = Path.Combine(_cloudBackupFolder, Path.GetFileName(justSavedBackupPath));
+            File.Copy(justSavedBackupPath, targetPath, overwrite: true);
+            _lastCloudSaveUtc = DateTime.UtcNow;
+            _lastSaveIncludedCloudCopy = true;
+            SaveWindowSettings();
+        }
+        catch
+        {
+            // Cloud copy is best-effort. The regular backup already succeeded.
         }
     }
 
@@ -722,7 +792,11 @@ public partial class MainWindow : Window
                 FontFamily = _fontFamily,
                 FontSize = _fontSize,
                 FontWeight = _fontWeight,
-                BackupFolder = _backupFolder
+                BackupFolder = _backupFolder,
+                CloudBackupFolder = _cloudBackupFolder,
+                CloudSaveHours = _cloudSaveIntervalHours,
+                CloudSaveMinutes = _cloudSaveIntervalMinutes,
+                LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc
             };
             var primary = Path.Combine(_backupFolder, SettingsFileName);
             File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
@@ -743,6 +817,7 @@ public partial class MainWindow : Window
         try
         {
             _backupFolder = DefaultBackupFolder();
+            _cloudBackupFolder = DefaultCloudBackupFolder();
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -761,6 +836,25 @@ public partial class MainWindow : Window
                     _backupFolder = DefaultBackupFolder();
                 }
             }
+
+            if (!string.IsNullOrWhiteSpace(boot.CloudBackupFolder))
+            {
+                try
+                {
+                    _cloudBackupFolder = Path.GetFullPath(boot.CloudBackupFolder.Trim());
+                }
+                catch
+                {
+                    _cloudBackupFolder = DefaultCloudBackupFolder();
+                }
+            }
+
+            if (boot.CloudSaveHours is >= 0 and <= 50)
+                _cloudSaveIntervalHours = boot.CloudSaveHours.Value;
+            if (boot.CloudSaveMinutes is >= 0 and <= 55 && boot.CloudSaveMinutes.Value % 5 == 0)
+                _cloudSaveIntervalMinutes = boot.CloudSaveMinutes.Value;
+            if (boot.LastCloudCopyUtc is DateTime bootCloudCopyUtc && bootCloudCopyUtc > DateTime.MinValue)
+                _lastCloudSaveUtc = bootCloudCopyUtc.Kind == DateTimeKind.Utc ? bootCloudCopyUtc : bootCloudCopyUtc.ToUniversalTime();
 
             var canonicalPath = Path.Combine(_backupFolder, SettingsFileName);
             WindowSettings? state = boot;
@@ -799,8 +893,27 @@ public partial class MainWindow : Window
                     /* keep prior */
                 }
             }
+            if (!string.IsNullOrWhiteSpace(state.CloudBackupFolder))
+            {
+                try
+                {
+                    _cloudBackupFolder = Path.GetFullPath(state.CloudBackupFolder.Trim());
+                }
+                catch
+                {
+                    /* keep prior */
+                }
+            }
+            if (state.CloudSaveHours is >= 0 and <= 50)
+                _cloudSaveIntervalHours = state.CloudSaveHours.Value;
+            if (state.CloudSaveMinutes is >= 0 and <= 55 && state.CloudSaveMinutes.Value % 5 == 0)
+                _cloudSaveIntervalMinutes = state.CloudSaveMinutes.Value;
+            if (state.LastCloudCopyUtc is DateTime cloudCopyUtc && cloudCopyUtc > DateTime.MinValue)
+                _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
 
             _startMaximized = state.Maximized;
+            if (_lastCloudSaveUtc == DateTime.MinValue)
+                _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
         }
         catch { /* ignore corrupt settings */ }
     }
@@ -842,6 +955,10 @@ public partial class MainWindow : Window
         public double FontSize { get; set; } = DefaultFontSize;
         public int FontWeight { get; set; } = DefaultFontWeight;
         public string? BackupFolder { get; set; }
+        public string? CloudBackupFolder { get; set; }
+        public int? CloudSaveHours { get; set; }
+        public int? CloudSaveMinutes { get; set; }
+        public DateTime? LastCloudCopyUtc { get; set; }
     }
 
     // --- Settings dialog ----------------------------------------------------
@@ -862,6 +979,8 @@ public partial class MainWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -889,20 +1008,74 @@ public partial class MainWindow : Window
         Grid.SetRow(btnBrowseBackup, 0);
         Grid.SetColumn(btnBrowseBackup, 2);
 
+        var lblCloudBackup = new TextBlock { Text = "Cloud storage folder:", VerticalAlignment = VerticalAlignment.Top };
+        Grid.SetRow(lblCloudBackup, 1);
+        Grid.SetColumn(lblCloudBackup, 0);
+        var txtCloudBackup = new TextBox
+        {
+            Text = _cloudBackupFolder,
+            Margin = new Thickness(0, 0, 8, 8),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetRow(txtCloudBackup, 1);
+        Grid.SetColumn(txtCloudBackup, 1);
+
+        var btnBrowseCloudBackup = new Button
+        {
+            Content = "Browse…",
+            Padding = new Thickness(10, 2, 10, 2),
+            Margin = new Thickness(0, 0, 0, 8),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetRow(btnBrowseCloudBackup, 1);
+        Grid.SetColumn(btnBrowseCloudBackup, 2);
+
+        var lblCloudInterval = new TextBlock { Text = "Cloud save interval (hours/minutes):" };
+        Grid.SetRow(lblCloudInterval, 2);
+        Grid.SetColumn(lblCloudInterval, 0);
+
+        var cloudPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        var cmbCloudHours = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
+        for (int h = 0; h <= 50; h++) cmbCloudHours.Items.Add(h);
+        cmbCloudHours.SelectedItem = _cloudSaveIntervalHours;
+        if (cmbCloudHours.SelectedItem == null) cmbCloudHours.SelectedItem = 0;
+        var lblHours = new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+        var cmbCloudMinutes = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
+        foreach (var m in CloudMinuteOptions) cmbCloudMinutes.Items.Add(m);
+        cmbCloudMinutes.SelectedItem = _cloudSaveIntervalMinutes;
+        if (cmbCloudMinutes.SelectedItem == null) cmbCloudMinutes.SelectedItem = 0;
+        var lblMinutes = new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center };
+        cloudPanel.Children.Add(cmbCloudHours);
+        cloudPanel.Children.Add(lblHours);
+        cloudPanel.Children.Add(cmbCloudMinutes);
+        cloudPanel.Children.Add(lblMinutes);
+        var txtCloudLastCopy = new TextBlock
+        {
+            Text = $"Last cloud copy: {FormatCloudCopyTimestamp(_lastCloudSaveUtc)}",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 4, 0, 8)
+        };
+        var cloudSettingsPanel = new StackPanel { Orientation = Orientation.Vertical };
+        cloudSettingsPanel.Children.Add(cloudPanel);
+        cloudSettingsPanel.Children.Add(txtCloudLastCopy);
+        Grid.SetRow(cloudSettingsPanel, 2);
+        Grid.SetColumn(cloudSettingsPanel, 1);
+        Grid.SetColumnSpan(cloudSettingsPanel, 2);
+
         var lblAutoSave = new TextBlock { Text = "Auto-save interval (seconds):" };
-        Grid.SetRow(lblAutoSave, 1);
+        Grid.SetRow(lblAutoSave, 3);
         Grid.SetColumn(lblAutoSave, 0);
         var txtAutoSave = new TextBox
         {
             Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(),
             VerticalAlignment = VerticalAlignment.Top
         };
-        Grid.SetRow(txtAutoSave, 1);
+        Grid.SetRow(txtAutoSave, 3);
         Grid.SetColumn(txtAutoSave, 1);
         Grid.SetColumnSpan(txtAutoSave, 2);
 
         var lblLines = new TextBlock { Text = "Initial lines per new tab:" };
-        Grid.SetRow(lblLines, 2);
+        Grid.SetRow(lblLines, 4);
         Grid.SetColumn(lblLines, 0);
         var txtLines = new TextBox
         {
@@ -910,12 +1083,12 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 8),
             VerticalAlignment = VerticalAlignment.Top
         };
-        Grid.SetRow(txtLines, 2);
+        Grid.SetRow(txtLines, 4);
         Grid.SetColumn(txtLines, 1);
         Grid.SetColumnSpan(txtLines, 2);
 
         var lblFont = new TextBlock { Text = "Font family:", Margin = new Thickness(0, 0, 8, 8) };
-        Grid.SetRow(lblFont, 3);
+        Grid.SetRow(lblFont, 5);
         Grid.SetColumn(lblFont, 0);
         var cmbFont = new ComboBox
         {
@@ -931,7 +1104,7 @@ public partial class MainWindow : Window
         foreach (var f in popularFonts)
             cmbFont.Items.Add(f);
         cmbFont.Text = _fontFamily;
-        Grid.SetRow(cmbFont, 3);
+        Grid.SetRow(cmbFont, 5);
         Grid.SetColumn(cmbFont, 1);
         Grid.SetColumnSpan(cmbFont, 2);
 
@@ -941,16 +1114,16 @@ public partial class MainWindow : Window
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var lblFontSize = new TextBlock { Text = "Font size:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontSize, 4);
+        Grid.SetRow(lblFontSize, 6);
         Grid.SetColumn(lblFontSize, 0);
 
         var txtFontSize = new TextBox { Text = _fontSize.ToString(), Margin = new Thickness(0, 0, 0, 8), VerticalAlignment = VerticalAlignment.Center };
-        Grid.SetRow(txtFontSize, 4);
+        Grid.SetRow(txtFontSize, 6);
         Grid.SetColumn(txtFontSize, 1);
         Grid.SetColumnSpan(txtFontSize, 2);
 
         var lblFontWeight = new TextBlock { Text = "Font weight:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontWeight, 5);
+        Grid.SetRow(lblFontWeight, 7);
         Grid.SetColumn(lblFontWeight, 0);
 
         var cmbFontWeight = new ComboBox
@@ -977,7 +1150,7 @@ public partial class MainWindow : Window
             if (weights[i].Value == _fontWeight) selectedIdx = i;
         }
         cmbFontWeight.SelectedIndex = selectedIdx;
-        Grid.SetRow(cmbFontWeight, 5);
+        Grid.SetRow(cmbFontWeight, 7);
         Grid.SetColumn(cmbFontWeight, 1);
         Grid.SetColumnSpan(cmbFontWeight, 2);
 
@@ -987,12 +1160,17 @@ public partial class MainWindow : Window
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttonPanel.Children.Add(btnOk);
         buttonPanel.Children.Add(btnCancel);
-        Grid.SetRow(buttonPanel, 7);
+        Grid.SetRow(buttonPanel, 9);
         Grid.SetColumnSpan(buttonPanel, 3);
 
         grid.Children.Add(lblBackup);
         grid.Children.Add(txtBackup);
         grid.Children.Add(btnBrowseBackup);
+        grid.Children.Add(lblCloudBackup);
+        grid.Children.Add(txtCloudBackup);
+        grid.Children.Add(btnBrowseCloudBackup);
+        grid.Children.Add(lblCloudInterval);
+        grid.Children.Add(cloudSettingsPanel);
         grid.Children.Add(lblAutoSave);
         grid.Children.Add(txtAutoSave);
         grid.Children.Add(lblLines);
@@ -1039,11 +1217,50 @@ public partial class MainWindow : Window
                 txtBackup.Text = fbd.SelectedPath;
         };
 
+        btnBrowseCloudBackup.Click += (_, _) =>
+        {
+            var fbd = new VistaFolderBrowserDialog
+            {
+                Description = "Choose folder for cloud backup copies",
+                UseDescriptionForTitle = true
+            };
+            var cur = txtCloudBackup.Text.Trim();
+            try
+            {
+                if (!string.IsNullOrEmpty(cur))
+                {
+                    var full = Path.GetFullPath(cur);
+                    if (Directory.Exists(full))
+                        fbd.SelectedPath = full;
+                    else
+                    {
+                        var parent = Path.GetDirectoryName(full);
+                        if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+                            fbd.SelectedPath = parent;
+                    }
+                }
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            if (fbd.ShowDialog(dlg) == true)
+                txtCloudBackup.Text = fbd.SelectedPath;
+        };
+
         btnOk.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(txtBackup.Text))
             {
                 MessageBox.Show("Backup folder cannot be empty.", "Invalid settings", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(txtCloudBackup.Text))
+            {
+                MessageBox.Show("Cloud storage folder cannot be empty.", "Invalid settings", MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
@@ -1060,10 +1277,26 @@ public partial class MainWindow : Window
                 return;
             }
 
+            string cloudBackupPath;
+            try
+            {
+                cloudBackupPath = Path.GetFullPath(txtCloudBackup.Text.Trim());
+            }
+            catch
+            {
+                MessageBox.Show("Cloud storage folder path is not valid.", "Invalid settings", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
-                && !string.IsNullOrWhiteSpace(cmbFont.Text))
+                && !string.IsNullOrWhiteSpace(cmbFont.Text)
+                && cmbCloudHours.SelectedItem is int cloudHours && cloudHours >= 0 && cloudHours <= 50
+                && cmbCloudMinutes.SelectedItem is int cloudMinutes && cloudMinutes >= 0
+                && cloudMinutes <= 55 && cloudMinutes % 5 == 0
+                && (cloudHours > 0 || cloudMinutes > 0))
             {
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
@@ -1071,6 +1304,10 @@ public partial class MainWindow : Window
                     CopySettingsFileToBackupFolder(previousBackupFolder, backupPath);
 
                 _backupFolder = backupPath;
+                _cloudBackupFolder = cloudBackupPath;
+                _cloudSaveIntervalHours = cloudHours;
+                _cloudSaveIntervalMinutes = cloudMinutes;
+                _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
                 _initialLines = lines;
                 _fontFamily = cmbFont.Text.Trim();
@@ -1092,7 +1329,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                MessageBox.Show("Auto-save must be \u2265 5 seconds.\nInitial lines must be \u2265 1.\nFont size must be \u2265 6.",
+                MessageBox.Show("Auto-save must be \u2265 5 seconds.\nInitial lines must be \u2265 1.\nFont size must be \u2265 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
