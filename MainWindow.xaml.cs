@@ -346,6 +346,13 @@ public partial class MainWindow : Window
 
         var formatJsonItem = new MenuItem { Header = "Format selection as pretty JSON" };
         formatJsonItem.Click += (_, _) => FormatSelectedJson(editor);
+        var copySelectionItem = new MenuItem { Header = "Copy Selection To" };
+        copySelectionItem.Items.Add(new MenuItem { Header = "(Loading...)", IsEnabled = false });
+        copySelectionItem.SubmenuOpened += (_, _) => PopulateTransferMenu(copySelectionItem, editor, moveSelection: false);
+
+        var moveSelectionItem = new MenuItem { Header = "Move Selection To" };
+        moveSelectionItem.Items.Add(new MenuItem { Header = "(Loading...)", IsEnabled = false });
+        moveSelectionItem.SubmenuOpened += (_, _) => PopulateTransferMenu(moveSelectionItem, editor, moveSelection: true);
 
         menu.Items.Add(undoItem);
         menu.Items.Add(redoItem);
@@ -355,6 +362,8 @@ public partial class MainWindow : Window
         menu.Items.Add(pasteItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(formatJsonItem);
+        menu.Items.Add(copySelectionItem);
+        menu.Items.Add(moveSelectionItem);
 
         menu.Opened += (_, _) =>
         {
@@ -365,6 +374,8 @@ public partial class MainWindow : Window
             copyItem.IsEnabled = hasSelection;
             pasteItem.IsEnabled = Clipboard.ContainsText();
             formatJsonItem.IsEnabled = hasSelection;
+            copySelectionItem.IsEnabled = hasSelection;
+            moveSelectionItem.IsEnabled = hasSelection;
         };
 
         return menu;
@@ -403,6 +414,127 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
+    }
+
+    private TabDocument? FindDocByEditor(TextEditor editor)
+        => _docs.Values.FirstOrDefault(doc => ReferenceEquals(doc.Editor, editor));
+
+    private void PopulateTransferMenu(MenuItem menu, TextEditor? sourceEditor, bool moveSelection)
+    {
+        menu.Items.Clear();
+
+        var sourceDoc = sourceEditor == null ? CurrentDoc() : FindDocByEditor(sourceEditor);
+        sourceEditor ??= sourceDoc?.Editor;
+        bool hasSelection = sourceEditor != null && !string.IsNullOrEmpty(sourceEditor.SelectedText);
+
+        var sendToNewTabItem = new MenuItem
+        {
+            Header = "New Tab",
+            IsEnabled = hasSelection
+        };
+        sendToNewTabItem.Click += (_, _) =>
+        {
+            if (sourceEditor != null)
+                TransferSelectionToNewTab(sourceEditor, moveSelection);
+        };
+        menu.Items.Add(sendToNewTabItem);
+        menu.Items.Add(new Separator());
+
+        var destinationDocs = _docs.Values
+            .Where(doc => doc != sourceDoc)
+            .OrderBy(doc => doc.Header, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (destinationDocs.Count == 0)
+        {
+            menu.Items.Add(new MenuItem
+            {
+                Header = "(No other tabs)",
+                IsEnabled = false
+            });
+            return;
+        }
+
+        foreach (var destinationDoc in destinationDocs)
+        {
+            var target = destinationDoc;
+            var tabItem = new MenuItem
+            {
+                Header = target.Header,
+                IsEnabled = hasSelection
+            };
+            tabItem.Click += (_, _) =>
+            {
+                if (sourceEditor != null)
+                    TransferSelectionToTab(sourceEditor, target, moveSelection);
+            };
+            menu.Items.Add(tabItem);
+        }
+    }
+
+    private bool TryGetSelectionToSend(TextEditor sourceEditor, out int selectionStart, out int selectionLength, out string selectedText)
+    {
+        selectionStart = sourceEditor.SelectionStart;
+        selectionLength = sourceEditor.SelectionLength;
+        selectedText = sourceEditor.SelectedText;
+        return selectionLength > 0 && !string.IsNullOrEmpty(selectedText);
+    }
+
+    private void TransferSelectionToNewTab(TextEditor sourceEditor, bool moveSelection)
+    {
+        if (!TryGetSelectionToSend(sourceEditor, out int sourceSelectionStart, out int sourceSelectionLength, out var selectedText))
+            return;
+
+        string trailingBlankLines = new string('\n', Math.Max(0, _initialLines - 1));
+        string contentWithPadding = selectedText + trailingBlankLines;
+
+        var newDoc = CreateTab(content: contentWithPadding);
+        newDoc.Editor.Select(0, selectedText.Length);
+        newDoc.Editor.Focus();
+
+        if (moveSelection)
+        {
+            sourceEditor.Document.Replace(sourceSelectionStart, sourceSelectionLength, string.Empty);
+            sourceEditor.Select(sourceSelectionStart, 0);
+        }
+    }
+
+    private void TransferSelectionToTab(TextEditor sourceEditor, TabDocument destinationDoc, bool moveSelection)
+    {
+        if (!TryGetSelectionToSend(sourceEditor, out int sourceSelectionStart, out int sourceSelectionLength, out var selectedText))
+            return;
+
+        if (ReferenceEquals(sourceEditor, destinationDoc.Editor))
+            return;
+
+        var destinationEditor = destinationDoc.Editor;
+        int insertOffset = destinationEditor.Document.TextLength;
+        string separator = string.Empty;
+        if (insertOffset > 0)
+        {
+            // Always add one visible blank line before incoming selection.
+            string currentText = destinationEditor.Text;
+            bool endsWithNewLine = currentText.EndsWith("\n", StringComparison.Ordinal) ||
+                                   currentText.EndsWith("\r", StringComparison.Ordinal);
+            separator = endsWithNewLine
+                ? Environment.NewLine
+                : Environment.NewLine + Environment.NewLine;
+        }
+
+        destinationEditor.Document.Insert(insertOffset, separator + selectedText);
+        int destinationSelectionStart = insertOffset + separator.Length;
+        destinationEditor.Select(destinationSelectionStart, selectedText.Length);
+
+        if (moveSelection)
+        {
+            sourceEditor.Document.Replace(sourceSelectionStart, sourceSelectionLength, string.Empty);
+            sourceEditor.Select(sourceSelectionStart, 0);
+        }
+
+        var destinationTab = GetTab(destinationDoc);
+        if (destinationTab != null)
+            MainTabControl.SelectedItem = destinationTab;
+        destinationEditor.Focus();
     }
 
     private void Editor_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -1148,8 +1280,6 @@ public partial class MainWindow : Window
                         continue;
 
                     var text = doc.CachedText;
-                    // Skip empty/whitespace-only tabs - never store them in the backup
-                    if (IsEffectivelyEmpty(text)) continue;
 
                     // Divider format: ^---name^---
                     // Metadata format: ^meta^{"highlightLine":N}
@@ -1388,6 +1518,19 @@ public partial class MainWindow : Window
     private void MenuCut_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Cut();
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
+    private void MenuCopySelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menu)
+            return;
+        PopulateTransferMenu(menu, CurrentDoc()?.Editor, moveSelection: false);
+    }
+
+    private void MenuMoveSelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menu)
+            return;
+        PopulateTransferMenu(menu, CurrentDoc()?.Editor, moveSelection: true);
+    }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {

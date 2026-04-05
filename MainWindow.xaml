@@ -28,6 +28,19 @@
                     <MenuItem Header="Cu_t" InputGestureText="Ctrl+X" Click="MenuCut_Click"/>
                     <MenuItem Header="_Copy" InputGestureText="Ctrl+C" Click="MenuCopy_Click"/>
                     <MenuItem Header="_Paste" InputGestureText="Ctrl+V" Click="MenuPaste_Click"/>
+                    <Separator/>
+                    <MenuItem Header="Selection _Actions">
+                        <MenuItem x:Name="MenuItemCopySelectionTo"
+                                  Header="_Copy Selection To"
+                                  SubmenuOpened="MenuCopySelectionTo_SubmenuOpened">
+                            <MenuItem Header="(Loading...)" IsEnabled="False"/>
+                        </MenuItem>
+                        <MenuItem x:Name="MenuItemMoveSelectionTo"
+                                  Header="_Move Selection To"
+                                  SubmenuOpened="MenuMoveSelectionTo_SubmenuOpened">
+                            <MenuItem Header="(Loading...)" IsEnabled="False"/>
+                        </MenuItem>
+                    </MenuItem>
                 </MenuItem>
                 <MenuItem Header="_Tools">
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
