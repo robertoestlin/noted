@@ -1554,6 +1554,26 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private static int CountMatches(
+        string text,
+        string findText,
+        StringComparison comparison,
+        bool wholeWord)
+    {
+        if (string.IsNullOrEmpty(findText))
+            return 0;
+
+        int count = 0;
+        int scanIndex = 0;
+        while (TryFindNextIndex(text, findText, scanIndex, comparison, wholeWord, out var found))
+        {
+            count++;
+            scanIndex = found + findText.Length;
+        }
+
+        return count;
+    }
+
     private static bool SelectMatchInEditor(TextEditor editor, int start, int length)
     {
         if (start < 0 || length <= 0 || start + length > editor.Document.TextLength)
@@ -1578,7 +1598,7 @@ public partial class MainWindow : Window
         {
             Title = "Find + Replace",
             Width = 520,
-            Height = 255,
+            Height = 340,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
@@ -1589,6 +1609,7 @@ public partial class MainWindow : Window
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1618,8 +1639,10 @@ public partial class MainWindow : Window
         var optionsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         var chkMatchCase = new CheckBox { Content = "Match case", Margin = new Thickness(0, 0, 16, 0) };
         var chkWholeWord = new CheckBox { Content = "Whole word" };
+        var chkAllTabs = new CheckBox { Content = "Find in all tabs", Margin = new Thickness(16, 0, 0, 0) };
         optionsPanel.Children.Add(chkMatchCase);
         optionsPanel.Children.Add(chkWholeWord);
+        optionsPanel.Children.Add(chkAllTabs);
         Grid.SetRow(optionsPanel, 2);
         Grid.SetColumn(optionsPanel, 1);
         root.Children.Add(optionsPanel);
@@ -1634,6 +1657,33 @@ public partial class MainWindow : Window
         Grid.SetColumn(status, 1);
         root.Children.Add(status);
 
+        var tabMatchesWrap = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal
+        };
+        var tabMatchesScroll = new ScrollViewer
+        {
+            Content = tabMatchesWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MinHeight = 62,
+            MaxHeight = 90
+        };
+        var tabMatchesBorder = new Border
+        {
+            BorderBrush = Brushes.Gainsboro,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Background = Brushes.WhiteSmoke,
+            Padding = new Thickness(6),
+            Margin = new Thickness(0, 0, 0, 10),
+            Visibility = Visibility.Collapsed,
+            Child = tabMatchesScroll
+        };
+        Grid.SetRow(tabMatchesBorder, 4);
+        Grid.SetColumn(tabMatchesBorder, 1);
+        root.Children.Add(tabMatchesBorder);
+
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var btnFindNext = new Button { Content = "Find Next", Width = 95, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
         var btnReplace = new Button { Content = "Replace", Width = 90, Margin = new Thickness(0, 0, 8, 0) };
@@ -1643,9 +1693,82 @@ public partial class MainWindow : Window
         buttons.Children.Add(btnReplace);
         buttons.Children.Add(btnReplaceAll);
         buttons.Children.Add(btnClose);
-        Grid.SetRow(buttons, 4);
+        Grid.SetRow(buttons, 5);
         Grid.SetColumn(buttons, 1);
         root.Children.Add(buttons);
+
+        StringComparison GetComparison()
+            => chkMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+
+        bool JumpToMatch(TabItem tab, int foundOffset, int length)
+        {
+            if (!_docs.TryGetValue(tab, out var foundDoc))
+                return false;
+
+            MainTabControl.SelectedItem = tab;
+            if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
+                return false;
+
+            status.Text = $"Match found in \"{foundDoc.DisplayHeader}\".";
+            return true;
+        }
+
+        void RefreshTabMatchButtons()
+        {
+            tabMatchesWrap.Children.Clear();
+
+            var needle = txtFind.Text ?? string.Empty;
+            if (chkAllTabs.IsChecked != true || string.IsNullOrEmpty(needle))
+            {
+                tabMatchesBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var comparison = GetComparison();
+            bool wholeWord = chkWholeWord.IsChecked == true;
+            var matches = new List<(TabItem Tab, TabDocument Doc, int Count)>();
+            foreach (var tab in MainTabControl.Items.OfType<TabItem>())
+            {
+                if (!_docs.TryGetValue(tab, out var tabDoc))
+                    continue;
+
+                int count = CountMatches(tabDoc.Editor.Text, needle, comparison, wholeWord);
+                if (count > 0)
+                    matches.Add((tab, tabDoc, count));
+            }
+
+            if (matches.Count == 0)
+            {
+                tabMatchesBorder.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            tabMatchesBorder.Visibility = Visibility.Visible;
+            foreach (var item in matches)
+            {
+                var targetTab = item.Tab;
+                var targetDoc = item.Doc;
+                var targetButton = new Button
+                {
+                    Content = $"{targetDoc.DisplayHeader} ({item.Count})",
+                    Margin = new Thickness(0, 0, 6, 6),
+                    Padding = new Thickness(8, 2, 8, 2),
+                    MinHeight = 24
+                };
+                targetButton.Click += (_, _) =>
+                {
+                    var targetComparison = GetComparison();
+                    bool targetWholeWord = chkWholeWord.IsChecked == true;
+                    if (!_docs.TryGetValue(targetTab, out var currentDoc))
+                        return;
+
+                    if (TryFindNextIndex(currentDoc.Editor.Text, needle, 0, targetComparison, targetWholeWord, out var foundAt))
+                        JumpToMatch(targetTab, foundAt, needle.Length);
+                };
+
+                tabMatchesWrap.Children.Add(targetButton);
+            }
+        }
 
         bool FindNext(bool wrap)
         {
@@ -1656,27 +1779,78 @@ public partial class MainWindow : Window
                 return false;
             }
 
-            var text = editor.Text;
-            var comparison = chkMatchCase.IsChecked == true
-                ? StringComparison.Ordinal
-                : StringComparison.OrdinalIgnoreCase;
-            int start = editor.SelectionStart + editor.SelectionLength;
-
-            if (TryFindNextIndex(text, needle, start, comparison, chkWholeWord.IsChecked == true, out var found))
+            var comparison = GetComparison();
+            bool wholeWord = chkWholeWord.IsChecked == true;
+            if (chkAllTabs.IsChecked != true)
             {
-                SelectMatchInEditor(editor, found, needle.Length);
-                status.Text = "Match found.";
-                return true;
+                var text = editor.Text;
+                int start = editor.SelectionStart + editor.SelectionLength;
+
+                if (TryFindNextIndex(text, needle, start, comparison, wholeWord, out var found))
+                {
+                    SelectMatchInEditor(editor, found, needle.Length);
+                    status.Text = "Match found.";
+                    return true;
+                }
+
+                if (wrap && TryFindNextIndex(text, needle, 0, comparison, wholeWord, out found))
+                {
+                    SelectMatchInEditor(editor, found, needle.Length);
+                    status.Text = "Wrapped to top.";
+                    return true;
+                }
+
+                status.Text = "No matches.";
+                return false;
             }
 
-            if (wrap && TryFindNextIndex(text, needle, 0, comparison, chkWholeWord.IsChecked == true, out found))
+            var orderedTabs = MainTabControl.Items.OfType<TabItem>().Where(tab => _docs.ContainsKey(tab)).ToList();
+            if (orderedTabs.Count == 0)
             {
-                SelectMatchInEditor(editor, found, needle.Length);
-                status.Text = "Wrapped to top.";
-                return true;
+                status.Text = "No open tabs.";
+                return false;
             }
 
-            status.Text = "No matches.";
+            var currentTab = MainTabControl.SelectedItem as TabItem;
+            int currentIndex = currentTab == null ? 0 : orderedTabs.IndexOf(currentTab);
+            if (currentIndex < 0)
+                currentIndex = 0;
+
+            int startOffset = editor.SelectionStart + editor.SelectionLength;
+            for (int i = currentIndex; i < orderedTabs.Count; i++)
+            {
+                var tab = orderedTabs[i];
+                if (!_docs.TryGetValue(tab, out var tabDoc))
+                    continue;
+
+                int searchStart = i == currentIndex ? startOffset : 0;
+                if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var found))
+                    return JumpToMatch(tab, found, needle.Length);
+            }
+
+            if (!wrap)
+            {
+                status.Text = "No more matches.";
+                return false;
+            }
+
+            for (int i = 0; i <= currentIndex; i++)
+            {
+                var tab = orderedTabs[i];
+                if (!_docs.TryGetValue(tab, out var tabDoc))
+                    continue;
+
+                string textToSearch = tabDoc.Editor.Text;
+                int limit = i == currentIndex ? Math.Clamp(startOffset, 0, textToSearch.Length) : textToSearch.Length;
+                if (limit <= 0)
+                    continue;
+
+                string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
+                if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var found))
+                    return JumpToMatch(tab, found, needle.Length);
+            }
+
+            status.Text = "No matches in any tab.";
             return false;
         }
 
@@ -1687,9 +1861,7 @@ public partial class MainWindow : Window
                 return false;
 
             var selected = editor.SelectedText;
-            var comparison = chkMatchCase.IsChecked == true
-                ? StringComparison.Ordinal
-                : StringComparison.OrdinalIgnoreCase;
+            var comparison = GetComparison();
             if (!string.Equals(selected, needle, comparison))
                 return false;
             if (chkWholeWord.IsChecked != true)
@@ -1725,9 +1897,7 @@ public partial class MainWindow : Window
 
             var replacement = txtReplace.Text ?? string.Empty;
             var source = editor.Text;
-            var comparison = chkMatchCase.IsChecked == true
-                ? StringComparison.Ordinal
-                : StringComparison.OrdinalIgnoreCase;
+            var comparison = GetComparison();
 
             int scanIndex = 0;
             int cursor = 0;
@@ -1758,6 +1928,13 @@ public partial class MainWindow : Window
         btnFindNext.Click += (_, _) => FindNext(wrap: true);
         btnReplace.Click += (_, _) => ReplaceCurrentSelection();
         btnReplaceAll.Click += (_, _) => ReplaceAll();
+        chkAllTabs.Checked += (_, _) => RefreshTabMatchButtons();
+        chkAllTabs.Unchecked += (_, _) => RefreshTabMatchButtons();
+        chkMatchCase.Checked += (_, _) => RefreshTabMatchButtons();
+        chkMatchCase.Unchecked += (_, _) => RefreshTabMatchButtons();
+        chkWholeWord.Checked += (_, _) => RefreshTabMatchButtons();
+        chkWholeWord.Unchecked += (_, _) => RefreshTabMatchButtons();
+        txtFind.TextChanged += (_, _) => RefreshTabMatchButtons();
         txtFind.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Enter)
@@ -1772,6 +1949,7 @@ public partial class MainWindow : Window
         {
             txtFind.Focus();
             txtFind.SelectAll();
+            RefreshTabMatchButtons();
         };
         dlg.ShowDialog();
     }
