@@ -1,4 +1,7 @@
+using System.Collections.Generic;
 using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Rendering;
 
 namespace Noted.Models;
 
@@ -18,6 +21,12 @@ public class TabDocument
 
     /// <summary>Cached copy of the editor text, updated on every keystroke. Used by SaveSession so that text is available even during window shutdown (WPF may clear AvalonEdit content before the Closing event finishes).</summary>
     public string CachedText { get; set; } = string.Empty;
+
+    /// <summary>Anchors for highlighted lines (track edits as text shifts).</summary>
+    public List<TextAnchor> HighlightAnchors { get; } = [];
+
+    /// <summary>Renderer used to paint the full-width highlighted line background.</summary>
+    public IBackgroundRenderer? HighlightRenderer { get; set; }
 
     /// <summary>Tab header shown in the UI.</summary>
     public string DisplayHeader => Header;

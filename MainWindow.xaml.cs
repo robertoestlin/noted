@@ -15,6 +15,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
+using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 using Noted.Models;
 using Ookii.Dialogs.Wpf;
@@ -53,11 +55,64 @@ public partial class MainWindow : Window
     private const double DefaultFontSize = 13;
     private const int DefaultFontWeight = 400;
     private const string BundleDivider = "^---";
+    private const string MetadataPrefix = "^meta^";
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     private int _fontWeight = DefaultFontWeight;
+
+    private sealed class FileMetadata
+    {
+        // Backward-compatible legacy field (single highlight).
+        public int? HighlightLine { get; set; }
+
+        // Current format supports multiple highlighted lines.
+        public List<int>? HighlightLines { get; set; }
+    }
+
+    private sealed class HighlightLineRenderer : IBackgroundRenderer
+    {
+        private readonly Func<IReadOnlyCollection<int>> _lineProvider;
+        private static readonly Brush HighlightBrush = new SolidColorBrush(Color.FromRgb(255, 196, 128));
+
+        public HighlightLineRenderer(Func<IReadOnlyCollection<int>> lineProvider)
+        {
+            _lineProvider = lineProvider;
+        }
+
+        // Draw on selection layer so highlight remains visible even when selected.
+        public KnownLayer Layer => KnownLayer.Selection;
+
+        public void Draw(TextView textView, DrawingContext drawingContext)
+        {
+            if (textView.Document == null || !textView.VisualLinesValid)
+                return;
+
+            var highlightedLines = _lineProvider();
+            if (highlightedLines.Count == 0)
+                return;
+
+            foreach (var lineNumber in highlightedLines)
+            {
+                if (lineNumber < 1 || lineNumber > textView.Document.LineCount)
+                    continue;
+
+                var line = textView.Document.GetLineByNumber(lineNumber);
+                var segment = new TextSegment
+                {
+                    StartOffset = line.Offset,
+                    EndOffset = line.Offset + line.Length
+                };
+
+                foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
+                {
+                    var fullWidthRect = new Rect(0, rect.Top, textView.ActualWidth, rect.Height);
+                    drawingContext.DrawRectangle(HighlightBrush, null, fullWidthRect);
+                }
+            }
+        }
+    }
 
     // --- Constructor -------------------------------------------------------------
     public MainWindow()
@@ -122,8 +177,17 @@ public partial class MainWindow : Window
             IsDirty = false
         };
 
+        var highlightRenderer = new HighlightLineRenderer(() => GetHighlightedLineNumbers(doc));
+        doc.HighlightRenderer = highlightRenderer;
+        editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
+
         // Wire events
-        editor.TextChanged += (_, _) => { doc.CachedText = editor.Text; MarkDirty(doc); };
+        editor.TextChanged += (_, _) =>
+        {
+            doc.CachedText = editor.Text;
+            MarkDirty(doc);
+            RedrawHighlight(doc);
+        };
         editor.TextArea.Caret.PositionChanged += (_, _) => UpdateStatusBar(doc);
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
 
@@ -275,6 +339,197 @@ public partial class MainWindow : Window
     private static string RemoveTrailingWhitespaces(string text)
         => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
 
+    private IReadOnlyCollection<int> GetHighlightedLineNumbers(TabDocument doc)
+    {
+        if (doc.HighlightAnchors.Count == 0)
+            return [];
+
+        var lines = new HashSet<int>();
+        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        {
+            var anchor = doc.HighlightAnchors[i];
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.HighlightAnchors.RemoveAt(i);
+                continue;
+            }
+
+            lines.Add(anchor.Line);
+        }
+
+        return lines;
+    }
+
+    private bool IsLineHighlighted(TabDocument doc, int lineNumber)
+    {
+        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        {
+            var anchor = doc.HighlightAnchors[i];
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.HighlightAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line == lineNumber)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool AddHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+    {
+        int lineCount = doc.Editor.Document.LineCount;
+        if (lineCount <= 0)
+            lineCount = 1;
+
+        int line = Math.Max(1, Math.Min(lineNumber, lineCount));
+        if (IsLineHighlighted(doc, line))
+            return false;
+
+        var docLine = doc.Editor.Document.GetLineByNumber(line);
+        var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
+        anchor.MovementType = AnchorMovementType.BeforeInsertion;
+        doc.HighlightAnchors.Add(anchor);
+
+        if (markDirty)
+            MarkDirty(doc);
+        if (redraw)
+            RedrawHighlight(doc);
+        return true;
+    }
+
+    private bool RemoveHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+    {
+        bool removed = false;
+        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        {
+            var anchor = doc.HighlightAnchors[i];
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.HighlightAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line == lineNumber)
+            {
+                doc.HighlightAnchors.RemoveAt(i);
+                removed = true;
+            }
+        }
+
+        if (removed && markDirty)
+            MarkDirty(doc);
+        if (removed && redraw)
+            RedrawHighlight(doc);
+        return removed;
+    }
+
+    private void SetHighlightedLines(TabDocument doc, IEnumerable<int>? lineNumbers, bool markDirty = true)
+    {
+        doc.HighlightAnchors.Clear();
+
+        if (lineNumbers != null)
+        {
+            foreach (var line in lineNumbers.Where(line => line > 0).Distinct())
+                AddHighlightedLine(doc, line, markDirty: false, redraw: false);
+        }
+
+        if (markDirty)
+            MarkDirty(doc);
+        RedrawHighlight(doc);
+    }
+
+    private void ToggleHighlightedCaretLine(TabDocument doc)
+    {
+        var selectedLines = GetSelectedLineNumbers(doc);
+        if (selectedLines.Count > 0)
+        {
+            bool allHighlighted = selectedLines.All(line => IsLineHighlighted(doc, line));
+            bool changed = false;
+            foreach (var line in selectedLines)
+            {
+                changed |= allHighlighted
+                    ? RemoveHighlightedLine(doc, line, markDirty: false, redraw: false)
+                    : AddHighlightedLine(doc, line, markDirty: false, redraw: false);
+            }
+
+            if (changed)
+            {
+                MarkDirty(doc);
+                RedrawHighlight(doc);
+            }
+            return;
+        }
+
+        int caretLine = Math.Max(1, doc.Editor.TextArea.Caret.Line);
+        if (IsLineHighlighted(doc, caretLine))
+            RemoveHighlightedLine(doc, caretLine);
+        else
+            AddHighlightedLine(doc, caretLine);
+    }
+
+    private static List<int> GetSelectedLineNumbers(TabDocument doc)
+    {
+        var selection = doc.Editor.TextArea.Selection;
+        if (selection == null || selection.IsEmpty)
+            return [];
+
+        int startLine = selection.StartPosition.Line;
+        int endLine = selection.EndPosition.Line;
+        if (startLine <= 0 || endLine <= 0)
+            return [];
+
+        int firstLine = Math.Min(startLine, endLine);
+        int lastLine = Math.Max(startLine, endLine);
+        return Enumerable.Range(firstLine, lastLine - firstLine + 1).ToList();
+    }
+
+    private static string BuildMetadataLine(IReadOnlyCollection<int> highlightedLines)
+    {
+        var metadata = new FileMetadata { HighlightLines = highlightedLines.OrderBy(n => n).ToList() };
+        return $"{MetadataPrefix}{JsonSerializer.Serialize(metadata)}";
+    }
+
+    private static bool TryReadMetadataLine(string text, int startIndex, out FileMetadata metadata, out int nextContentStart)
+    {
+        metadata = new FileMetadata();
+        nextContentStart = startIndex;
+        if (startIndex >= text.Length)
+            return false;
+
+        int lineEnd = text.IndexOf('\n', startIndex);
+        if (lineEnd < 0)
+            lineEnd = text.Length;
+
+        var lineText = text[startIndex..lineEnd];
+        if (lineText.EndsWith('\r'))
+            lineText = lineText[..^1];
+
+        if (!lineText.StartsWith(MetadataPrefix, StringComparison.Ordinal))
+            return false;
+
+        var payload = lineText[MetadataPrefix.Length..].Trim();
+        if (payload.Length > 0)
+        {
+            try
+            {
+                metadata = JsonSerializer.Deserialize<FileMetadata>(payload) ?? new FileMetadata();
+            }
+            catch
+            {
+                metadata = new FileMetadata();
+            }
+        }
+
+        nextContentStart = lineEnd < text.Length ? lineEnd + 1 : lineEnd;
+        return true;
+    }
+
+    private static void RedrawHighlight(TabDocument doc)
+        => doc.Editor.TextArea.TextView.Redraw();
+
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -294,6 +549,15 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 doc.Editor.Document.Insert(doc.Editor.Document.TextLength, new string('\n', 10));
                 doc.Editor.ScrollToEnd();
+            }
+        }
+        else if (e.Key == Key.J && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            var doc = CurrentDoc();
+            if (doc != null)
+            {
+                e.Handled = true;
+                ToggleHighlightedCaretLine(doc);
             }
         }
     }
@@ -540,8 +804,10 @@ public partial class MainWindow : Window
                     if (IsEffectivelyEmpty(text)) continue;
 
                     // Divider format: ^---name^---
+                    // Metadata format: ^meta^{"highlightLine":N}
                     // Content format: plain text (verbatim)
                     sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
+                    sw.WriteLine(BuildMetadataLine(GetHighlightedLineNumbers(doc)));
                     sw.Write(text);
 
                     // Guarantee next divider starts on its own line
@@ -671,6 +937,13 @@ public partial class MainWindow : Window
                 if (contentStart < text.Length && text[contentStart] == '\r') contentStart++;
                 if (contentStart < text.Length && text[contentStart] == '\n') contentStart++;
 
+                FileMetadata metadata = new();
+                if (TryReadMetadataLine(text, contentStart, out var parsedMetadata, out var contentAfterMetadata))
+                {
+                    metadata = parsedMetadata;
+                    contentStart = contentAfterMetadata;
+                }
+
                 int contentEnd = i + 1 < matches.Count
                     ? matches[i + 1].Index
                     : text.Length;
@@ -683,6 +956,10 @@ public partial class MainWindow : Window
                 // New format keeps content verbatim; no escaping/decoding
 
                 var doc = CreateTab(name, content);
+                var linesToRestore = metadata.HighlightLines != null && metadata.HighlightLines.Count > 0
+                    ? metadata.HighlightLines
+                    : (metadata.HighlightLine is int legacyLine ? [legacyLine] : []);
+                SetHighlightedLines(doc, linesToRestore, markDirty: false);
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
