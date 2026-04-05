@@ -321,6 +321,7 @@ public partial class MainWindow : Window
         };
         editor.Options.HighlightCurrentLine = true;
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
+        EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         return editor;
     }
