@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -16,6 +17,8 @@ using System.Windows.Navigation;
 using System.Windows.Threading;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 using Noted.Models;
@@ -87,6 +90,33 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
+    private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
+
+    private static IHighlightingDefinition CreateJsonSyntaxHighlighting()
+    {
+        const string jsonXshd = @"<?xml version=""1.0"" encoding=""utf-8""?>
+<SyntaxDefinition name=""JSON"" extensions="".json"" xmlns=""http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008"">
+  <Color name=""PropertyName"" foreground=""#0451A5"" />
+  <Color name=""String"" foreground=""#A31515"" />
+  <Color name=""Number"" foreground=""#098658"" />
+  <Color name=""Keyword"" foreground=""#0000FF"" fontWeight=""bold"" />
+  <Color name=""Punctuation"" foreground=""#7A7A7A"" />
+  <RuleSet ignoreCase=""false"">
+    <Rule color=""PropertyName"">""(?:\\.|[^""\\])*""(?=\s*:)</Rule>
+    <Rule color=""String"">""(?:\\.|[^""\\])*""</Rule>
+    <Rule color=""Number"">-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?</Rule>
+    <Rule color=""Keyword"">\b(?:true|false|null)\b</Rule>
+    <Rule color=""Punctuation"">[\{\}\[\],:]</Rule>
+  </RuleSet>
+</SyntaxDefinition>";
+
+        using var stringReader = new StringReader(jsonXshd);
+        using var xmlReader = XmlReader.Create(stringReader);
+        return HighlightingLoader.Load(xmlReader, HighlightingManager.Instance);
+    }
+
+    private static void EnableJsonSyntaxHighlighting(TextEditor editor)
+        => editor.SyntaxHighlighting = JsonSyntaxHighlighting.Value;
 
     private static Brush CreateFrozenBrush(Color color)
     {
@@ -363,6 +393,7 @@ public partial class MainWindow : Window
             var selectionLength = editor.SelectionLength;
             editor.Document.Replace(selectionStart, selectionLength, formatted);
             editor.Select(selectionStart, formatted.Length);
+            EnableJsonSyntaxHighlighting(editor);
         }
         catch (JsonException)
         {
