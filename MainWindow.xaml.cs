@@ -346,21 +346,6 @@ public partial class MainWindow : Window
     {
         var menu = new ContextMenu();
 
-        var undoItem = new MenuItem { Header = "Undo" };
-        undoItem.Click += (_, _) => editor.Undo();
-
-        var redoItem = new MenuItem { Header = "Redo" };
-        redoItem.Click += (_, _) => editor.Redo();
-
-        var cutItem = new MenuItem { Header = "Cut" };
-        cutItem.Click += (_, _) => editor.Cut();
-
-        var copyItem = new MenuItem { Header = "Copy" };
-        copyItem.Click += (_, _) => editor.Copy();
-
-        var pasteItem = new MenuItem { Header = "Paste" };
-        pasteItem.Click += (_, _) => editor.Paste();
-
         var formatJsonItem = new MenuItem { Header = "Format selection as pretty JSON" };
         formatJsonItem.Click += (_, _) => FormatSelectedJson(editor);
         var copySelectionItem = new MenuItem { Header = "Copy Selection To" };
@@ -371,13 +356,6 @@ public partial class MainWindow : Window
         moveSelectionItem.Items.Add(new MenuItem { Header = "(Loading...)", IsEnabled = false });
         moveSelectionItem.SubmenuOpened += (_, _) => PopulateTransferMenu(moveSelectionItem, editor, moveSelection: true);
 
-        menu.Items.Add(undoItem);
-        menu.Items.Add(redoItem);
-        menu.Items.Add(new Separator());
-        menu.Items.Add(cutItem);
-        menu.Items.Add(copyItem);
-        menu.Items.Add(pasteItem);
-        menu.Items.Add(new Separator());
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
@@ -385,11 +363,6 @@ public partial class MainWindow : Window
         menu.Opened += (_, _) =>
         {
             bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
-            undoItem.IsEnabled = editor.CanUndo;
-            redoItem.IsEnabled = editor.CanRedo;
-            cutItem.IsEnabled = hasSelection;
-            copyItem.IsEnabled = hasSelection;
-            pasteItem.IsEnabled = Clipboard.ContainsText();
             formatJsonItem.IsEnabled = hasSelection;
             copySelectionItem.IsEnabled = hasSelection;
             moveSelectionItem.IsEnabled = hasSelection;
