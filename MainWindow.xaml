@@ -8,8 +8,9 @@
         Icon="logo/logo.png"
         Closing="Window_Closing">
 
-    <DockPanel>
-        <DockPanel DockPanel.Dock="Top">
+    <Grid>
+        <DockPanel>
+            <DockPanel DockPanel.Dock="Top">
             <Border DockPanel.Dock="Left" Padding="6,2,4,2" VerticalAlignment="Center">
                 <Image Source="logo/logo.png" Width="24" Height="24" Stretch="Uniform"/>
             </Border>
@@ -57,30 +58,39 @@
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
                 </MenuItem>
             </Menu>
-        </DockPanel>
+            </DockPanel>
 
         <!-- Status bar -->
-        <StatusBar DockPanel.Dock="Bottom" Background="#F0F0F0">
-            <StatusBarItem>
-                <TextBlock x:Name="StatusLine" Text="Ln 1" MinWidth="50"/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <TextBlock x:Name="StatusColumn" Text="Col 1" MinWidth="50"/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <TextBlock x:Name="StatusUnsavedDot" Text=""/>
-            </StatusBarItem>
-            <Separator/>
-            <StatusBarItem>
-                <TextBlock x:Name="StatusAutoSave" Text="" Foreground="#555"/>
-            </StatusBarItem>
-        </StatusBar>
+            <StatusBar DockPanel.Dock="Bottom" Background="#F0F0F0">
+                <StatusBarItem>
+                    <TextBlock x:Name="StatusLine" Text="Ln 1" MinWidth="50"/>
+                </StatusBarItem>
+                <Separator/>
+                <StatusBarItem>
+                    <TextBlock x:Name="StatusColumn" Text="Col 1" MinWidth="50"/>
+                </StatusBarItem>
+                <Separator/>
+                <StatusBarItem>
+                    <TextBlock x:Name="StatusUnsavedDot" Text=""/>
+                </StatusBarItem>
+                <Separator/>
+                <StatusBarItem>
+                    <TextBlock x:Name="StatusAutoSave" Text="" Foreground="#555"/>
+                </StatusBarItem>
+            </StatusBar>
 
         <!-- Tab control -->
-        <TabControl x:Name="MainTabControl"
-                    SelectionChanged="MainTabControl_SelectionChanged"
-                    Background="White"/>
-    </DockPanel>
+            <TabControl x:Name="MainTabControl"
+                        SelectionChanged="MainTabControl_SelectionChanged"
+                        Background="White"/>
+        </DockPanel>
+
+        <TextBlock Text="0.9"
+                   HorizontalAlignment="Right"
+                   VerticalAlignment="Bottom"
+                   Margin="0,0,8,4"
+                   Foreground="#666"
+                   FontSize="11"
+                   IsHitTestVisible="False"/>
+    </Grid>
 </Window>
