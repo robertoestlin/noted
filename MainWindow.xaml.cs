@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -38,6 +39,7 @@ public partial class MainWindow : Window
     private bool _lastSaveIncludedCloudCopy = false;
     private int _activeTabIndex = 0;
     private readonly List<ClosedTabEntry> _closedTabHistory = [];
+    private List<UserProfile> _users = [];
 
     private const string SettingsFileName = "settings.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
@@ -141,6 +143,23 @@ public partial class MainWindow : Window
 
         // Current format supports multiple highlighted lines.
         public List<int>? HighlightLines { get; set; }
+
+        // Optional line ownership metadata.
+        public List<FileLineAssignee>? Assignees { get; set; }
+    }
+
+    private sealed class FileLineAssignee
+    {
+        public int Line { get; set; }
+        public string Person { get; set; } = string.Empty;
+    }
+
+    private sealed class UserProfile
+    {
+        public string Name { get; set; } = string.Empty;
+        public string Color { get; set; } = string.Empty;
+
+        public override string ToString() => Name;
     }
 
     private sealed class ClosedTabEntry
@@ -153,20 +172,42 @@ public partial class MainWindow : Window
     private sealed class HighlightLineRenderer : IBackgroundRenderer
     {
         private readonly Func<IReadOnlyCollection<int>> _lineProvider;
+        private readonly Func<IReadOnlyDictionary<int, string>> _assigneeProvider;
+        private readonly Func<string, Color> _assigneeColorProvider;
         private readonly Func<int, bool> _lineSelectionProvider;
         private readonly Func<Brush> _normalBrushProvider;
         private readonly Func<Brush> _selectedBrushProvider;
 
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
+            Func<IReadOnlyDictionary<int, string>> assigneeProvider,
+            Func<string, Color> assigneeColorProvider,
             Func<int, bool> lineSelectionProvider,
             Func<Brush> normalBrushProvider,
             Func<Brush> selectedBrushProvider)
         {
             _lineProvider = lineProvider;
+            _assigneeProvider = assigneeProvider;
+            _assigneeColorProvider = assigneeColorProvider;
             _lineSelectionProvider = lineSelectionProvider;
             _normalBrushProvider = normalBrushProvider;
             _selectedBrushProvider = selectedBrushProvider;
+        }
+
+        private static Color ContrastTextColor(Color background)
+        {
+            // W3C-ish luminance threshold.
+            var luminance = (0.299 * background.R) + (0.587 * background.G) + (0.114 * background.B);
+            return luminance >= 150 ? Color.FromRgb(25, 35, 30) : Colors.White;
+        }
+
+        private static Color Darken(Color color, double factor)
+        {
+            var f = Math.Max(0, Math.Min(1, factor));
+            return Color.FromRgb(
+                (byte)Math.Round(color.R * f),
+                (byte)Math.Round(color.G * f),
+                (byte)Math.Round(color.B * f));
         }
 
         // Draw on selection layer so highlight remains visible even when selected.
@@ -178,13 +219,59 @@ public partial class MainWindow : Window
                 return;
 
             var highlightedLines = _lineProvider();
-            if (highlightedLines.Count == 0)
+            if (highlightedLines.Count > 0)
+            {
+                foreach (var lineNumber in highlightedLines)
+                {
+                    if (lineNumber < 1 || lineNumber > textView.Document.LineCount)
+                        continue;
+
+                    var line = textView.Document.GetLineByNumber(lineNumber);
+                    var segment = new TextSegment
+                    {
+                        StartOffset = line.Offset,
+                        EndOffset = line.Offset + line.Length
+                    };
+
+                    foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
+                    {
+                        var fullWidthRect = new Rect(0, rect.Top, textView.ActualWidth, rect.Height);
+                        var brush = _lineSelectionProvider(lineNumber) ? _selectedBrushProvider() : _normalBrushProvider();
+                        drawingContext.DrawRectangle(brush, null, fullWidthRect);
+                    }
+                }
+            }
+
+            var assignments = _assigneeProvider();
+            if (assignments.Count == 0)
                 return;
 
-            foreach (var lineNumber in highlightedLines)
+            double pixelsPerDip = VisualTreeHelper.GetDpi(textView).PixelsPerDip;
+            var typeface = new Typeface("Segoe UI");
+            var styleCache = new Dictionary<string, (Brush Background, Brush Foreground, Pen Border)>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pair in assignments)
             {
+                int lineNumber = pair.Key;
                 if (lineNumber < 1 || lineNumber > textView.Document.LineCount)
                     continue;
+
+                var person = pair.Value?.Trim();
+                if (string.IsNullOrWhiteSpace(person))
+                    continue;
+
+                if (!styleCache.TryGetValue(person, out var style))
+                {
+                    var userColor = _assigneeColorProvider(person);
+                    var bgBrush = new SolidColorBrush(userColor);
+                    var fgBrush = new SolidColorBrush(ContrastTextColor(userColor));
+                    var borderPen = new Pen(new SolidColorBrush(Darken(userColor, 0.7)), 0.9);
+                    bgBrush.Freeze();
+                    fgBrush.Freeze();
+                    borderPen.Freeze();
+                    style = (bgBrush, fgBrush, borderPen);
+                    styleCache[person] = style;
+                }
 
                 var line = textView.Document.GetLineByNumber(lineNumber);
                 var segment = new TextSegment
@@ -193,12 +280,30 @@ public partial class MainWindow : Window
                     EndOffset = line.Offset + line.Length
                 };
 
-                foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
-                {
-                    var fullWidthRect = new Rect(0, rect.Top, textView.ActualWidth, rect.Height);
-                    var brush = _lineSelectionProvider(lineNumber) ? _selectedBrushProvider() : _normalBrushProvider();
-                    drawingContext.DrawRectangle(brush, null, fullWidthRect);
-                }
+                var lineRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
+                if (lineRects.Count == 0)
+                    continue;
+
+                var label = person;
+                var formattedText = new FormattedText(
+                    label,
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    typeface,
+                    11,
+                    style.Foreground,
+                    pixelsPerDip);
+
+                double paddingX = 6;
+                double badgeHeight = Math.Max(16, lineRects[0].Height - 2);
+                double badgeWidth = formattedText.WidthIncludingTrailingWhitespace + (paddingX * 2);
+                double lineEndX = lineRects.Max(rect => rect.Right);
+                double x = Math.Max(0, Math.Min(textView.ActualWidth - badgeWidth - 4, lineEndX + 14));
+                double y = lineRects[0].Top + Math.Max(0, (lineRects[0].Height - badgeHeight) / 2);
+
+                var badgeRect = new Rect(x, y, badgeWidth, badgeHeight);
+                drawingContext.DrawRoundedRectangle(style.Background, style.Border, badgeRect, 4, 4);
+                drawingContext.DrawText(formattedText, new Point(x + paddingX, y + Math.Max(0, (badgeHeight - formattedText.Height) / 2)));
             }
         }
     }
@@ -275,6 +380,8 @@ public partial class MainWindow : Window
 
         var highlightRenderer = new HighlightLineRenderer(
             () => GetHighlightedLineNumbers(doc),
+            () => GetLineAssignments(doc),
+            person => GetUserColor(person),
             line => IsLineSelected(doc.Editor, line),
             () => _highlightedLineBrush,
             () => _selectedHighlightedLineBrush);
@@ -359,10 +466,17 @@ public partial class MainWindow : Window
         var moveSelectionItem = new MenuItem { Header = "Move Selection To" };
         moveSelectionItem.Items.Add(new MenuItem { Header = "(Loading...)", IsEnabled = false });
         moveSelectionItem.SubmenuOpened += (_, _) => PopulateTransferMenu(moveSelectionItem, editor, moveSelection: true);
+        var assignLineOwnerItem = new MenuItem { Header = "Assign Selected Line(s)..." };
+        assignLineOwnerItem.Click += (_, _) => AssignSelectedLines(editor);
+        var clearLineOwnerItem = new MenuItem { Header = "Clear Selected Line Assignment(s)" };
+        clearLineOwnerItem.Click += (_, _) => ClearSelectedLineAssignments(editor);
 
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(assignLineOwnerItem);
+        menu.Items.Add(clearLineOwnerItem);
 
         menu.Opened += (_, _) =>
         {
@@ -370,6 +484,11 @@ public partial class MainWindow : Window
             formatJsonItem.IsEnabled = hasSelection;
             copySelectionItem.IsEnabled = hasSelection;
             moveSelectionItem.IsEnabled = hasSelection;
+
+            var doc = FindDocByEditor(editor);
+            bool canAssign = doc != null && _users.Count > 0;
+            assignLineOwnerItem.IsEnabled = canAssign;
+            clearLineOwnerItem.IsEnabled = doc != null;
         };
 
         return menu;
@@ -836,6 +955,324 @@ public partial class MainWindow : Window
         return Enumerable.Range(firstLine, lastLine - firstLine + 1).ToList();
     }
 
+    private static List<int> GetSelectedOrCaretLineNumbers(TabDocument doc)
+    {
+        var selectedLines = GetSelectedLineNumbers(doc);
+        if (selectedLines.Count > 0)
+            return selectedLines.Distinct().ToList();
+
+        return [Math.Max(1, doc.Editor.TextArea.Caret.Line)];
+    }
+
+    private IReadOnlyDictionary<int, string> GetLineAssignments(TabDocument doc)
+    {
+        if (doc.LineAssigneeAnchors.Count == 0)
+            return new Dictionary<int, string>();
+
+        var result = new Dictionary<int, string>();
+        for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineAssigneeAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            var person = entry.Person?.Trim();
+            if (string.IsNullOrWhiteSpace(person))
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            result[anchor.Line] = person;
+        }
+
+        return result;
+    }
+
+    private bool TryGetLineAssignee(TabDocument doc, int lineNumber, out string person)
+    {
+        person = string.Empty;
+        for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineAssigneeAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line != lineNumber)
+                continue;
+
+            person = entry.Person?.Trim() ?? string.Empty;
+            if (person.Length == 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool SetLineAssignee(TabDocument doc, int lineNumber, string person, bool markDirty = true, bool redraw = true)
+    {
+        var cleaned = person.Trim();
+        if (cleaned.Length == 0)
+            return false;
+
+        int lineCount = doc.Editor.Document.LineCount;
+        if (lineCount <= 0)
+            lineCount = 1;
+
+        int line = Math.Max(1, Math.Min(lineNumber, lineCount));
+        bool changed = false;
+        bool foundExisting = false;
+
+        for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineAssigneeAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line != line)
+                continue;
+
+            if (!foundExisting)
+            {
+                foundExisting = true;
+                if (!string.Equals(entry.Person, cleaned, StringComparison.Ordinal))
+                {
+                    entry.Person = cleaned;
+                    changed = true;
+                }
+            }
+            else
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                changed = true;
+            }
+        }
+
+        if (!foundExisting)
+        {
+            var docLine = doc.Editor.Document.GetLineByNumber(line);
+            var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
+            anchor.MovementType = AnchorMovementType.BeforeInsertion;
+            doc.LineAssigneeAnchors.Add(new TabDocument.LineAssigneeAnchor
+            {
+                Anchor = anchor,
+                Person = cleaned
+            });
+            changed = true;
+        }
+
+        if (changed && markDirty)
+            MarkDirty(doc);
+        if (changed && redraw)
+            RedrawHighlight(doc);
+        return changed;
+    }
+
+    private bool RemoveLineAssignee(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+    {
+        bool removed = false;
+        for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineAssigneeAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line == lineNumber)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                removed = true;
+            }
+        }
+
+        if (removed && markDirty)
+            MarkDirty(doc);
+        if (removed && redraw)
+            RedrawHighlight(doc);
+        return removed;
+    }
+
+    private void SetLineAssignments(TabDocument doc, IEnumerable<FileLineAssignee>? assignees, bool markDirty = true)
+    {
+        doc.LineAssigneeAnchors.Clear();
+
+        if (assignees != null)
+        {
+            foreach (var assignee in assignees)
+            {
+                if (assignee == null || assignee.Line <= 0 || string.IsNullOrWhiteSpace(assignee.Person))
+                    continue;
+
+                SetLineAssignee(doc, assignee.Line, assignee.Person, markDirty: false, redraw: false);
+            }
+        }
+
+        if (markDirty)
+            MarkDirty(doc);
+        RedrawHighlight(doc);
+    }
+
+    private void AssignSelectedLines(TextEditor editor)
+    {
+        var doc = FindDocByEditor(editor);
+        if (doc == null)
+            return;
+
+        if (_users.Count == 0)
+        {
+            MessageBox.Show(
+                "No users found. Add users from Tools > Users first.",
+                "Assign Line",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var lines = GetSelectedOrCaretLineNumbers(doc);
+        if (lines.Count == 0)
+            return;
+
+        var existingOwners = new List<string>();
+        foreach (var line in lines)
+        {
+            if (TryGetLineAssignee(doc, line, out var owner) && !string.IsNullOrWhiteSpace(owner))
+                existingOwners.Add(owner);
+        }
+        existingOwners = existingOwners
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        string initialOwner = existingOwners.Count == 1 ? existingOwners[0] : string.Empty;
+        var selectedOwner = ShowLineOwnerDialog(initialOwner);
+        if (selectedOwner == null)
+            return;
+
+        var cleaned = selectedOwner.Trim();
+        if (cleaned.Length == 0)
+        {
+            MessageBox.Show(
+                "Please enter a person name.",
+                "Assign Line",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        bool changed = false;
+        foreach (var line in lines)
+            changed |= SetLineAssignee(doc, line, cleaned, markDirty: false, redraw: false);
+
+        if (changed)
+        {
+            MarkDirty(doc);
+            RedrawHighlight(doc);
+        }
+    }
+
+    private void ClearSelectedLineAssignments(TextEditor editor)
+    {
+        var doc = FindDocByEditor(editor);
+        if (doc == null)
+            return;
+
+        var lines = GetSelectedOrCaretLineNumbers(doc);
+        bool changed = false;
+        foreach (var line in lines)
+            changed |= RemoveLineAssignee(doc, line, markDirty: false, redraw: false);
+
+        if (changed)
+        {
+            MarkDirty(doc);
+            RedrawHighlight(doc);
+        }
+    }
+
+    private string? ShowLineOwnerDialog(string initialOwner)
+    {
+        var dlg = new Window
+        {
+            Title = "Assign Line Owner",
+            Width = 390,
+            Height = 180,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var root = new StackPanel { Margin = new Thickness(12) };
+        root.Children.Add(new TextBlock
+        {
+            Text = "Assign to user:",
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        var combo = new ComboBox { Margin = new Thickness(0, 0, 0, 10), IsEditable = false };
+        foreach (var user in _users)
+            combo.Items.Add(user.Name);
+        if (!string.IsNullOrWhiteSpace(initialOwner))
+        {
+            var selected = _users
+                .Select(user => user.Name)
+                .FirstOrDefault(userName => string.Equals(userName, initialOwner, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(selected))
+                combo.SelectedItem = selected;
+        }
+        if (combo.SelectedItem == null && combo.Items.Count > 0)
+            combo.SelectedIndex = 0;
+        root.Children.Add(combo);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+
+        ok.Click += (_, _) =>
+        {
+            if (combo.SelectedItem is not string)
+                return;
+            dlg.DialogResult = true;
+        };
+        dlg.Loaded += (_, _) =>
+        {
+            combo.Focus();
+            Keyboard.Focus(combo);
+        };
+
+        combo.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+        };
+
+        dlg.Content = root;
+        var result = dlg.ShowDialog();
+        return result == true ? combo.SelectedItem as string : null;
+    }
+
     private static bool TryReadMetadataLine(string text, int startIndex, out FileMetadata metadata, out int nextContentStart)
     {
         metadata = new FileMetadata();
@@ -861,6 +1298,7 @@ public partial class MainWindow : Window
         // Legacy metadata line marker from older backups only.
         if (!payload.Contains("\"HighlightLine\"", StringComparison.Ordinal)
             && !payload.Contains("\"HighlightLines\"", StringComparison.Ordinal)
+            && !payload.Contains("\"Assignees\"", StringComparison.Ordinal)
             && !payload.Contains("\"EndsWithNewline\"", StringComparison.Ordinal))
             return false;
 
@@ -1462,6 +1900,25 @@ public partial class MainWindow : Window
     ///   ===filename2===
     ///   ...
     /// </summary>
+    private FileMetadata? CreateFileMetadata(TabDocument doc)
+    {
+        var highlighted = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
+        var assignees = GetLineAssignments(doc)
+            .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value))
+            .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
+            .OrderBy(entry => entry.Line)
+            .ToList();
+
+        if (highlighted.Count == 0 && assignees.Count == 0)
+            return null;
+
+        return new FileMetadata
+        {
+            HighlightLines = highlighted.Count > 0 ? highlighted : null,
+            Assignees = assignees.Count > 0 ? assignees : null
+        };
+    }
+
     private void SaveSession(
         bool updateStatus = true,
         bool forceCloudBackup = false,
@@ -1487,10 +1944,13 @@ public partial class MainWindow : Window
                         continue;
 
                     var text = doc.CachedText;
+                    var metadata = CreateFileMetadata(doc);
 
                     // Divider format: ^---name^---
                     // Content format: plain text (verbatim, no injected metadata line)
                     sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
+                    if (metadata != null)
+                        sw.WriteLine($"{MetadataPrefix} {JsonSerializer.Serialize(metadata)}");
                     sw.Write(text);
                     sw.WriteLine();
                 }
@@ -1628,8 +2088,12 @@ public partial class MainWindow : Window
                 if (contentStart < text.Length && text[contentStart] == '\n') contentStart++;
 
                 // Backward compatibility: older backups inserted a metadata line.
-                if (TryReadMetadataLine(text, contentStart, out _, out var contentAfterMetadata))
+                FileMetadata metadata = new();
+                if (TryReadMetadataLine(text, contentStart, out var parsedMetadata, out var contentAfterMetadata))
+                {
                     contentStart = contentAfterMetadata;
+                    metadata = parsedMetadata;
+                }
 
                 int contentEnd = i + 1 < matches.Count
                     ? matches[i + 1].Index
@@ -1643,6 +2107,11 @@ public partial class MainWindow : Window
                 // New format keeps content verbatim; no escaping/decoding
 
                 var doc = CreateTab(name, content);
+                var highlightedLines = metadata.HighlightLines ?? [];
+                if (highlightedLines.Count == 0 && metadata.HighlightLine.HasValue && metadata.HighlightLine.Value > 0)
+                    highlightedLines = [metadata.HighlightLine.Value];
+                SetHighlightedLines(doc, highlightedLines, markDirty: false);
+                SetLineAssignments(doc, metadata.Assignees, markDirty: false);
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
@@ -1725,6 +2194,7 @@ public partial class MainWindow : Window
     private void MenuReopenClosedTab_Click(object sender, RoutedEventArgs e) => ReopenLastClosedTab();
     private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
+    private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
@@ -1752,6 +2222,97 @@ public partial class MainWindow : Window
         SaveWindowSettings();
         if (!_sessionSaved)
             SaveSession(updateStatus: false);
+    }
+
+    private static List<UserProfile> NormalizeUsers(IEnumerable<UserProfile>? users)
+    {
+        if (users == null)
+            return [];
+
+        var byName = new Dictionary<string, UserProfile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var user in users)
+        {
+            if (user == null || string.IsNullOrWhiteSpace(user.Name))
+                continue;
+
+            var name = user.Name.Trim();
+            var color = NormalizeUserColor(user.Color, fallbackSeed: name);
+            byName[name] = new UserProfile { Name = name, Color = color };
+        }
+
+        return byName.Values
+            .OrderBy(user => user.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<UserProfile> BuildUsersFromLegacyNames(IEnumerable<string>? userNames)
+    {
+        if (userNames == null)
+            return [];
+
+        return NormalizeUsers(userNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => new UserProfile
+            {
+                Name = name.Trim(),
+                Color = ColorToHex(DeterministicUserColor(name.Trim()))
+            }));
+    }
+
+    private static string NormalizeUserColor(string? input, string fallbackSeed)
+    {
+        if (TryParseColor(input, out var parsed))
+            return ColorToHex(parsed);
+
+        return ColorToHex(DeterministicUserColor(fallbackSeed));
+    }
+
+    private static Color DeterministicUserColor(string seed)
+    {
+        int hash = Math.Abs((seed ?? string.Empty).GetHashCode(StringComparison.OrdinalIgnoreCase));
+        double hue = hash % 360;
+        return ColorFromHsv(hue, 0.50, 0.88);
+    }
+
+    private static Color RandomUserColor()
+    {
+        double hue = Random.Shared.NextDouble() * 360.0;
+        double saturation = 0.45 + (Random.Shared.NextDouble() * 0.30);
+        double value = 0.78 + (Random.Shared.NextDouble() * 0.18);
+        return ColorFromHsv(hue, saturation, value);
+    }
+
+    private static Color ColorFromHsv(double hue, double saturation, double value)
+    {
+        hue = ((hue % 360) + 360) % 360;
+        saturation = Math.Clamp(saturation, 0, 1);
+        value = Math.Clamp(value, 0, 1);
+
+        double c = value * saturation;
+        double x = c * (1 - Math.Abs(((hue / 60.0) % 2) - 1));
+        double m = value - c;
+
+        double r = 0, g = 0, b = 0;
+        if (hue < 60) { r = c; g = x; b = 0; }
+        else if (hue < 120) { r = x; g = c; b = 0; }
+        else if (hue < 180) { r = 0; g = c; b = x; }
+        else if (hue < 240) { r = 0; g = x; b = c; }
+        else if (hue < 300) { r = x; g = 0; b = c; }
+        else { r = c; g = 0; b = x; }
+
+        return Color.FromRgb(
+            (byte)Math.Round((r + m) * 255),
+            (byte)Math.Round((g + m) * 255),
+            (byte)Math.Round((b + m) * 255));
+    }
+
+    private Color GetUserColor(string person)
+    {
+        var user = _users.FirstOrDefault(u => string.Equals(u.Name, person, StringComparison.OrdinalIgnoreCase));
+        if (user != null && TryParseColor(user.Color, out var parsed))
+            return parsed;
+
+        return DeterministicUserColor(person);
     }
 
     // -- Window settings ------------------------------------------------------------------
@@ -1789,7 +2350,9 @@ public partial class MainWindow : Window
                 CloudSaveHours = _cloudSaveIntervalHours,
                 CloudSaveMinutes = _cloudSaveIntervalMinutes,
                 LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
-                ActiveTabIndex = MainTabControl.SelectedIndex
+                ActiveTabIndex = MainTabControl.SelectedIndex,
+                Users = _users.Select(user => user.Name).ToList(),
+                UserProfiles = NormalizeUsers(_users)
             };
             var primary = Path.Combine(_backupFolder, SettingsFileName);
             File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
@@ -1821,6 +2384,7 @@ public partial class MainWindow : Window
             _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
             _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
             _shortcutGoToLine = DefaultShortcutGoToLine;
+            _users = [];
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -1931,6 +2495,10 @@ public partial class MainWindow : Window
                 _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
             if (state.ActiveTabIndex >= 0)
                 _activeTabIndex = state.ActiveTabIndex;
+            var loadedUsers = NormalizeUsers(state.UserProfiles);
+            if (loadedUsers.Count == 0)
+                loadedUsers = BuildUsersFromLegacyNames(state.Users);
+            _users = loadedUsers;
             if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
                 _selectedLineColor = selectedLineColor;
             if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
@@ -2007,9 +2575,262 @@ public partial class MainWindow : Window
         public int? CloudSaveMinutes { get; set; }
         public DateTime? LastCloudCopyUtc { get; set; }
         public int ActiveTabIndex { get; set; } = 0;
+        public List<string>? Users { get; set; }
+        public List<UserProfile>? UserProfiles { get; set; }
     }
 
     // --- Settings dialog ----------------------------------------------------
+
+    private void ShowUsersDialog()
+    {
+        var users = NormalizeUsers(_users);
+        var dlg = new Window
+        {
+            Title = "Users",
+            Width = 520,
+            Height = 500,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+
+        var ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text = "Users available for line assignment:",
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+
+        var list = new ListBox
+        {
+            Height = 200,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        foreach (var user in users)
+            list.Items.Add(user);
+        content.Children.Add(list);
+
+        var addRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        addRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        addRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var txtUser = new TextBox { Margin = new Thickness(0, 0, 8, 0) };
+        var btnAdd = new Button { Content = "Add", Width = 80 };
+        Grid.SetColumn(txtUser, 0);
+        Grid.SetColumn(btnAdd, 1);
+        addRow.Children.Add(txtUser);
+        addRow.Children.Add(btnAdd);
+        content.Children.Add(addRow);
+
+        content.Children.Add(new TextBlock
+        {
+            Text = "Selected user's color:",
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var colorRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        colorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        colorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        colorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        colorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        string[] userColorOptions =
+        [
+            "LightSkyBlue",
+            "LightGreen",
+            "Khaki",
+            "LightSalmon",
+            "Plum",
+            "PaleTurquoise",
+            "MistyRose",
+            "PeachPuff",
+            "Lavender",
+            "#FF8BD3DD",
+            "#FFE0B3FF",
+            "#FFFFD58A",
+            "#FFC6E8A8"
+        ];
+
+        var cmbUserColor = new ComboBox { IsEditable = true, Margin = new Thickness(0, 0, 8, 0), MinWidth = 200 };
+        foreach (var option in userColorOptions)
+            cmbUserColor.Items.Add(option);
+
+        var btnApplyColor = new Button { Content = "Apply", Width = 70, Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+        var btnRandomColor = new Button { Content = "Randomize", Width = 90, Margin = new Thickness(0, 0, 8, 0), IsEnabled = false };
+        var colorPreview = new Border
+        {
+            Width = 24,
+            Height = 24,
+            BorderBrush = Brushes.Gray,
+            BorderThickness = new Thickness(1),
+            Background = Brushes.Transparent
+        };
+
+        Grid.SetColumn(cmbUserColor, 0);
+        Grid.SetColumn(btnApplyColor, 1);
+        Grid.SetColumn(btnRandomColor, 2);
+        Grid.SetColumn(colorPreview, 3);
+        colorRow.Children.Add(cmbUserColor);
+        colorRow.Children.Add(btnApplyColor);
+        colorRow.Children.Add(btnRandomColor);
+        colorRow.Children.Add(colorPreview);
+        content.Children.Add(colorRow);
+
+        var btnRemove = new Button
+        {
+            Content = "Remove Selected",
+            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        content.Children.Add(btnRemove);
+
+        void RefreshUsers(string? selectedUserName = null)
+        {
+            users = NormalizeUsers(users);
+            list.Items.Clear();
+            foreach (var user in users)
+                list.Items.Add(user);
+
+            if (!string.IsNullOrWhiteSpace(selectedUserName))
+            {
+                var selected = users.FirstOrDefault(user => string.Equals(user.Name, selectedUserName, StringComparison.OrdinalIgnoreCase));
+                if (selected != null)
+                    list.SelectedItem = selected;
+            }
+        }
+
+        void UpdateSelectedColorEditor()
+        {
+            bool hasSelection = list.SelectedItem is UserProfile;
+            btnApplyColor.IsEnabled = hasSelection;
+            btnRandomColor.IsEnabled = hasSelection;
+            if (!hasSelection)
+            {
+                cmbUserColor.Text = string.Empty;
+                colorPreview.Background = Brushes.Transparent;
+                return;
+            }
+
+            var selected = (UserProfile)list.SelectedItem;
+            cmbUserColor.Text = selected.Color;
+            if (TryParseColor(selected.Color, out var selectedColor))
+                colorPreview.Background = new SolidColorBrush(selectedColor);
+            else
+                colorPreview.Background = Brushes.Transparent;
+        }
+
+        void ApplyColorToSelectedUser(bool randomize)
+        {
+            if (list.SelectedItem is not UserProfile selectedUser)
+                return;
+
+            Color color;
+            if (randomize)
+            {
+                color = RandomUserColor();
+            }
+            else if (!TryParseColor(cmbUserColor.Text, out color))
+            {
+                MessageBox.Show("Please enter a valid color name or hex value.", "Users",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            selectedUser.Color = ColorToHex(color);
+            RefreshUsers(selectedUser.Name);
+            UpdateSelectedColorEditor();
+        }
+
+        btnAdd.Click += (_, _) =>
+        {
+            var name = (txtUser.Text ?? string.Empty).Trim();
+            if (name.Length == 0)
+                return;
+
+            var existing = users.FirstOrDefault(user => string.Equals(user.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+                users.Add(new UserProfile { Name = name, Color = ColorToHex(RandomUserColor()) });
+
+            txtUser.SelectAll();
+            RefreshUsers(name);
+            UpdateSelectedColorEditor();
+        };
+
+        txtUser.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                btnAdd.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+        };
+
+        btnRemove.Click += (_, _) =>
+        {
+            if (list.SelectedItem is UserProfile selectedUser)
+            {
+                users.RemoveAll(user => string.Equals(user.Name, selectedUser.Name, StringComparison.OrdinalIgnoreCase));
+                RefreshUsers();
+                UpdateSelectedColorEditor();
+            }
+        };
+
+        btnApplyColor.Click += (_, _) => ApplyColorToSelectedUser(randomize: false);
+        btnRandomColor.Click += (_, _) => ApplyColorToSelectedUser(randomize: true);
+        cmbUserColor.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                btnApplyColor.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+        };
+
+        list.SelectionChanged += (_, _) =>
+        {
+            if (list.SelectedItem is UserProfile selected)
+                txtUser.Text = selected.Name;
+            UpdateSelectedColorEditor();
+        };
+
+        ok.Click += (_, _) =>
+        {
+            users = NormalizeUsers(users);
+            dlg.DialogResult = true;
+        };
+
+        root.Children.Add(content);
+        dlg.Content = root;
+        dlg.Loaded += (_, _) =>
+        {
+            txtUser.Focus();
+            Keyboard.Focus(txtUser);
+            UpdateSelectedColorEditor();
+        };
+
+        if (dlg.ShowDialog() != true)
+            return;
+
+        _users = NormalizeUsers(users);
+        foreach (var doc in _docs.Values)
+            RedrawHighlight(doc);
+        SaveWindowSettings();
+    }
 
     private void ShowSettingsDialog()
     {

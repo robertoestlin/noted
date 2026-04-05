@@ -7,6 +7,12 @@ namespace Noted.Models;
 
 public class TabDocument
 {
+    public sealed class LineAssigneeAnchor
+    {
+        public TextAnchor Anchor { get; init; } = null!;
+        public string Person { get; set; } = string.Empty;
+    }
+
     /// <summary>Display name shown on the tab header (e.g. "file1").</summary>
     public string Header { get; set; } = string.Empty;
 
@@ -24,6 +30,9 @@ public class TabDocument
 
     /// <summary>Anchors for highlighted lines (track edits as text shifts).</summary>
     public List<TextAnchor> HighlightAnchors { get; } = [];
+
+    /// <summary>Anchors for line assignees (track edits as text shifts).</summary>
+    public List<LineAssigneeAnchor> LineAssigneeAnchors { get; } = [];
 
     /// <summary>Renderer used to paint the full-width highlighted line background.</summary>
     public IBackgroundRenderer? HighlightRenderer { get; set; }

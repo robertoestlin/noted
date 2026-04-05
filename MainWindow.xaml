@@ -48,6 +48,7 @@
                 </MenuItem>
                 <MenuItem Header="_Tools">
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
+                    <MenuItem Header="_Users" Click="MenuUsers_Click"/>
                 </MenuItem>
             </Menu>
         </DockPanel>
