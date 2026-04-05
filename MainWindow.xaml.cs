@@ -291,7 +291,87 @@ public partial class MainWindow : Window
         };
         editor.Options.HighlightCurrentLine = true;
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
+        editor.ContextMenu = BuildEditorContextMenu(editor);
         return editor;
+    }
+
+    private ContextMenu BuildEditorContextMenu(TextEditor editor)
+    {
+        var menu = new ContextMenu();
+
+        var undoItem = new MenuItem { Header = "Undo" };
+        undoItem.Click += (_, _) => editor.Undo();
+
+        var redoItem = new MenuItem { Header = "Redo" };
+        redoItem.Click += (_, _) => editor.Redo();
+
+        var cutItem = new MenuItem { Header = "Cut" };
+        cutItem.Click += (_, _) => editor.Cut();
+
+        var copyItem = new MenuItem { Header = "Copy" };
+        copyItem.Click += (_, _) => editor.Copy();
+
+        var pasteItem = new MenuItem { Header = "Paste" };
+        pasteItem.Click += (_, _) => editor.Paste();
+
+        var formatJsonItem = new MenuItem { Header = "Format selection as pretty JSON" };
+        formatJsonItem.Click += (_, _) => FormatSelectedJson(editor);
+
+        menu.Items.Add(undoItem);
+        menu.Items.Add(redoItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(cutItem);
+        menu.Items.Add(copyItem);
+        menu.Items.Add(pasteItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(formatJsonItem);
+
+        menu.Opened += (_, _) =>
+        {
+            bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
+            undoItem.IsEnabled = editor.CanUndo;
+            redoItem.IsEnabled = editor.CanRedo;
+            cutItem.IsEnabled = hasSelection;
+            copyItem.IsEnabled = hasSelection;
+            pasteItem.IsEnabled = Clipboard.ContainsText();
+            formatJsonItem.IsEnabled = hasSelection;
+        };
+
+        return menu;
+    }
+
+    private void FormatSelectedJson(TextEditor editor)
+    {
+        var selectedText = editor.SelectedText;
+        if (string.IsNullOrWhiteSpace(selectedText))
+            return;
+
+        try
+        {
+            using var jsonDocument = JsonDocument.Parse(selectedText, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+
+            var formatted = JsonSerializer.Serialize(jsonDocument.RootElement, new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            var selectionStart = editor.SelectionStart;
+            var selectionLength = editor.SelectionLength;
+            editor.Document.Replace(selectionStart, selectionLength, formatted);
+            editor.Select(selectionStart, formatted.Length);
+        }
+        catch (JsonException)
+        {
+            MessageBox.Show(
+                "Selected text is not valid JSON.",
+                "Pretty JSON",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
     }
 
     private void Editor_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
