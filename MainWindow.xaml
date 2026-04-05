@@ -17,6 +17,8 @@
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
                     <Separator/>
+                    <MenuItem Header="_Reopen Closed Tab" InputGestureText="Ctrl+Shift+T" Click="MenuReopenClosedTab_Click"/>
+                    <Separator/>
                     <MenuItem x:Name="MenuItemCloseTab" Header="_Close Tab" InputGestureText="Ctrl+W" Click="MenuCloseTab_Click"/>
                     <Separator/>
                     <MenuItem Header="E_xit" Click="MenuExit_Click"/>

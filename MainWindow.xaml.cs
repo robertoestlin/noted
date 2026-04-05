@@ -37,8 +37,11 @@ public partial class MainWindow : Window
     private bool _sessionSaved = false;
     private bool _lastSaveIncludedCloudCopy = false;
     private int _activeTabIndex = 0;
+    private readonly List<ClosedTabEntry> _closedTabHistory = [];
 
     private const string SettingsFileName = "settings.json";
+    private const string ClosedTabsFileName = "closed-tabs.json";
+    private const int MaxClosedTabs = 10;
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
     private static string DefaultCloudBackupFolder() => Path.Combine(DefaultBackupFolder(), "cloud");
@@ -61,6 +64,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutNewPrimary = "Ctrl+N";
     private const string DefaultShortcutNewSecondary = "Ctrl+T";
     private const string DefaultShortcutCloseTab = "Ctrl+W";
+    private const string DefaultShortcutReopenClosedTab = "Ctrl+Shift+T";
     private const string DefaultShortcutRenameTab = "F2";
     private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
@@ -89,6 +93,7 @@ public partial class MainWindow : Window
     private readonly List<KeyBinding> _shortcutBindings = [];
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
@@ -133,6 +138,13 @@ public partial class MainWindow : Window
 
         // Current format supports multiple highlighted lines.
         public List<int>? HighlightLines { get; set; }
+    }
+
+    private sealed class ClosedTabEntry
+    {
+        public string Header { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+        public bool IsDirty { get; set; }
     }
 
     private sealed class HighlightLineRenderer : IBackgroundRenderer
@@ -196,6 +208,7 @@ public partial class MainWindow : Window
         // Routed commands -> our handlers
         CommandBindings.Add(new CommandBinding(ApplicationCommands.New, (_, _) => NewTab()));
         CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (_, _) => CloseCurrentTab()));
+        CommandBindings.Add(new CommandBinding(ReopenClosedTabCommand, (_, _) => ReopenLastClosedTab()));
         CommandBindings.Add(new CommandBinding(RenameTabCommand, (_, _) => ExecuteRenameCurrentTab()));
         CommandBindings.Add(new CommandBinding(AddBlankLinesCommand, (_, _) => ExecuteAddBlankLines()));
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
@@ -213,6 +226,7 @@ public partial class MainWindow : Window
         LoadWindowSettings();
         ApplyShortcutBindings();
         EnsureSettingsFileExists();
+        LoadClosedTabHistory();
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
 
         // Restore previous session; if nothing to restore, open a blank tab
@@ -923,6 +937,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutNewPrimary, ApplicationCommands.New);
         AddShortcutBinding(_shortcutNewSecondary, ApplicationCommands.New);
         AddShortcutBinding(_shortcutCloseTab, ApplicationCommands.Close);
+        AddShortcutBinding(DefaultShortcutReopenClosedTab, ReopenClosedTabCommand);
         AddShortcutBinding(_shortcutRenameTab, RenameTabCommand);
         AddShortcutBinding(_shortcutAddBlankLines, AddBlankLinesCommand);
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
@@ -1121,6 +1136,84 @@ public partial class MainWindow : Window
             CloseTab(tab);
     }
 
+    private string ClosedTabsHistoryPath() => Path.Combine(_backupFolder, ClosedTabsFileName);
+
+    private void AddClosedTabToHistory(TabDocument doc)
+    {
+        _closedTabHistory.Insert(0, new ClosedTabEntry
+        {
+            Header = doc.Header,
+            Content = doc.CachedText,
+            IsDirty = doc.IsDirty
+        });
+
+        if (_closedTabHistory.Count > MaxClosedTabs)
+            _closedTabHistory.RemoveRange(MaxClosedTabs, _closedTabHistory.Count - MaxClosedTabs);
+
+        SaveClosedTabHistory();
+    }
+
+    private void SaveClosedTabHistory()
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(ClosedTabsHistoryPath(), JsonSerializer.Serialize(_closedTabHistory, options));
+        }
+        catch
+        {
+            // Non-critical: tab close still succeeds.
+        }
+    }
+
+    private void LoadClosedTabHistory()
+    {
+        _closedTabHistory.Clear();
+
+        try
+        {
+            var path = ClosedTabsHistoryPath();
+            if (!File.Exists(path))
+                return;
+
+            var parsed = JsonSerializer.Deserialize<List<ClosedTabEntry>>(File.ReadAllText(path));
+            if (parsed == null)
+                return;
+
+            foreach (var entry in parsed
+                .Where(e => e != null)
+                .Where(e => !string.IsNullOrWhiteSpace(e.Header))
+                .Take(MaxClosedTabs))
+            {
+                _closedTabHistory.Add(new ClosedTabEntry
+                {
+                    Header = entry.Header.Trim(),
+                    Content = entry.Content ?? string.Empty,
+                    IsDirty = entry.IsDirty
+                });
+            }
+        }
+        catch
+        {
+            // Ignore corrupt file and start with empty history.
+        }
+    }
+
+    private void ReopenLastClosedTab()
+    {
+        if (_closedTabHistory.Count == 0)
+            return;
+
+        var entry = _closedTabHistory[0];
+        _closedTabHistory.RemoveAt(0);
+        SaveClosedTabHistory();
+
+        var doc = CreateTab(entry.Header, entry.Content);
+        doc.IsDirty = entry.IsDirty;
+        RefreshTabHeader(doc);
+    }
+
     private bool ConfirmDiscardUnsavedTab(string tabName)
     {
         var dlg = new Window
@@ -1203,6 +1296,8 @@ public partial class MainWindow : Window
                 return false;
         }
 
+        doc.CachedText = doc.Editor.Text;
+        AddClosedTabToHistory(doc);
         _docs.Remove(tab);
         MainTabControl.Items.Remove(tab);
 
@@ -1522,6 +1617,7 @@ public partial class MainWindow : Window
     }
 
     private void MenuCloseTab_Click(object sender, RoutedEventArgs e) => CloseCurrentTab();
+    private void MenuReopenClosedTab_Click(object sender, RoutedEventArgs e) => ReopenLastClosedTab();
     private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
 
@@ -1761,6 +1857,15 @@ public partial class MainWindow : Window
         if (!File.Exists(src)) return;
         Directory.CreateDirectory(toFolder);
         var dst = Path.Combine(toFolder, SettingsFileName);
+        File.Copy(src, dst, overwrite: true);
+    }
+
+    private static void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
+    {
+        var src = Path.Combine(fromFolder, ClosedTabsFileName);
+        if (!File.Exists(src)) return;
+        Directory.CreateDirectory(toFolder);
+        var dst = Path.Combine(toFolder, ClosedTabsFileName);
         File.Copy(src, dst, overwrite: true);
     }
 
@@ -2055,7 +2160,13 @@ public partial class MainWindow : Window
 
         shortkeysPanel.Children.Add(new TextBlock
         {
-            Text = "Ctrl+MouseWheel changes font size and is not configurable.",
+            Text = "Ctrl+Shift+T reopens the most recently closed tab.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        shortkeysPanel.Children.Add(new TextBlock
+        {
+            Text = "Ctrl+MouseWheel changes font size.",
             Foreground = Brushes.DimGray
         });
         tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
@@ -2237,7 +2348,10 @@ public partial class MainWindow : Window
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
                         StringComparison.OrdinalIgnoreCase))
+                {
                     CopySettingsFileToBackupFolder(previousBackupFolder, backupPath);
+                    CopyClosedTabsFileToBackupFolder(previousBackupFolder, backupPath);
+                }
 
                 _backupFolder = backupPath;
                 _cloudBackupFolder = cloudBackupPath;
@@ -2258,6 +2372,7 @@ public partial class MainWindow : Window
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
+                SaveClosedTabHistory();
 
                 // Apply font to all open editors
                 var family = new FontFamily(_fontFamily);
