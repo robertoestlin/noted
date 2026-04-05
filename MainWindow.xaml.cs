@@ -68,6 +68,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutRenameTab = "F2";
     private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
+    private const string DefaultShortcutGoToLine = "Ctrl+G";
     private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
     private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 196, 128);
     private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 160, 96);
@@ -84,6 +85,7 @@ public partial class MainWindow : Window
     private string _shortcutRenameTab = DefaultShortcutRenameTab;
     private string _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
     private string _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
+    private string _shortcutGoToLine = DefaultShortcutGoToLine;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
@@ -96,6 +98,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
 
     private static IHighlightingDefinition CreateJsonSyntaxHighlighting()
@@ -212,6 +215,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(RenameTabCommand, (_, _) => ExecuteRenameCurrentTab()));
         CommandBindings.Add(new CommandBinding(AddBlankLinesCommand, (_, _) => ExecuteAddBlankLines()));
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
+        CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
 
         MainTabControl.AllowDrop = true;
         MainTabControl.DragOver += MainTabControl_DragOver;
@@ -914,6 +918,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutRenameTab, RenameTabCommand);
         AddShortcutBinding(_shortcutAddBlankLines, AddBlankLinesCommand);
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
+        AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         UpdateMenuShortcutTexts();
     }
 
@@ -950,6 +955,131 @@ public partial class MainWindow : Window
             ToggleHighlightedCaretLine(doc);
     }
 
+    private void ExecuteGoToLine()
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        int maxLine = Math.Max(1, doc.Editor.Document.LineCount);
+        int currentLine = Math.Clamp(doc.Editor.TextArea.Caret.Line, 1, maxLine);
+        var originalLocation = doc.Editor.TextArea.Caret.Location;
+        var requestedLine = ShowGoToLineDialog(doc.Editor, currentLine, maxLine);
+        if (requestedLine == null)
+        {
+            doc.Editor.TextArea.Caret.Location = originalLocation;
+            doc.Editor.Select(doc.Editor.CaretOffset, 0);
+            CenterCaretLine(doc.Editor, originalLocation.Line);
+            doc.Editor.Focus();
+            UpdateStatusBar(doc);
+            return;
+        }
+
+        int targetLine = Math.Clamp(requestedLine.Value, 1, maxLine);
+        doc.Editor.TextArea.Caret.Location = new TextLocation(targetLine, 1);
+        doc.Editor.Select(doc.Editor.CaretOffset, 0);
+        CenterCaretLine(doc.Editor, targetLine);
+        doc.Editor.Focus();
+        UpdateStatusBar(doc);
+    }
+
+    private int? ShowGoToLineDialog(TextEditor editor, int currentLine, int maxLine)
+    {
+        var dlg = new Window
+        {
+            Title = "Go To Line",
+            Width = 320,
+            Height = 160,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var root = new StackPanel { Margin = new Thickness(12) };
+        root.Children.Add(new TextBlock
+        {
+            Text = $"Line number (1-{maxLine}):",
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var input = new TextBox { Text = currentLine.ToString(), Margin = new Thickness(0, 0, 0, 10) };
+        root.Children.Add(input);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+
+        int parsedLine = currentLine;
+        void PreviewLine(int line)
+        {
+            int targetLine = Math.Clamp(line, 1, maxLine);
+            editor.TextArea.Caret.Location = new TextLocation(targetLine, 1);
+            editor.Select(editor.CaretOffset, 0);
+            CenterCaretLine(editor, targetLine);
+        }
+
+        input.TextChanged += (_, _) =>
+        {
+            if (int.TryParse(input.Text.Trim(), out int liveLine) && liveLine >= 1)
+                PreviewLine(liveLine);
+        };
+
+        ok.Click += (_, _) =>
+        {
+            if (!int.TryParse(input.Text.Trim(), out parsedLine))
+            {
+                MessageBox.Show("Enter a valid line number.", "Go To Line", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (parsedLine < 1 || parsedLine > maxLine)
+            {
+                MessageBox.Show($"Line number must be between 1 and {maxLine}.", "Go To Line", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            PreviewLine(parsedLine);
+            dlg.DialogResult = true;
+        };
+
+        dlg.Loaded += (_, _) =>
+        {
+            input.Focus();
+            input.SelectAll();
+            Keyboard.Focus(input);
+        };
+
+        input.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+        };
+
+        dlg.Content = root;
+        var result = dlg.ShowDialog();
+        return result == true ? parsedLine : null;
+    }
+
+    private static void CenterCaretLine(TextEditor editor, int line)
+    {
+        editor.ScrollTo(line, 1);
+
+        var textView = editor.TextArea.TextView;
+        textView.EnsureVisualLines();
+        if (textView.ActualHeight <= 0)
+            return;
+
+        double visualTop = textView.GetVisualTopByDocumentLine(line);
+        double targetOffset = Math.Max(0, visualTop - (textView.ActualHeight / 2) + (textView.DefaultLineHeight / 2));
+        editor.ScrollToVerticalOffset(targetOffset);
+    }
+
     private static string GestureDisplayText(string? gestureText)
         => string.IsNullOrWhiteSpace(gestureText) ? "None" : gestureText.Trim();
 
@@ -966,6 +1096,8 @@ public partial class MainWindow : Window
             MenuItemNewTab.InputGestureText = CombinedGestureDisplayText(_shortcutNewPrimary, _shortcutNewSecondary);
         if (MenuItemCloseTab != null)
             MenuItemCloseTab.InputGestureText = GestureDisplayText(_shortcutCloseTab);
+        if (MenuItemGoToLine != null)
+            MenuItemGoToLine.InputGestureText = GestureDisplayText(_shortcutGoToLine);
     }
 
     private void TabHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1599,6 +1731,7 @@ public partial class MainWindow : Window
     private void MenuCut_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Cut();
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
+    private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
     private void MenuCopySelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuItem menu)
@@ -1647,6 +1780,7 @@ public partial class MainWindow : Window
                 ShortcutRenameTab = _shortcutRenameTab,
                 ShortcutAddBlankLines = _shortcutAddBlankLines,
                 ShortcutToggleHighlight = _shortcutToggleHighlight,
+                ShortcutGoToLine = _shortcutGoToLine,
                 SelectedLineColor = ColorToHex(_selectedLineColor),
                 HighlightedLineColor = ColorToHex(_highlightedLineColor),
                 SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
@@ -1686,6 +1820,7 @@ public partial class MainWindow : Window
             _shortcutRenameTab = DefaultShortcutRenameTab;
             _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
             _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
+            _shortcutGoToLine = DefaultShortcutGoToLine;
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -1764,6 +1899,8 @@ public partial class MainWindow : Window
                 _shortcutAddBlankLines = state.ShortcutAddBlankLines!.Trim();
             if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
                 _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
+            if (TryParseKeyGesture(state.ShortcutGoToLine, out _))
+                _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
             if (!string.IsNullOrWhiteSpace(state.BackupFolder))
             {
                 try
@@ -1860,6 +1997,7 @@ public partial class MainWindow : Window
         public string ShortcutRenameTab { get; set; } = DefaultShortcutRenameTab;
         public string ShortcutAddBlankLines { get; set; } = DefaultShortcutAddBlankLines;
         public string ShortcutToggleHighlight { get; set; } = DefaultShortcutToggleHighlight;
+        public string ShortcutGoToLine { get; set; } = DefaultShortcutGoToLine;
         public string? SelectedLineColor { get; set; }
         public string? HighlightedLineColor { get; set; }
         public string? SelectedHighlightedLineColor { get; set; }
@@ -2131,6 +2269,10 @@ public partial class MainWindow : Window
         var txtShortcutToggleHighlight = new TextBox { Text = _shortcutToggleHighlight, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutToggleHighlight);
 
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Go to line:" });
+        var txtShortcutGoToLine = new TextBox { Text = _shortcutGoToLine, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutGoToLine);
+
         shortkeysPanel.Children.Add(new TextBlock
         {
             Text = "Ctrl+Shift+T reopens the most recently closed tab.",
@@ -2265,12 +2407,14 @@ public partial class MainWindow : Window
             var shortcutRename = txtShortcutRename.Text.Trim();
             var shortcutAddBlankLines = txtShortcutAddBlankLines.Text.Trim();
             var shortcutToggleHighlight = txtShortcutToggleHighlight.Text.Trim();
+            var shortcutGoToLine = txtShortcutGoToLine.Text.Trim();
 
             if (string.IsNullOrWhiteSpace(shortcutNewPrimary)
                 || string.IsNullOrWhiteSpace(shortcutClose)
                 || string.IsNullOrWhiteSpace(shortcutRename)
                 || string.IsNullOrWhiteSpace(shortcutAddBlankLines)
-                || string.IsNullOrWhiteSpace(shortcutToggleHighlight))
+                || string.IsNullOrWhiteSpace(shortcutToggleHighlight)
+                || string.IsNullOrWhiteSpace(shortcutGoToLine))
             {
                 MessageBox.Show("Shortcut fields cannot be empty (except secondary New tab shortcut).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -2282,7 +2426,8 @@ public partial class MainWindow : Window
                 || !TryParseKeyGesture(shortcutClose, out _)
                 || !TryParseKeyGesture(shortcutRename, out _)
                 || !TryParseKeyGesture(shortcutAddBlankLines, out _)
-                || !TryParseKeyGesture(shortcutToggleHighlight, out _))
+                || !TryParseKeyGesture(shortcutToggleHighlight, out _)
+                || !TryParseKeyGesture(shortcutGoToLine, out _))
             {
                 MessageBox.Show("One or more shortcuts have an invalid format.\nUse values like Ctrl+N, Ctrl+Shift+N, F2.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -2295,7 +2440,8 @@ public partial class MainWindow : Window
                 shortcutClose,
                 shortcutRename,
                 shortcutAddBlankLines,
-                shortcutToggleHighlight
+                shortcutToggleHighlight,
+                shortcutGoToLine
             };
             if (!string.IsNullOrWhiteSpace(shortcutNewSecondary))
                 shortcutList.Add(shortcutNewSecondary);
@@ -2342,6 +2488,7 @@ public partial class MainWindow : Window
                 _shortcutRenameTab = shortcutRename;
                 _shortcutAddBlankLines = shortcutAddBlankLines;
                 _shortcutToggleHighlight = shortcutToggleHighlight;
+                _shortcutGoToLine = shortcutGoToLine;
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
