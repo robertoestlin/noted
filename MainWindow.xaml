@@ -34,7 +34,9 @@
                     <MenuItem Header="_Copy" InputGestureText="Ctrl+C" Click="MenuCopy_Click"/>
                     <MenuItem Header="_Paste" InputGestureText="Ctrl+V" Click="MenuPaste_Click"/>
                 </MenuItem>
-                <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
+                <MenuItem Header="_Tools">
+                    <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
+                </MenuItem>
             </Menu>
         </DockPanel>
 

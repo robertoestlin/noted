@@ -54,6 +54,9 @@ public partial class MainWindow : Window
     private const string DefaultFontFamily = "Consolas, Courier New";
     private const double DefaultFontSize = 13;
     private const int DefaultFontWeight = 400;
+    private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
+    private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 196, 128);
+    private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 160, 96);
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -61,6 +64,19 @@ public partial class MainWindow : Window
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     private int _fontWeight = DefaultFontWeight;
+    private Color _selectedLineColor = DefaultSelectedLineColor;
+    private Color _highlightedLineColor = DefaultHighlightedLineColor;
+    private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+    private Brush _selectedLineBrush = CreateFrozenBrush(DefaultSelectedLineColor);
+    private Brush _highlightedLineBrush = CreateFrozenBrush(DefaultHighlightedLineColor);
+    private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
+
+    private static Brush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
 
     private sealed class FileMetadata
     {
@@ -74,11 +90,20 @@ public partial class MainWindow : Window
     private sealed class HighlightLineRenderer : IBackgroundRenderer
     {
         private readonly Func<IReadOnlyCollection<int>> _lineProvider;
-        private static readonly Brush HighlightBrush = new SolidColorBrush(Color.FromRgb(255, 196, 128));
+        private readonly Func<int, bool> _lineSelectionProvider;
+        private readonly Func<Brush> _normalBrushProvider;
+        private readonly Func<Brush> _selectedBrushProvider;
 
-        public HighlightLineRenderer(Func<IReadOnlyCollection<int>> lineProvider)
+        public HighlightLineRenderer(
+            Func<IReadOnlyCollection<int>> lineProvider,
+            Func<int, bool> lineSelectionProvider,
+            Func<Brush> normalBrushProvider,
+            Func<Brush> selectedBrushProvider)
         {
             _lineProvider = lineProvider;
+            _lineSelectionProvider = lineSelectionProvider;
+            _normalBrushProvider = normalBrushProvider;
+            _selectedBrushProvider = selectedBrushProvider;
         }
 
         // Draw on selection layer so highlight remains visible even when selected.
@@ -108,7 +133,8 @@ public partial class MainWindow : Window
                 foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
                 {
                     var fullWidthRect = new Rect(0, rect.Top, textView.ActualWidth, rect.Height);
-                    drawingContext.DrawRectangle(HighlightBrush, null, fullWidthRect);
+                    var brush = _lineSelectionProvider(lineNumber) ? _selectedBrushProvider() : _normalBrushProvider();
+                    drawingContext.DrawRectangle(brush, null, fullWidthRect);
                 }
             }
         }
@@ -177,7 +203,11 @@ public partial class MainWindow : Window
             IsDirty = false
         };
 
-        var highlightRenderer = new HighlightLineRenderer(() => GetHighlightedLineNumbers(doc));
+        var highlightRenderer = new HighlightLineRenderer(
+            () => GetHighlightedLineNumbers(doc),
+            line => IsLineSelected(doc.Editor, line),
+            () => _highlightedLineBrush,
+            () => _selectedHighlightedLineBrush);
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
@@ -188,7 +218,11 @@ public partial class MainWindow : Window
             MarkDirty(doc);
             RedrawHighlight(doc);
         };
-        editor.TextArea.Caret.PositionChanged += (_, _) => UpdateStatusBar(doc);
+        editor.TextArea.Caret.PositionChanged += (_, _) =>
+        {
+            UpdateStatusBar(doc);
+            RedrawHighlight(doc);
+        };
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
 
         // Build tab header
@@ -236,7 +270,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(4)
         };
         editor.Options.HighlightCurrentLine = true;
-        editor.TextArea.TextView.CurrentLineBackground = new SolidColorBrush(Color.FromRgb(225, 240, 255));
+        editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
         return editor;
     }
 
@@ -338,6 +372,65 @@ public partial class MainWindow : Window
 
     private static string RemoveTrailingWhitespaces(string text)
         => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
+
+    private static bool IsLineSelected(TextEditor editor, int lineNumber)
+    {
+        // Treat the caret line as selected/active too.
+        if (editor.TextArea.Caret.Line == lineNumber)
+            return true;
+
+        var selection = editor.TextArea.Selection;
+        if (selection == null || selection.IsEmpty)
+            return false;
+
+        int startLine = selection.StartPosition.Line;
+        int endLine = selection.EndPosition.Line;
+        if (startLine <= 0 || endLine <= 0)
+            return false;
+
+        int firstLine = Math.Min(startLine, endLine);
+        int lastLine = Math.Max(startLine, endLine);
+        return lineNumber >= firstLine && lineNumber <= lastLine;
+    }
+
+    private void ApplyColorThemeToOpenEditors()
+    {
+        _selectedLineBrush = CreateFrozenBrush(_selectedLineColor);
+        _highlightedLineBrush = CreateFrozenBrush(_highlightedLineColor);
+        _selectedHighlightedLineBrush = CreateFrozenBrush(_selectedHighlightedLineColor);
+
+        foreach (var doc in _docs.Values)
+        {
+            doc.Editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
+            RedrawHighlight(doc);
+        }
+    }
+
+    private static bool TryParseColor(string? input, out Color color)
+    {
+        color = default;
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
+
+        try
+        {
+            var parsed = ColorConverter.ConvertFromString(input.Trim());
+            if (parsed is Color c)
+            {
+                color = c;
+                return true;
+            }
+        }
+        catch
+        {
+            // handled by caller
+        }
+
+        return false;
+    }
+
+    private static string ColorToHex(Color color)
+        => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
 
     private IReadOnlyCollection<int> GetHighlightedLineNumbers(TabDocument doc)
     {
@@ -1069,6 +1162,9 @@ public partial class MainWindow : Window
                 FontFamily = _fontFamily,
                 FontSize = _fontSize,
                 FontWeight = _fontWeight,
+                SelectedLineColor = ColorToHex(_selectedLineColor),
+                HighlightedLineColor = ColorToHex(_highlightedLineColor),
+                SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
                 BackupFolder = _backupFolder,
                 CloudBackupFolder = _cloudBackupFolder,
                 CloudSaveHours = _cloudSaveIntervalHours,
@@ -1095,6 +1191,9 @@ public partial class MainWindow : Window
         {
             _backupFolder = DefaultBackupFolder();
             _cloudBackupFolder = DefaultCloudBackupFolder();
+            _selectedLineColor = DefaultSelectedLineColor;
+            _highlightedLineColor = DefaultHighlightedLineColor;
+            _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -1187,10 +1286,17 @@ public partial class MainWindow : Window
                 _cloudSaveIntervalMinutes = state.CloudSaveMinutes.Value;
             if (state.LastCloudCopyUtc is DateTime cloudCopyUtc && cloudCopyUtc > DateTime.MinValue)
                 _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
+            if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
+                _selectedLineColor = selectedLineColor;
+            if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
+                _highlightedLineColor = highlightedLineColor;
+            if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
+                _selectedHighlightedLineColor = selectedHighlightedLineColor;
 
             _startMaximized = state.Maximized;
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
+            ApplyColorThemeToOpenEditors();
         }
         catch { /* ignore corrupt settings */ }
     }
@@ -1231,6 +1337,9 @@ public partial class MainWindow : Window
         public string FontFamily { get; set; } = DefaultFontFamily;
         public double FontSize { get; set; } = DefaultFontSize;
         public int FontWeight { get; set; } = DefaultFontWeight;
+        public string? SelectedLineColor { get; set; }
+        public string? HighlightedLineColor { get; set; }
+        public string? SelectedHighlightedLineColor { get; set; }
         public string? BackupFolder { get; set; }
         public string? CloudBackupFolder { get; set; }
         public int? CloudSaveHours { get; set; }
@@ -1245,134 +1354,75 @@ public partial class MainWindow : Window
         var dlg = new Window
         {
             Title = "Settings",
-            Width = 800, Height = 480,
+            Width = 840,
+            Height = 560,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
         };
 
-        var grid = new Grid { Margin = new Thickness(16) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var root = new DockPanel { Margin = new Thickness(16) };
+        var tabControl = new TabControl { Margin = new Thickness(0, 0, 0, 12) };
+        DockPanel.SetDock(tabControl, Dock.Top);
 
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var backupPanel = new StackPanel { Margin = new Thickness(12) };
+        backupPanel.Children.Add(new TextBlock { Text = "Backup folder:" });
+        var backupRow = new Grid { Margin = new Thickness(0, 4, 0, 10) };
+        backupRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        backupRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var txtBackup = new TextBox { Text = _backupFolder, Margin = new Thickness(0, 0, 8, 0) };
+        var btnBrowseBackup = new Button { Content = "Browse...", Padding = new Thickness(10, 2, 10, 2) };
+        Grid.SetColumn(txtBackup, 0);
+        Grid.SetColumn(btnBrowseBackup, 1);
+        backupRow.Children.Add(txtBackup);
+        backupRow.Children.Add(btnBrowseBackup);
+        backupPanel.Children.Add(backupRow);
 
-        var lblBackup = new TextBlock { Text = "Backup folder:", VerticalAlignment = VerticalAlignment.Top };
-        Grid.SetRow(lblBackup, 0);
-        Grid.SetColumn(lblBackup, 0);
-        var txtBackup = new TextBox
-        {
-            Text = _backupFolder,
-            Margin = new Thickness(0, 0, 8, 8),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(txtBackup, 0);
-        Grid.SetColumn(txtBackup, 1);
+        backupPanel.Children.Add(new TextBlock { Text = "Cloud storage folder:" });
+        var cloudRow = new Grid { Margin = new Thickness(0, 4, 0, 10) };
+        cloudRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        cloudRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var txtCloudBackup = new TextBox { Text = _cloudBackupFolder, Margin = new Thickness(0, 0, 8, 0) };
+        var btnBrowseCloudBackup = new Button { Content = "Browse...", Padding = new Thickness(10, 2, 10, 2) };
+        Grid.SetColumn(txtCloudBackup, 0);
+        Grid.SetColumn(btnBrowseCloudBackup, 1);
+        cloudRow.Children.Add(txtCloudBackup);
+        cloudRow.Children.Add(btnBrowseCloudBackup);
+        backupPanel.Children.Add(cloudRow);
 
-        var btnBrowseBackup = new Button
-        {
-            Content = "Browse…",
-            Padding = new Thickness(10, 2, 10, 2),
-            Margin = new Thickness(0, 0, 0, 8),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(btnBrowseBackup, 0);
-        Grid.SetColumn(btnBrowseBackup, 2);
-
-        var lblCloudBackup = new TextBlock { Text = "Cloud storage folder:", VerticalAlignment = VerticalAlignment.Top };
-        Grid.SetRow(lblCloudBackup, 1);
-        Grid.SetColumn(lblCloudBackup, 0);
-        var txtCloudBackup = new TextBox
-        {
-            Text = _cloudBackupFolder,
-            Margin = new Thickness(0, 0, 8, 8),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(txtCloudBackup, 1);
-        Grid.SetColumn(txtCloudBackup, 1);
-
-        var btnBrowseCloudBackup = new Button
-        {
-            Content = "Browse…",
-            Padding = new Thickness(10, 2, 10, 2),
-            Margin = new Thickness(0, 0, 0, 8),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(btnBrowseCloudBackup, 1);
-        Grid.SetColumn(btnBrowseCloudBackup, 2);
-
-        var lblCloudInterval = new TextBlock { Text = "Cloud save interval (hours/minutes):" };
-        Grid.SetRow(lblCloudInterval, 2);
-        Grid.SetColumn(lblCloudInterval, 0);
-
-        var cloudPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        backupPanel.Children.Add(new TextBlock { Text = "Cloud save interval:" });
+        var cloudIntervalRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
         var cmbCloudHours = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
         for (int h = 0; h <= 50; h++) cmbCloudHours.Items.Add(h);
         cmbCloudHours.SelectedItem = _cloudSaveIntervalHours;
         if (cmbCloudHours.SelectedItem == null) cmbCloudHours.SelectedItem = 0;
-        var lblHours = new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-        var cmbCloudMinutes = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
+        var cmbCloudMinutes = new ComboBox { Width = 80, Margin = new Thickness(8, 0, 8, 0) };
         foreach (var m in CloudMinuteOptions) cmbCloudMinutes.Items.Add(m);
         cmbCloudMinutes.SelectedItem = _cloudSaveIntervalMinutes;
         if (cmbCloudMinutes.SelectedItem == null) cmbCloudMinutes.SelectedItem = 0;
-        var lblMinutes = new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center };
-        cloudPanel.Children.Add(cmbCloudHours);
-        cloudPanel.Children.Add(lblHours);
-        cloudPanel.Children.Add(cmbCloudMinutes);
-        cloudPanel.Children.Add(lblMinutes);
-        var txtCloudLastCopy = new TextBlock
+        cloudIntervalRow.Children.Add(cmbCloudHours);
+        cloudIntervalRow.Children.Add(new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center });
+        cloudIntervalRow.Children.Add(cmbCloudMinutes);
+        cloudIntervalRow.Children.Add(new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center });
+        backupPanel.Children.Add(cloudIntervalRow);
+        backupPanel.Children.Add(new TextBlock
         {
             Text = $"Last cloud copy: {FormatCloudCopyTimestamp(_lastCloudSaveUtc)}",
             Foreground = Brushes.DimGray,
-            Margin = new Thickness(0, 4, 0, 8)
-        };
-        var cloudSettingsPanel = new StackPanel { Orientation = Orientation.Vertical };
-        cloudSettingsPanel.Children.Add(cloudPanel);
-        cloudSettingsPanel.Children.Add(txtCloudLastCopy);
-        Grid.SetRow(cloudSettingsPanel, 2);
-        Grid.SetColumn(cloudSettingsPanel, 1);
-        Grid.SetColumnSpan(cloudSettingsPanel, 2);
+            Margin = new Thickness(0, 0, 0, 10)
+        });
 
-        var lblAutoSave = new TextBlock { Text = "Auto-save interval (seconds):" };
-        Grid.SetRow(lblAutoSave, 3);
-        Grid.SetColumn(lblAutoSave, 0);
-        var txtAutoSave = new TextBox
-        {
-            Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(txtAutoSave, 3);
-        Grid.SetColumn(txtAutoSave, 1);
-        Grid.SetColumnSpan(txtAutoSave, 2);
+        backupPanel.Children.Add(new TextBlock { Text = "Auto-save interval (seconds):" });
+        var txtAutoSave = new TextBox { Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(), Margin = new Thickness(0, 4, 0, 10) };
+        backupPanel.Children.Add(txtAutoSave);
+        backupPanel.Children.Add(new TextBlock { Text = "Initial lines per new tab:" });
+        var txtLines = new TextBox { Text = _initialLines.ToString(), Margin = new Thickness(0, 4, 0, 0) };
+        backupPanel.Children.Add(txtLines);
+        tabControl.Items.Add(new TabItem { Header = "Backup", Content = new ScrollViewer { Content = backupPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
 
-        var lblLines = new TextBlock { Text = "Initial lines per new tab:" };
-        Grid.SetRow(lblLines, 4);
-        Grid.SetColumn(lblLines, 0);
-        var txtLines = new TextBox
-        {
-            Text = _initialLines.ToString(),
-            Margin = new Thickness(0, 0, 0, 8),
-            VerticalAlignment = VerticalAlignment.Top
-        };
-        Grid.SetRow(txtLines, 4);
-        Grid.SetColumn(txtLines, 1);
-        Grid.SetColumnSpan(txtLines, 2);
-
-        var lblFont = new TextBlock { Text = "Font family:", Margin = new Thickness(0, 0, 8, 8) };
-        Grid.SetRow(lblFont, 5);
-        Grid.SetColumn(lblFont, 0);
-        var cmbFont = new ComboBox
-        {
-            IsEditable = true,
-            Margin = new Thickness(0, 0, 0, 8),
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var fontPanel = new StackPanel { Margin = new Thickness(12) };
+        fontPanel.Children.Add(new TextBlock { Text = "Font family:" });
+        var cmbFont = new ComboBox { IsEditable = true, Margin = new Thickness(0, 4, 0, 10) };
         string[] popularFonts =
         {
             "Consolas", "Courier New", "Source Code Pro", "Cascadia Code", "Cascadia Mono", "Fira Code",
@@ -1381,33 +1431,14 @@ public partial class MainWindow : Window
         foreach (var f in popularFonts)
             cmbFont.Items.Add(f);
         cmbFont.Text = _fontFamily;
-        Grid.SetRow(cmbFont, 5);
-        Grid.SetColumn(cmbFont, 1);
-        Grid.SetColumnSpan(cmbFont, 2);
+        fontPanel.Children.Add(cmbFont);
 
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        fontPanel.Children.Add(new TextBlock { Text = "Font size:" });
+        var txtFontSize = new TextBox { Text = _fontSize.ToString(), Margin = new Thickness(0, 4, 0, 10) };
+        fontPanel.Children.Add(txtFontSize);
 
-        var lblFontSize = new TextBlock { Text = "Font size:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontSize, 6);
-        Grid.SetColumn(lblFontSize, 0);
-
-        var txtFontSize = new TextBox { Text = _fontSize.ToString(), Margin = new Thickness(0, 0, 0, 8), VerticalAlignment = VerticalAlignment.Center };
-        Grid.SetRow(txtFontSize, 6);
-        Grid.SetColumn(txtFontSize, 1);
-        Grid.SetColumnSpan(txtFontSize, 2);
-
-        var lblFontWeight = new TextBlock { Text = "Font weight:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-        Grid.SetRow(lblFontWeight, 7);
-        Grid.SetColumn(lblFontWeight, 0);
-
-        var cmbFontWeight = new ComboBox
-        {
-            Margin = new Thickness(0, 0, 0, 8),
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        fontPanel.Children.Add(new TextBlock { Text = "Font weight:" });
+        var cmbFontWeight = new ComboBox { Margin = new Thickness(0, 4, 0, 0) };
         var weights = new (string Name, int Value)[]
         {
             ("Thin (100)", 100),
@@ -1420,47 +1451,133 @@ public partial class MainWindow : Window
             ("ExtraBold (800)", 800),
             ("Black (900)", 900)
         };
-        int selectedIdx = 3; // default Normal
+        int selectedIdx = 3;
         for (int i = 0; i < weights.Length; i++)
         {
             cmbFontWeight.Items.Add(weights[i].Name);
             if (weights[i].Value == _fontWeight) selectedIdx = i;
         }
         cmbFontWeight.SelectedIndex = selectedIdx;
-        Grid.SetRow(cmbFontWeight, 7);
-        Grid.SetColumn(cmbFontWeight, 1);
-        Grid.SetColumnSpan(cmbFontWeight, 2);
+        fontPanel.Children.Add(cmbFontWeight);
+        tabControl.Items.Add(new TabItem { Header = "Fonts", Content = fontPanel });
 
-        var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 8, 8, 0), IsDefault = true };
-        var btnCancel = new Button { Content = "Cancel", Width = 80, Margin = new Thickness(8, 8, 0, 0), IsCancel = true };
+        var colorsPanel = new Grid { Margin = new Thickness(12) };
+        colorsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        colorsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        colorsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
+        string[] colorOptions =
+        [
+            "Orange",
+            "Goldenrod",
+            "Tomato",
+            "SkyBlue",
+            "LightSkyBlue",
+            "Khaki",
+            "LightGreen",
+            "PaleVioletRed",
+            "#FFE1F0FF",
+            "#FFFFC480",
+            "#FFFFA060"
+        ];
+
+        (ComboBox combo, Border preview) CreateColorPicker(Color initial)
+        {
+            var combo = new ComboBox { IsEditable = true, Margin = new Thickness(0, 0, 8, 8) };
+            foreach (var option in colorOptions)
+                combo.Items.Add(option);
+            combo.Text = ColorToHex(initial);
+
+            var preview = new Border
+            {
+                Width = 54,
+                Height = 22,
+                BorderBrush = Brushes.Gray,
+                BorderThickness = new Thickness(1),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            void RefreshPreview()
+            {
+                if (TryParseColor(combo.Text, out var color))
+                    preview.Background = new SolidColorBrush(color);
+            }
+
+            combo.LostFocus += (_, _) => RefreshPreview();
+            combo.SelectionChanged += (_, _) => RefreshPreview();
+            RefreshPreview();
+            return (combo, preview);
+        }
+
+        var (cmbSelectedLineColor, selectedLinePreview) = CreateColorPicker(_selectedLineColor);
+        var (cmbHighlightedLineColor, highlightedLinePreview) = CreateColorPicker(_highlightedLineColor);
+        var (cmbSelectedHighlightedLineColor, selectedHighlightedLinePreview) = CreateColorPicker(_selectedHighlightedLineColor);
+
+        var lblSelectedLineColor = new TextBlock { Text = "Selected line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
+        Grid.SetRow(lblSelectedLineColor, 0);
+        colorsPanel.Children.Add(lblSelectedLineColor);
+        Grid.SetRow(cmbSelectedLineColor, 0);
+        Grid.SetColumn(cmbSelectedLineColor, 1);
+        colorsPanel.Children.Add(cmbSelectedLineColor);
+        Grid.SetRow(selectedLinePreview, 0);
+        Grid.SetColumn(selectedLinePreview, 2);
+        colorsPanel.Children.Add(selectedLinePreview);
+
+        var lblHighlightedLineColor = new TextBlock { Text = "Highlighted line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
+        Grid.SetRow(lblHighlightedLineColor, 1);
+        colorsPanel.Children.Add(lblHighlightedLineColor);
+        Grid.SetRow(cmbHighlightedLineColor, 1);
+        Grid.SetColumn(cmbHighlightedLineColor, 1);
+        colorsPanel.Children.Add(cmbHighlightedLineColor);
+        Grid.SetRow(highlightedLinePreview, 1);
+        Grid.SetColumn(highlightedLinePreview, 2);
+        colorsPanel.Children.Add(highlightedLinePreview);
+
+        var lblSelectedHighlightedLineColor = new TextBlock { Text = "Selected highlighted line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
+        Grid.SetRow(lblSelectedHighlightedLineColor, 2);
+        colorsPanel.Children.Add(lblSelectedHighlightedLineColor);
+        Grid.SetRow(cmbSelectedHighlightedLineColor, 2);
+        Grid.SetColumn(cmbSelectedHighlightedLineColor, 1);
+        colorsPanel.Children.Add(cmbSelectedHighlightedLineColor);
+        Grid.SetRow(selectedHighlightedLinePreview, 2);
+        Grid.SetColumn(selectedHighlightedLinePreview, 2);
+        colorsPanel.Children.Add(selectedHighlightedLinePreview);
+
+        tabControl.Items.Add(new TabItem { Header = "Colors", Content = colorsPanel });
+
+        var shortkeysPanel = new StackPanel { Margin = new Thickness(12) };
+        shortkeysPanel.Children.Add(new TextBlock
+        {
+            Text = "Program shortcuts:",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        shortkeysPanel.Children.Add(new TextBlock
+        {
+            Text =
+                "Ctrl+N or Ctrl+T  - New tab\n" +
+                "Ctrl+W            - Close current tab\n" +
+                "F2                - Rename current tab\n" +
+                "Ctrl+Space        - Add 10 blank lines at end\n" +
+                "Ctrl+J            - Toggle highlight for current/selected lines\n" +
+                "Ctrl+MouseWheel   - Change editor font size",
+            FontFamily = new FontFamily("Consolas")
+        });
+        tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
+
+        var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+        var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttonPanel.Children.Add(btnOk);
         buttonPanel.Children.Add(btnCancel);
-        Grid.SetRow(buttonPanel, 9);
-        Grid.SetColumnSpan(buttonPanel, 3);
+        DockPanel.SetDock(buttonPanel, Dock.Bottom);
 
-        grid.Children.Add(lblBackup);
-        grid.Children.Add(txtBackup);
-        grid.Children.Add(btnBrowseBackup);
-        grid.Children.Add(lblCloudBackup);
-        grid.Children.Add(txtCloudBackup);
-        grid.Children.Add(btnBrowseCloudBackup);
-        grid.Children.Add(lblCloudInterval);
-        grid.Children.Add(cloudSettingsPanel);
-        grid.Children.Add(lblAutoSave);
-        grid.Children.Add(txtAutoSave);
-        grid.Children.Add(lblLines);
-        grid.Children.Add(txtLines);
-        grid.Children.Add(lblFont);
-        grid.Children.Add(cmbFont);
-        grid.Children.Add(lblFontSize);
-        grid.Children.Add(txtFontSize);
-        grid.Children.Add(lblFontWeight);
-        grid.Children.Add(cmbFontWeight);
-        grid.Children.Add(buttonPanel);
-
-        dlg.Content = grid;
+        root.Children.Add(buttonPanel);
+        root.Children.Add(tabControl);
+        dlg.Content = root;
 
         btnBrowseBackup.Click += (_, _) =>
         {
@@ -1573,7 +1690,10 @@ public partial class MainWindow : Window
                 && cmbCloudHours.SelectedItem is int cloudHours && cloudHours >= 0 && cloudHours <= 50
                 && cmbCloudMinutes.SelectedItem is int cloudMinutes && cloudMinutes >= 0
                 && cloudMinutes <= 55 && cloudMinutes % 5 == 0
-                && (cloudHours > 0 || cloudMinutes > 0))
+                && (cloudHours > 0 || cloudMinutes > 0)
+                && TryParseColor(cmbSelectedLineColor.Text, out var selectedLineColor)
+                && TryParseColor(cmbHighlightedLineColor.Text, out var highlightedLineColor)
+                && TryParseColor(cmbSelectedHighlightedLineColor.Text, out var selectedHighlightedLineColor))
             {
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
@@ -1590,6 +1710,9 @@ public partial class MainWindow : Window
                 _fontFamily = cmbFont.Text.Trim();
                 _fontSize = fsize;
                 _fontWeight = weights[cmbFontWeight.SelectedIndex].Value;
+                _selectedLineColor = selectedLineColor;
+                _highlightedLineColor = highlightedLineColor;
+                _selectedHighlightedLineColor = selectedHighlightedLineColor;
 
                 // Apply font to all open editors
                 var family = new FontFamily(_fontFamily);
@@ -1600,13 +1723,14 @@ public partial class MainWindow : Window
                     doc.Editor.FontSize = _fontSize;
                     doc.Editor.FontWeight = weight;
                 }
+                ApplyColorThemeToOpenEditors();
 
                 SaveWindowSettings();
                 dlg.DialogResult = true;
             }
             else
             {
-                MessageBox.Show("Auto-save must be \u2265 5 seconds.\nInitial lines must be \u2265 1.\nFont size must be \u2265 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).",
+                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
