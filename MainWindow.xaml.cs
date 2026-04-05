@@ -401,6 +401,7 @@ public partial class MainWindow : Window
             RedrawHighlight(doc);
         };
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
+        editor.PreviewKeyDown += (_, e) => HandleEditorPreviewKeyDown(doc, e);
 
         // Build tab header
         var headerLabel = new TextBlock
@@ -964,6 +965,19 @@ public partial class MainWindow : Window
         return [Math.Max(1, doc.Editor.TextArea.Caret.Line)];
     }
 
+    private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
+            return;
+
+        bool changed = false;
+        foreach (var line in GetSelectedOrCaretLineNumbers(doc))
+            changed |= RemoveLineAssignee(doc, line, markDirty: false, redraw: false);
+
+        if (changed)
+            RedrawHighlight(doc);
+    }
+
     private IReadOnlyDictionary<int, string> GetLineAssignments(TabDocument doc)
     {
         if (doc.LineAssigneeAnchors.Count == 0)
@@ -1070,6 +1084,7 @@ public partial class MainWindow : Window
             var docLine = doc.Editor.Document.GetLineByNumber(line);
             var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
             anchor.MovementType = AnchorMovementType.BeforeInsertion;
+            anchor.SurviveDeletion = false;
             doc.LineAssigneeAnchors.Add(new TabDocument.LineAssigneeAnchor
             {
                 Anchor = anchor,
