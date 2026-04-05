@@ -72,8 +72,8 @@ public partial class MainWindow : Window
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
-    private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 196, 128);
-    private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 160, 96);
+    private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 244, 179);
+    private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 234, 128);
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -2502,9 +2502,27 @@ public partial class MainWindow : Window
             if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
                 _selectedLineColor = selectedLineColor;
             if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
+            {
+                // Migrate prior built-in defaults to the current highlight palette.
+                if (highlightedLineColor == Color.FromRgb(255, 196, 128))
+                    highlightedLineColor = DefaultHighlightedLineColor;
+                if (highlightedLineColor == Color.FromRgb(255, 105, 180))
+                    highlightedLineColor = DefaultHighlightedLineColor;
+                if (highlightedLineColor == Color.FromRgb(255, 182, 193))
+                    highlightedLineColor = DefaultHighlightedLineColor;
                 _highlightedLineColor = highlightedLineColor;
+            }
             if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
+            {
+                // Migrate prior built-in defaults to the current highlight palette.
+                if (selectedHighlightedLineColor == Color.FromRgb(255, 160, 96))
+                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+                if (selectedHighlightedLineColor == Color.FromRgb(255, 105, 180))
+                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+                if (selectedHighlightedLineColor == Color.FromRgb(255, 182, 193))
+                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
+            }
 
             _startMaximized = state.Maximized;
             if (_lastCloudSaveUtc == DateTime.MinValue)
@@ -2991,8 +3009,8 @@ public partial class MainWindow : Window
             "LightGreen",
             "PaleVioletRed",
             "#FFE1F0FF",
-            "#FFFFC480",
-            "#FFFFA060"
+            "#FFFFF4B3",
+            "#FFFFEA80"
         ];
 
         (ComboBox combo, Border preview) CreateColorPicker(Color initial)
