@@ -35,6 +35,8 @@
                     <MenuItem Header="_Copy" InputGestureText="Ctrl+C" Click="MenuCopy_Click"/>
                     <MenuItem Header="_Paste" InputGestureText="Ctrl+V" Click="MenuPaste_Click"/>
                     <Separator/>
+                    <MenuItem Header="_Find + Replace..." InputGestureText="Ctrl+F / Ctrl+H" Click="MenuFindReplace_Click"/>
+                    <Separator/>
                     <MenuItem x:Name="MenuItemGoToLine" Header="_Go To Line..." InputGestureText="Ctrl+G" Click="MenuGoToLine_Click"/>
                     <Separator/>
                     <MenuItem Header="Selection _Actions">

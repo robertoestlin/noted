@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -1036,6 +1037,14 @@ public partial class MainWindow : Window
 
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && (e.Key == Key.F || e.Key == Key.H))
+        {
+            ShowFindReplaceDialog();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key != Key.Delete || (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
             return;
 
@@ -1503,6 +1512,268 @@ public partial class MainWindow : Window
         CenterCaretLine(doc.Editor, targetLine);
         doc.Editor.Focus();
         UpdateStatusBar(doc);
+    }
+
+    private static bool IsWordChar(char c)
+        => char.IsLetterOrDigit(c) || c == '_';
+
+    private static bool IsWholeWordMatch(string text, int start, int length)
+    {
+        bool leftOk = start <= 0 || !IsWordChar(text[start - 1]);
+        int rightIndex = start + length;
+        bool rightOk = rightIndex >= text.Length || !IsWordChar(text[rightIndex]);
+        return leftOk && rightOk;
+    }
+
+    private static bool TryFindNextIndex(
+        string text,
+        string findText,
+        int startIndex,
+        StringComparison comparison,
+        bool wholeWord,
+        out int index)
+    {
+        index = -1;
+        if (string.IsNullOrEmpty(findText))
+            return false;
+
+        int probe = Math.Clamp(startIndex, 0, text.Length);
+        while (probe <= text.Length)
+        {
+            int found = text.IndexOf(findText, probe, comparison);
+            if (found < 0)
+                return false;
+            if (!wholeWord || IsWholeWordMatch(text, found, findText.Length))
+            {
+                index = found;
+                return true;
+            }
+            probe = found + 1;
+        }
+
+        return false;
+    }
+
+    private static bool SelectMatchInEditor(TextEditor editor, int start, int length)
+    {
+        if (start < 0 || length <= 0 || start + length > editor.Document.TextLength)
+            return false;
+
+        editor.Select(start, length);
+        editor.TextArea.Caret.Offset = start + length;
+        var line = editor.Document.GetLineByOffset(start);
+        editor.ScrollToLine(line.LineNumber);
+        editor.Focus();
+        return true;
+    }
+
+    private void ShowFindReplaceDialog()
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        var editor = doc.Editor;
+        var dlg = new Window
+        {
+            Title = "Find + Replace",
+            Width = 520,
+            Height = 255,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var root = new Grid { Margin = new Thickness(12) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var lblFind = new TextBlock { Text = "Find:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 8) };
+        Grid.SetRow(lblFind, 0);
+        Grid.SetColumn(lblFind, 0);
+        root.Children.Add(lblFind);
+
+        var txtFind = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        if (!string.IsNullOrEmpty(editor.SelectedText))
+            txtFind.Text = editor.SelectedText;
+        Grid.SetRow(txtFind, 0);
+        Grid.SetColumn(txtFind, 1);
+        root.Children.Add(txtFind);
+
+        var lblReplace = new TextBlock { Text = "Replace:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 8) };
+        Grid.SetRow(lblReplace, 1);
+        Grid.SetColumn(lblReplace, 0);
+        root.Children.Add(lblReplace);
+
+        var txtReplace = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        Grid.SetRow(txtReplace, 1);
+        Grid.SetColumn(txtReplace, 1);
+        root.Children.Add(txtReplace);
+
+        var optionsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        var chkMatchCase = new CheckBox { Content = "Match case", Margin = new Thickness(0, 0, 16, 0) };
+        var chkWholeWord = new CheckBox { Content = "Whole word" };
+        optionsPanel.Children.Add(chkMatchCase);
+        optionsPanel.Children.Add(chkWholeWord);
+        Grid.SetRow(optionsPanel, 2);
+        Grid.SetColumn(optionsPanel, 1);
+        root.Children.Add(optionsPanel);
+
+        var status = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 10),
+            Text = "Use Find Next to jump between matches."
+        };
+        Grid.SetRow(status, 3);
+        Grid.SetColumn(status, 1);
+        root.Children.Add(status);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var btnFindNext = new Button { Content = "Find Next", Width = 95, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+        var btnReplace = new Button { Content = "Replace", Width = 90, Margin = new Thickness(0, 0, 8, 0) };
+        var btnReplaceAll = new Button { Content = "Replace All", Width = 95, Margin = new Thickness(0, 0, 8, 0) };
+        var btnClose = new Button { Content = "Close", Width = 80, IsCancel = true };
+        buttons.Children.Add(btnFindNext);
+        buttons.Children.Add(btnReplace);
+        buttons.Children.Add(btnReplaceAll);
+        buttons.Children.Add(btnClose);
+        Grid.SetRow(buttons, 4);
+        Grid.SetColumn(buttons, 1);
+        root.Children.Add(buttons);
+
+        bool FindNext(bool wrap)
+        {
+            var needle = txtFind.Text ?? string.Empty;
+            if (string.IsNullOrEmpty(needle))
+            {
+                status.Text = "Enter text to find.";
+                return false;
+            }
+
+            var text = editor.Text;
+            var comparison = chkMatchCase.IsChecked == true
+                ? StringComparison.Ordinal
+                : StringComparison.OrdinalIgnoreCase;
+            int start = editor.SelectionStart + editor.SelectionLength;
+
+            if (TryFindNextIndex(text, needle, start, comparison, chkWholeWord.IsChecked == true, out var found))
+            {
+                SelectMatchInEditor(editor, found, needle.Length);
+                status.Text = "Match found.";
+                return true;
+            }
+
+            if (wrap && TryFindNextIndex(text, needle, 0, comparison, chkWholeWord.IsChecked == true, out found))
+            {
+                SelectMatchInEditor(editor, found, needle.Length);
+                status.Text = "Wrapped to top.";
+                return true;
+            }
+
+            status.Text = "No matches.";
+            return false;
+        }
+
+        bool SelectionMatchesFindText()
+        {
+            var needle = txtFind.Text ?? string.Empty;
+            if (string.IsNullOrEmpty(needle) || editor.SelectionLength != needle.Length)
+                return false;
+
+            var selected = editor.SelectedText;
+            var comparison = chkMatchCase.IsChecked == true
+                ? StringComparison.Ordinal
+                : StringComparison.OrdinalIgnoreCase;
+            if (!string.Equals(selected, needle, comparison))
+                return false;
+            if (chkWholeWord.IsChecked != true)
+                return true;
+
+            return IsWholeWordMatch(editor.Text, editor.SelectionStart, editor.SelectionLength);
+        }
+
+        void ReplaceCurrentSelection()
+        {
+            if (!SelectionMatchesFindText())
+            {
+                if (!FindNext(wrap: true))
+                    return;
+            }
+
+            int start = editor.SelectionStart;
+            int length = editor.SelectionLength;
+            editor.Document.Replace(start, length, txtReplace.Text ?? string.Empty);
+            editor.Select(start, (txtReplace.Text ?? string.Empty).Length);
+            editor.TextArea.Caret.Offset = start + (txtReplace.Text ?? string.Empty).Length;
+            status.Text = "Replaced current match.";
+        }
+
+        void ReplaceAll()
+        {
+            var needle = txtFind.Text ?? string.Empty;
+            if (string.IsNullOrEmpty(needle))
+            {
+                status.Text = "Enter text to find.";
+                return;
+            }
+
+            var replacement = txtReplace.Text ?? string.Empty;
+            var source = editor.Text;
+            var comparison = chkMatchCase.IsChecked == true
+                ? StringComparison.Ordinal
+                : StringComparison.OrdinalIgnoreCase;
+
+            int scanIndex = 0;
+            int cursor = 0;
+            int count = 0;
+            var builder = new StringBuilder(source.Length);
+
+            while (TryFindNextIndex(source, needle, scanIndex, comparison, chkWholeWord.IsChecked == true, out var found))
+            {
+                builder.Append(source, cursor, found - cursor);
+                builder.Append(replacement);
+                cursor = found + needle.Length;
+                scanIndex = cursor;
+                count++;
+            }
+
+            if (count == 0)
+            {
+                status.Text = "No matches to replace.";
+                return;
+            }
+
+            builder.Append(source, cursor, source.Length - cursor);
+            editor.Text = builder.ToString();
+            status.Text = $"Replaced {count} occurrence(s).";
+            editor.Focus();
+        }
+
+        btnFindNext.Click += (_, _) => FindNext(wrap: true);
+        btnReplace.Click += (_, _) => ReplaceCurrentSelection();
+        btnReplaceAll.Click += (_, _) => ReplaceAll();
+        txtFind.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                FindNext(wrap: true);
+                e.Handled = true;
+            }
+        };
+
+        dlg.Content = root;
+        dlg.Loaded += (_, _) =>
+        {
+            txtFind.Focus();
+            txtFind.SelectAll();
+        };
+        dlg.ShowDialog();
     }
 
     private int? ShowGoToLineDialog(TextEditor editor, int currentLine, int maxLine)
@@ -2285,6 +2556,7 @@ public partial class MainWindow : Window
     private void MenuCut_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Cut();
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
+    private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
     private void MenuCopySelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
     {
