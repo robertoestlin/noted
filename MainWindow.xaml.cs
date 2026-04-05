@@ -875,6 +875,75 @@ public partial class MainWindow : Window
             CloseTab(tab);
     }
 
+    private bool ConfirmDiscardUnsavedTab(string tabName)
+    {
+        var dlg = new Window
+        {
+            Title = "Noted",
+            Width = 420,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false
+        };
+
+        var root = new DockPanel { Margin = new Thickness(14) };
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        var icon = new TextBlock
+        {
+            Text = "!",
+            FontSize = 24,
+            FontWeight = FontWeights.Bold,
+            Foreground = Brushes.DarkGoldenrod,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 0, 12, 0)
+        };
+        var message = new TextBlock
+        {
+            Text = $"\"{tabName}\" has unsaved data.\nClosing it will remove the entire tab and all of its content.\n\nDelete this tab?",
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        content.Children.Add(icon);
+        content.Children.Add(message);
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0)
+        };
+
+        var btnDelete = new Button
+        {
+            Content = "Delete tab",
+            Width = 90,
+            IsDefault = true,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        var btnKeep = new Button
+        {
+            Content = "Keep tab",
+            Width = 90,
+            IsCancel = true
+        };
+
+        btnDelete.Click += (_, _) => dlg.DialogResult = true;
+        btnKeep.Click += (_, _) => dlg.DialogResult = false;
+
+        buttonPanel.Children.Add(btnDelete);
+        buttonPanel.Children.Add(btnKeep);
+
+        DockPanel.SetDock(buttonPanel, Dock.Bottom);
+        root.Children.Add(buttonPanel);
+        root.Children.Add(content);
+        dlg.Content = root;
+
+        return dlg.ShowDialog() == true;
+    }
+
     private bool CloseTab(TabItem tab)
     {
         if (!_docs.TryGetValue(tab, out var doc)) return true;
@@ -884,12 +953,8 @@ public partial class MainWindow : Window
             // Ensure the tab with unsaved changes is in view
             MainTabControl.SelectedItem = tab;
 
-            var result = MessageBox.Show(
-                $"Save \"{doc.Header}\" before closing?", "Noted",
-                MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-
-            if (result == MessageBoxResult.Cancel) return false;
-            if (result == MessageBoxResult.Yes && !ExportCurrentTabToFile()) return false;
+            if (!ConfirmDiscardUnsavedTab(doc.Header))
+                return false;
         }
 
         _docs.Remove(tab);
