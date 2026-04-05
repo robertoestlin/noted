@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <Resource Include="logo\logo.png" />
+    <Resource Include="logo\friday.png" />
   </ItemGroup>
 
 </Project>

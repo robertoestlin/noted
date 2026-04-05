@@ -71,6 +71,12 @@ public partial class MainWindow : Window
     private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
+    private static readonly string[] FridayBackgroundImageUris =
+    [
+        "pack://application:,,,/Noted;component/logo/friday.png",
+        "pack://application:,,,/logo/friday.png",
+        "logo/friday.png"
+    ];
     private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
     private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 244, 179);
     private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 234, 128);
@@ -94,6 +100,9 @@ public partial class MainWindow : Window
     private Brush _selectedLineBrush = CreateFrozenBrush(DefaultSelectedLineColor);
     private Brush _highlightedLineBrush = CreateFrozenBrush(DefaultHighlightedLineColor);
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
+    private bool _isFridayFeelingEnabled = true;
+    private bool _isFredagspartySessionEnabled = false;
+    private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
@@ -451,6 +460,7 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
+        ApplyFridayBackgroundToEditor(editor);
         return editor;
     }
 
@@ -781,6 +791,65 @@ public partial class MainWindow : Window
             doc.Editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
             RedrawHighlight(doc);
         }
+    }
+
+    private bool ShouldUseFridayBackground()
+        => _isFredagspartySessionEnabled || (_isFridayFeelingEnabled && DateTime.Now.DayOfWeek == DayOfWeek.Friday);
+
+    private ImageBrush? GetFridayBackgroundBrush()
+    {
+        if (_fridayBackgroundBrush != null)
+            return _fridayBackgroundBrush;
+
+        foreach (var uriText in FridayBackgroundImageUris)
+        {
+            try
+            {
+                var image = new BitmapImage();
+                image.BeginInit();
+                image.UriSource = new Uri(uriText, uriText.StartsWith("pack://", StringComparison.OrdinalIgnoreCase)
+                    ? UriKind.Absolute
+                    : UriKind.Relative);
+                image.CacheOption = BitmapCacheOption.OnLoad;
+                image.EndInit();
+                image.Freeze();
+
+                var brush = new ImageBrush(image)
+                {
+                    Stretch = Stretch.UniformToFill,
+                    AlignmentX = AlignmentX.Center,
+                    AlignmentY = AlignmentY.Top,
+                    Opacity = 0.32
+                };
+                brush.Freeze();
+                _fridayBackgroundBrush = brush;
+                return _fridayBackgroundBrush;
+            }
+            catch
+            {
+                // Try next lower-case friday.png URI candidate.
+            }
+        }
+
+        _fridayBackgroundBrush = null;
+        return null;
+    }
+
+    private void ApplyFridayBackgroundToEditor(TextEditor editor)
+    {
+        var background = ShouldUseFridayBackground() && GetFridayBackgroundBrush() is Brush fridayBrush
+            ? fridayBrush
+            : Brushes.White;
+
+        editor.Background = background;
+        editor.TextArea.Background = background;
+        editor.TextArea.TextView.InvalidateVisual();
+    }
+
+    private void ApplyFridayFeelingToOpenEditors()
+    {
+        foreach (var doc in _docs.Values)
+            ApplyFridayBackgroundToEditor(doc.Editor);
     }
 
     private static bool TryParseColor(string? input, out Color color)
@@ -2366,6 +2435,7 @@ public partial class MainWindow : Window
                 CloudSaveMinutes = _cloudSaveIntervalMinutes,
                 LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
                 ActiveTabIndex = MainTabControl.SelectedIndex,
+                FridayFeelingEnabled = _isFridayFeelingEnabled,
                 Users = _users.Select(user => user.Name).ToList(),
                 UserProfiles = NormalizeUsers(_users)
             };
@@ -2399,6 +2469,8 @@ public partial class MainWindow : Window
             _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
             _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
             _shortcutGoToLine = DefaultShortcutGoToLine;
+            _isFridayFeelingEnabled = true;
+            _isFredagspartySessionEnabled = false;
             _users = [];
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
@@ -2510,6 +2582,7 @@ public partial class MainWindow : Window
                 _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
             if (state.ActiveTabIndex >= 0)
                 _activeTabIndex = state.ActiveTabIndex;
+            _isFridayFeelingEnabled = state.FridayFeelingEnabled;
             var loadedUsers = NormalizeUsers(state.UserProfiles);
             if (loadedUsers.Count == 0)
                 loadedUsers = BuildUsersFromLegacyNames(state.Users);
@@ -2543,6 +2616,7 @@ public partial class MainWindow : Window
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
+            ApplyFridayFeelingToOpenEditors();
         }
         catch { /* ignore corrupt settings */ }
     }
@@ -2608,6 +2682,7 @@ public partial class MainWindow : Window
         public int? CloudSaveMinutes { get; set; }
         public DateTime? LastCloudCopyUtc { get; set; }
         public int ActiveTabIndex { get; set; } = 0;
+        public bool FridayFeelingEnabled { get; set; } = true;
         public List<string>? Users { get; set; }
         public List<UserProfile>? UserProfiles { get; set; }
     }
@@ -3140,6 +3215,27 @@ public partial class MainWindow : Window
         });
         tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
 
+        var fridayPanel = new StackPanel { Margin = new Thickness(12) };
+        var chkFridayFeeling = new CheckBox
+        {
+            Content = "Enable Fredagsparty background automatically on Fridays",
+            IsChecked = _isFridayFeelingEnabled,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var chkFredagsparty = new CheckBox
+        {
+            Content = "Enable Fredagsparty until app closes",
+            IsChecked = _isFredagspartySessionEnabled,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        fridayPanel.Children.Add(chkFridayFeeling);
+        fridayPanel.Children.Add(chkFredagsparty);
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Friday",
+            Content = fridayPanel
+        });
+
         var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
         var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -3346,6 +3442,8 @@ public partial class MainWindow : Window
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
+                _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
+                _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors
@@ -3359,6 +3457,7 @@ public partial class MainWindow : Window
                 }
                 ApplyShortcutBindings();
                 ApplyColorThemeToOpenEditors();
+                ApplyFridayFeelingToOpenEditors();
 
                 SaveWindowSettings();
                 dlg.DialogResult = true;
