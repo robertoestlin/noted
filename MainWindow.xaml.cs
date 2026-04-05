@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private bool _startMaximized = false;
     private bool _sessionSaved = false;
     private bool _lastSaveIncludedCloudCopy = false;
+    private int _activeTabIndex = 0;
 
     private const string SettingsFileName = "settings.json";
 
@@ -216,6 +217,7 @@ public partial class MainWindow : Window
 
         // Restore previous session; if nothing to restore, open a blank tab
         LoadSession();
+        RestoreActiveTabSelection();
         if (_docs.Count == 0)
             NewTab();
     }
@@ -1454,6 +1456,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RestoreActiveTabSelection()
+    {
+        if (MainTabControl.Items.Count == 0) return;
+        if (_activeTabIndex < 0 || _activeTabIndex >= MainTabControl.Items.Count) return;
+        MainTabControl.SelectedIndex = _activeTabIndex;
+    }
+
     // --- Status bar -----------------------------------------------------------
 
     private void UpdateStatusBar(TabDocument doc)
@@ -1576,7 +1585,8 @@ public partial class MainWindow : Window
                 CloudBackupFolder = _cloudBackupFolder,
                 CloudSaveHours = _cloudSaveIntervalHours,
                 CloudSaveMinutes = _cloudSaveIntervalMinutes,
-                LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc
+                LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
+                ActiveTabIndex = MainTabControl.SelectedIndex
             };
             var primary = Path.Combine(_backupFolder, SettingsFileName);
             File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
@@ -1713,6 +1723,8 @@ public partial class MainWindow : Window
                 _cloudSaveIntervalMinutes = state.CloudSaveMinutes.Value;
             if (state.LastCloudCopyUtc is DateTime cloudCopyUtc && cloudCopyUtc > DateTime.MinValue)
                 _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
+            if (state.ActiveTabIndex >= 0)
+                _activeTabIndex = state.ActiveTabIndex;
             if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
                 _selectedLineColor = selectedLineColor;
             if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
@@ -1778,6 +1790,7 @@ public partial class MainWindow : Window
         public int? CloudSaveHours { get; set; }
         public int? CloudSaveMinutes { get; set; }
         public DateTime? LastCloudCopyUtc { get; set; }
+        public int ActiveTabIndex { get; set; } = 0;
     }
 
     // --- Settings dialog ----------------------------------------------------
