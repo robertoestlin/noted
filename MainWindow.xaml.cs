@@ -1260,7 +1260,11 @@ public partial class MainWindow : Window
     ///   ===filename2===
     ///   ...
     /// </summary>
-    private void SaveSession(bool updateStatus = true)
+    private void SaveSession(
+        bool updateStatus = true,
+        bool forceCloudBackup = false,
+        string? cloudBackupFolderOverride = null,
+        bool persistCloudMetadata = true)
     {
         try
         {
@@ -1296,7 +1300,7 @@ public partial class MainWindow : Window
             }
 
             PruneBackups();
-            TrySaveCloudBackup(path);
+            TrySaveCloudBackup(path, forceCloudBackup, cloudBackupFolderOverride, persistCloudMetadata);
 
             // Bundle save is the "real" save - clear dirty flags
             foreach (var doc in _docs.Values)
@@ -1352,19 +1356,29 @@ public partial class MainWindow : Window
         return (DateTime.UtcNow - _lastCloudSaveUtc) >= CloudSaveInterval();
     }
 
-    private void TrySaveCloudBackup(string justSavedBackupPath)
+    private void TrySaveCloudBackup(
+        string justSavedBackupPath,
+        bool forceCloudBackup = false,
+        string? cloudBackupFolderOverride = null,
+        bool persistCloudMetadata = true)
     {
-        if (!ShouldSaveCloudBackup()) return;
+        var cloudFolder = string.IsNullOrWhiteSpace(cloudBackupFolderOverride)
+            ? _cloudBackupFolder
+            : cloudBackupFolderOverride.Trim();
+
+        if (string.IsNullOrWhiteSpace(cloudFolder)) return;
+        if (!forceCloudBackup && !ShouldSaveCloudBackup()) return;
         if (!File.Exists(justSavedBackupPath)) return;
 
         try
         {
-            Directory.CreateDirectory(_cloudBackupFolder);
-            var targetPath = Path.Combine(_cloudBackupFolder, Path.GetFileName(justSavedBackupPath));
+            Directory.CreateDirectory(cloudFolder);
+            var targetPath = Path.Combine(cloudFolder, Path.GetFileName(justSavedBackupPath));
             File.Copy(justSavedBackupPath, targetPath, overwrite: true);
             _lastCloudSaveUtc = DateTime.UtcNow;
             _lastSaveIncludedCloudCopy = true;
-            SaveWindowSettings();
+            if (persistCloudMetadata)
+                SaveWindowSettings();
         }
         catch
         {
@@ -1836,12 +1850,40 @@ public partial class MainWindow : Window
         cloudIntervalRow.Children.Add(cmbCloudMinutes);
         cloudIntervalRow.Children.Add(new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center });
         backupPanel.Children.Add(cloudIntervalRow);
-        backupPanel.Children.Add(new TextBlock
+        var txtLastCloudCopy = new TextBlock
         {
             Text = $"Last cloud copy: {FormatCloudCopyTimestamp(_lastCloudSaveUtc)}",
             Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        backupPanel.Children.Add(txtLastCloudCopy);
+
+        var btnCloudSaveNow = new Button
+        {
+            Content = "Save now",
+            Padding = new Thickness(10, 2, 10, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 0, 0, 10)
-        });
+        };
+        btnCloudSaveNow.Click += (_, _) =>
+        {
+            var cloudBackupPath = (txtCloudBackup.Text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(cloudBackupPath))
+            {
+                MessageBox.Show("Set a cloud storage folder first.", "Cloud save",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            SaveSession(
+                updateStatus: true,
+                forceCloudBackup: true,
+                cloudBackupFolderOverride: cloudBackupPath,
+                persistCloudMetadata: false);
+            txtLastCloudCopy.Text = $"Last cloud copy: {FormatCloudCopyTimestamp(_lastCloudSaveUtc)}";
+            RefreshGlobalDirtyStatus();
+        };
+        backupPanel.Children.Add(btnCloudSaveNow);
 
         backupPanel.Children.Add(new TextBlock { Text = "Auto-save interval (seconds):" });
         var txtAutoSave = new TextBox { Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(), Margin = new Thickness(0, 4, 0, 10) };
