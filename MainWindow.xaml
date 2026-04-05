@@ -57,6 +57,9 @@
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
                 </MenuItem>
+                <MenuItem Header="_Plugins">
+                    <MenuItem Header="_Time Report" Click="MenuTimeReport_Click"/>
+                </MenuItem>
             </Menu>
             </DockPanel>
 
