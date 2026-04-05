@@ -177,6 +177,7 @@ public partial class MainWindow : Window
         public string Header { get; set; } = string.Empty;
         public string Content { get; set; } = string.Empty;
         public bool IsDirty { get; set; }
+        public FileMetadata? Metadata { get; set; }
     }
 
     private sealed class HighlightLineRenderer : IBackgroundRenderer
@@ -2220,7 +2221,8 @@ public partial class MainWindow : Window
         {
             Header = doc.Header,
             Content = doc.CachedText,
-            IsDirty = doc.IsDirty
+            IsDirty = doc.IsDirty,
+            Metadata = CreateFileMetadata(doc)
         });
 
         if (_closedTabHistory.Count > MaxClosedTabs)
@@ -2262,11 +2264,35 @@ public partial class MainWindow : Window
                 .Where(e => !string.IsNullOrWhiteSpace(e.Header))
                 .Take(MaxClosedTabs))
             {
+                var highlightedLines = entry.Metadata?.HighlightLines?
+                    .Where(line => line > 0)
+                    .Distinct()
+                    .OrderBy(line => line)
+                    .ToList();
+
+                var assignees = entry.Metadata?.Assignees?
+                    .Where(a => a != null && a.Line > 0 && !string.IsNullOrWhiteSpace(a.Person))
+                    .Select(a => new FileLineAssignee
+                    {
+                        Line = a.Line,
+                        Person = a.Person.Trim()
+                    })
+                    .OrderBy(a => a.Line)
+                    .ToList();
+
                 _closedTabHistory.Add(new ClosedTabEntry
                 {
                     Header = entry.Header.Trim(),
                     Content = entry.Content ?? string.Empty,
-                    IsDirty = entry.IsDirty
+                    IsDirty = entry.IsDirty,
+                    Metadata = entry.Metadata == null
+                        ? null
+                        : new FileMetadata
+                        {
+                            HighlightLine = entry.Metadata.HighlightLine,
+                            HighlightLines = highlightedLines != null && highlightedLines.Count > 0 ? highlightedLines : null,
+                            Assignees = assignees != null && assignees.Count > 0 ? assignees : null
+                        }
                 });
             }
         }
@@ -2286,6 +2312,11 @@ public partial class MainWindow : Window
         SaveClosedTabHistory();
 
         var doc = CreateTab(entry.Header, entry.Content);
+        var highlightedLines = entry.Metadata?.HighlightLines ?? [];
+        if (highlightedLines.Count == 0 && entry.Metadata?.HighlightLine is int legacyHighlightLine && legacyHighlightLine > 0)
+            highlightedLines = [legacyHighlightLine];
+        SetHighlightedLines(doc, highlightedLines, markDirty: false);
+        SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
         doc.IsDirty = entry.IsDirty;
         RefreshTabHeader(doc);
     }
