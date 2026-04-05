@@ -843,12 +843,6 @@ public partial class MainWindow : Window
         return Enumerable.Range(firstLine, lastLine - firstLine + 1).ToList();
     }
 
-    private static string BuildMetadataLine(IReadOnlyCollection<int> highlightedLines)
-    {
-        var metadata = new FileMetadata { HighlightLines = highlightedLines.OrderBy(n => n).ToList() };
-        return $"{MetadataPrefix}{JsonSerializer.Serialize(metadata)}";
-    }
-
     private static bool TryReadMetadataLine(string text, int startIndex, out FileMetadata metadata, out int nextContentStart)
     {
         metadata = new FileMetadata();
@@ -868,16 +862,22 @@ public partial class MainWindow : Window
             return false;
 
         var payload = lineText[MetadataPrefix.Length..].Trim();
-        if (payload.Length > 0)
+        if (payload.Length == 0 || payload[0] != '{')
+            return false;
+
+        // Legacy metadata line marker from older backups only.
+        if (!payload.Contains("\"HighlightLine\"", StringComparison.Ordinal)
+            && !payload.Contains("\"HighlightLines\"", StringComparison.Ordinal)
+            && !payload.Contains("\"EndsWithNewline\"", StringComparison.Ordinal))
+            return false;
+
+        try
         {
-            try
-            {
-                metadata = JsonSerializer.Deserialize<FileMetadata>(payload) ?? new FileMetadata();
-            }
-            catch
-            {
-                metadata = new FileMetadata();
-            }
+            metadata = JsonSerializer.Deserialize<FileMetadata>(payload) ?? new FileMetadata();
+        }
+        catch
+        {
+            return false;
         }
 
         nextContentStart = lineEnd < text.Length ? lineEnd + 1 : lineEnd;
@@ -1270,7 +1270,7 @@ public partial class MainWindow : Window
         {
             _lastSaveIncludedCloudCopy = false;
             foreach (var doc in _docs.Values)
-                doc.CachedText = RemoveTrailingWhitespaces(doc.Editor.Text);
+                doc.CachedText = doc.Editor.Text;
 
             Directory.CreateDirectory(_backupFolder);
 
@@ -1287,15 +1287,10 @@ public partial class MainWindow : Window
                     var text = doc.CachedText;
 
                     // Divider format: ^---name^---
-                    // Metadata format: ^meta^{"highlightLine":N}
-                    // Content format: plain text (verbatim)
+                    // Content format: plain text (verbatim, no injected metadata line)
                     sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
-                    sw.WriteLine(BuildMetadataLine(GetHighlightedLineNumbers(doc)));
                     sw.Write(text);
-
-                    // Guarantee next divider starts on its own line
-                    if (text.Length > 0 && !text.EndsWith('\n'))
-                        sw.WriteLine();
+                    sw.WriteLine();
                 }
             }
 
@@ -1430,18 +1425,15 @@ public partial class MainWindow : Window
                 if (contentStart < text.Length && text[contentStart] == '\r') contentStart++;
                 if (contentStart < text.Length && text[contentStart] == '\n') contentStart++;
 
-                FileMetadata metadata = new();
-                if (TryReadMetadataLine(text, contentStart, out var parsedMetadata, out var contentAfterMetadata))
-                {
-                    metadata = parsedMetadata;
+                // Backward compatibility: older backups inserted a metadata line.
+                if (TryReadMetadataLine(text, contentStart, out _, out var contentAfterMetadata))
                     contentStart = contentAfterMetadata;
-                }
 
                 int contentEnd = i + 1 < matches.Count
                     ? matches[i + 1].Index
                     : text.Length;
 
-                // Strip the trailing newline that SaveSession adds
+                // Strip exactly one separator newline that SaveSession adds.
                 var content = text[contentStart..contentEnd];
                 if (content.EndsWith("\r\n")) content = content[..^2];
                 else if (content.EndsWith('\n')) content = content[..^1];
@@ -1449,10 +1441,6 @@ public partial class MainWindow : Window
                 // New format keeps content verbatim; no escaping/decoding
 
                 var doc = CreateTab(name, content);
-                var linesToRestore = metadata.HighlightLines != null && metadata.HighlightLines.Count > 0
-                    ? metadata.HighlightLines
-                    : (metadata.HighlightLine is int legacyLine ? [legacyLine] : []);
-                SetHighlightedLines(doc, linesToRestore, markDirty: false);
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
