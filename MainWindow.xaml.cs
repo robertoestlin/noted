@@ -54,6 +54,12 @@ public partial class MainWindow : Window
     private const string DefaultFontFamily = "Consolas, Courier New";
     private const double DefaultFontSize = 13;
     private const int DefaultFontWeight = 400;
+    private const string DefaultShortcutNewPrimary = "Ctrl+N";
+    private const string DefaultShortcutNewSecondary = "Ctrl+T";
+    private const string DefaultShortcutCloseTab = "Ctrl+W";
+    private const string DefaultShortcutRenameTab = "F2";
+    private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
+    private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
     private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 196, 128);
     private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 160, 96);
@@ -64,12 +70,23 @@ public partial class MainWindow : Window
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     private int _fontWeight = DefaultFontWeight;
+    private string _shortcutNewPrimary = DefaultShortcutNewPrimary;
+    private string _shortcutNewSecondary = DefaultShortcutNewSecondary;
+    private string _shortcutCloseTab = DefaultShortcutCloseTab;
+    private string _shortcutRenameTab = DefaultShortcutRenameTab;
+    private string _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
+    private string _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
     private Brush _selectedLineBrush = CreateFrozenBrush(DefaultSelectedLineColor);
     private Brush _highlightedLineBrush = CreateFrozenBrush(DefaultHighlightedLineColor);
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
+    private readonly List<KeyBinding> _shortcutBindings = [];
+
+    private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
 
     private static Brush CreateFrozenBrush(Color color)
     {
@@ -148,7 +165,9 @@ public partial class MainWindow : Window
         // Routed commands -> our handlers
         CommandBindings.Add(new CommandBinding(ApplicationCommands.New, (_, _) => NewTab()));
         CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (_, _) => CloseCurrentTab()));
-        PreviewKeyDown += MainWindow_PreviewKeyDown;
+        CommandBindings.Add(new CommandBinding(RenameTabCommand, (_, _) => ExecuteRenameCurrentTab()));
+        CommandBindings.Add(new CommandBinding(AddBlankLinesCommand, (_, _) => ExecuteAddBlankLines()));
+        CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
 
         MainTabControl.AllowDrop = true;
         MainTabControl.DragOver += MainTabControl_DragOver;
@@ -161,6 +180,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        ApplyShortcutBindings();
         EnsureSettingsFileExists();
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
 
@@ -624,35 +644,94 @@ public partial class MainWindow : Window
         => doc.Editor.TextArea.TextView.Redraw();
 
 
-    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    private static bool TryParseKeyGesture(string? input, out KeyGesture gesture)
     {
-        if (e.Key == Key.F2)
+        gesture = null!;
+        if (string.IsNullOrWhiteSpace(input))
+            return false;
+
+        try
         {
-            if (MainTabControl.SelectedItem is TabItem tab)
+            var converter = new KeyGestureConverter();
+            var parsed = converter.ConvertFromInvariantString(input.Trim());
+            if (parsed is KeyGesture keyGesture && keyGesture.Key != Key.None)
             {
-                e.Handled = true;
-                RenameTab(tab);
+                gesture = keyGesture;
+                return true;
             }
         }
-        else if (e.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.Control)
+        catch
         {
-            var doc = CurrentDoc();
-            if (doc != null)
-            {
-                e.Handled = true;
-                doc.Editor.Document.Insert(doc.Editor.Document.TextLength, new string('\n', 10));
-                doc.Editor.ScrollToEnd();
-            }
+            // Invalid gesture text.
         }
-        else if (e.Key == Key.J && Keyboard.Modifiers == ModifierKeys.Control)
-        {
-            var doc = CurrentDoc();
-            if (doc != null)
-            {
-                e.Handled = true;
-                ToggleHighlightedCaretLine(doc);
-            }
-        }
+
+        return false;
+    }
+
+    private void ApplyShortcutBindings()
+    {
+        foreach (var binding in _shortcutBindings)
+            InputBindings.Remove(binding);
+        _shortcutBindings.Clear();
+
+        AddShortcutBinding(_shortcutNewPrimary, ApplicationCommands.New);
+        AddShortcutBinding(_shortcutNewSecondary, ApplicationCommands.New);
+        AddShortcutBinding(_shortcutCloseTab, ApplicationCommands.Close);
+        AddShortcutBinding(_shortcutRenameTab, RenameTabCommand);
+        AddShortcutBinding(_shortcutAddBlankLines, AddBlankLinesCommand);
+        AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
+        UpdateMenuShortcutTexts();
+    }
+
+    private void AddShortcutBinding(string? gestureText, ICommand command)
+    {
+        if (!TryParseKeyGesture(gestureText, out var gesture))
+            return;
+
+        var binding = new KeyBinding(command, gesture);
+        _shortcutBindings.Add(binding);
+        InputBindings.Add(binding);
+    }
+
+    private void ExecuteRenameCurrentTab()
+    {
+        if (MainTabControl.SelectedItem is TabItem tab)
+            RenameTab(tab);
+    }
+
+    private void ExecuteAddBlankLines()
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        doc.Editor.Document.Insert(doc.Editor.Document.TextLength, new string('\n', 10));
+        doc.Editor.ScrollToEnd();
+    }
+
+    private void ExecuteToggleHighlight()
+    {
+        var doc = CurrentDoc();
+        if (doc != null)
+            ToggleHighlightedCaretLine(doc);
+    }
+
+    private static string GestureDisplayText(string? gestureText)
+        => string.IsNullOrWhiteSpace(gestureText) ? "None" : gestureText.Trim();
+
+    private static string CombinedGestureDisplayText(string? first, string? second)
+    {
+        var one = GestureDisplayText(first);
+        var two = GestureDisplayText(second);
+        return two == "None" ? one : $"{one} / {two}";
+    }
+
+    private void UpdateMenuShortcutTexts()
+    {
+        if (MenuItemNewTab != null)
+            MenuItemNewTab.InputGestureText = CombinedGestureDisplayText(_shortcutNewPrimary, _shortcutNewSecondary);
+        if (MenuItemCloseTab != null)
+            MenuItemCloseTab.InputGestureText = GestureDisplayText(_shortcutCloseTab);
     }
 
     private void TabHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -1162,6 +1241,12 @@ public partial class MainWindow : Window
                 FontFamily = _fontFamily,
                 FontSize = _fontSize,
                 FontWeight = _fontWeight,
+                ShortcutNewPrimary = _shortcutNewPrimary,
+                ShortcutNewSecondary = _shortcutNewSecondary,
+                ShortcutCloseTab = _shortcutCloseTab,
+                ShortcutRenameTab = _shortcutRenameTab,
+                ShortcutAddBlankLines = _shortcutAddBlankLines,
+                ShortcutToggleHighlight = _shortcutToggleHighlight,
                 SelectedLineColor = ColorToHex(_selectedLineColor),
                 HighlightedLineColor = ColorToHex(_highlightedLineColor),
                 SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
@@ -1194,6 +1279,12 @@ public partial class MainWindow : Window
             _selectedLineColor = DefaultSelectedLineColor;
             _highlightedLineColor = DefaultHighlightedLineColor;
             _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+            _shortcutNewPrimary = DefaultShortcutNewPrimary;
+            _shortcutNewSecondary = DefaultShortcutNewSecondary;
+            _shortcutCloseTab = DefaultShortcutCloseTab;
+            _shortcutRenameTab = DefaultShortcutRenameTab;
+            _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
+            _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -1258,6 +1349,20 @@ public partial class MainWindow : Window
                 _fontSize = state.FontSize;
             if (state.FontWeight >= 100 && state.FontWeight <= 900)
                 _fontWeight = state.FontWeight;
+            if (TryParseKeyGesture(state.ShortcutNewPrimary, out _))
+                _shortcutNewPrimary = state.ShortcutNewPrimary!.Trim();
+            if (string.IsNullOrWhiteSpace(state.ShortcutNewSecondary))
+                _shortcutNewSecondary = string.Empty;
+            else if (TryParseKeyGesture(state.ShortcutNewSecondary, out _))
+                _shortcutNewSecondary = state.ShortcutNewSecondary.Trim();
+            if (TryParseKeyGesture(state.ShortcutCloseTab, out _))
+                _shortcutCloseTab = state.ShortcutCloseTab!.Trim();
+            if (TryParseKeyGesture(state.ShortcutRenameTab, out _))
+                _shortcutRenameTab = state.ShortcutRenameTab!.Trim();
+            if (TryParseKeyGesture(state.ShortcutAddBlankLines, out _))
+                _shortcutAddBlankLines = state.ShortcutAddBlankLines!.Trim();
+            if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
+                _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
             if (!string.IsNullOrWhiteSpace(state.BackupFolder))
             {
                 try
@@ -1337,6 +1442,12 @@ public partial class MainWindow : Window
         public string FontFamily { get; set; } = DefaultFontFamily;
         public double FontSize { get; set; } = DefaultFontSize;
         public int FontWeight { get; set; } = DefaultFontWeight;
+        public string ShortcutNewPrimary { get; set; } = DefaultShortcutNewPrimary;
+        public string ShortcutNewSecondary { get; set; } = DefaultShortcutNewSecondary;
+        public string ShortcutCloseTab { get; set; } = DefaultShortcutCloseTab;
+        public string ShortcutRenameTab { get; set; } = DefaultShortcutRenameTab;
+        public string ShortcutAddBlankLines { get; set; } = DefaultShortcutAddBlankLines;
+        public string ShortcutToggleHighlight { get; set; } = DefaultShortcutToggleHighlight;
         public string? SelectedLineColor { get; set; }
         public string? HighlightedLineColor { get; set; }
         public string? SelectedHighlightedLineColor { get; set; }
@@ -1551,20 +1662,38 @@ public partial class MainWindow : Window
         var shortkeysPanel = new StackPanel { Margin = new Thickness(12) };
         shortkeysPanel.Children.Add(new TextBlock
         {
-            Text = "Program shortcuts:",
+            Text = "Set shortcuts (format examples: Ctrl+N, Ctrl+Shift+N, F2):",
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 10)
         });
+        shortkeysPanel.Children.Add(new TextBlock { Text = "New tab (primary):" });
+        var txtShortcutNewPrimary = new TextBox { Text = _shortcutNewPrimary, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutNewPrimary);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "New tab (secondary, optional):" });
+        var txtShortcutNewSecondary = new TextBox { Text = _shortcutNewSecondary, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutNewSecondary);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Close current tab:" });
+        var txtShortcutClose = new TextBox { Text = _shortcutCloseTab, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutClose);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Rename current tab:" });
+        var txtShortcutRename = new TextBox { Text = _shortcutRenameTab, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutRename);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Add 10 blank lines at end:" });
+        var txtShortcutAddBlankLines = new TextBox { Text = _shortcutAddBlankLines, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutAddBlankLines);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Toggle highlight on current/selected lines:" });
+        var txtShortcutToggleHighlight = new TextBox { Text = _shortcutToggleHighlight, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutToggleHighlight);
+
         shortkeysPanel.Children.Add(new TextBlock
         {
-            Text =
-                "Ctrl+N or Ctrl+T  - New tab\n" +
-                "Ctrl+W            - Close current tab\n" +
-                "F2                - Rename current tab\n" +
-                "Ctrl+Space        - Add 10 blank lines at end\n" +
-                "Ctrl+J            - Toggle highlight for current/selected lines\n" +
-                "Ctrl+MouseWheel   - Change editor font size",
-            FontFamily = new FontFamily("Consolas")
+            Text = "Ctrl+MouseWheel changes font size and is not configurable.",
+            Foreground = Brushes.DimGray
         });
         tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
 
@@ -1683,6 +1812,53 @@ public partial class MainWindow : Window
                 return;
             }
 
+            var shortcutNewPrimary = txtShortcutNewPrimary.Text.Trim();
+            var shortcutNewSecondary = txtShortcutNewSecondary.Text.Trim();
+            var shortcutClose = txtShortcutClose.Text.Trim();
+            var shortcutRename = txtShortcutRename.Text.Trim();
+            var shortcutAddBlankLines = txtShortcutAddBlankLines.Text.Trim();
+            var shortcutToggleHighlight = txtShortcutToggleHighlight.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(shortcutNewPrimary)
+                || string.IsNullOrWhiteSpace(shortcutClose)
+                || string.IsNullOrWhiteSpace(shortcutRename)
+                || string.IsNullOrWhiteSpace(shortcutAddBlankLines)
+                || string.IsNullOrWhiteSpace(shortcutToggleHighlight))
+            {
+                MessageBox.Show("Shortcut fields cannot be empty (except secondary New tab shortcut).",
+                    "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!TryParseKeyGesture(shortcutNewPrimary, out _)
+                || (!string.IsNullOrWhiteSpace(shortcutNewSecondary) && !TryParseKeyGesture(shortcutNewSecondary, out _))
+                || !TryParseKeyGesture(shortcutClose, out _)
+                || !TryParseKeyGesture(shortcutRename, out _)
+                || !TryParseKeyGesture(shortcutAddBlankLines, out _)
+                || !TryParseKeyGesture(shortcutToggleHighlight, out _))
+            {
+                MessageBox.Show("One or more shortcuts have an invalid format.\nUse values like Ctrl+N, Ctrl+Shift+N, F2.",
+                    "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var shortcutList = new List<string>
+            {
+                shortcutNewPrimary,
+                shortcutClose,
+                shortcutRename,
+                shortcutAddBlankLines,
+                shortcutToggleHighlight
+            };
+            if (!string.IsNullOrWhiteSpace(shortcutNewSecondary))
+                shortcutList.Add(shortcutNewSecondary);
+            if (shortcutList.Count != shortcutList.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+            {
+                MessageBox.Show("Shortcut keys must be unique across actions.", "Invalid settings",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
@@ -1710,6 +1886,12 @@ public partial class MainWindow : Window
                 _fontFamily = cmbFont.Text.Trim();
                 _fontSize = fsize;
                 _fontWeight = weights[cmbFontWeight.SelectedIndex].Value;
+                _shortcutNewPrimary = shortcutNewPrimary;
+                _shortcutNewSecondary = shortcutNewSecondary;
+                _shortcutCloseTab = shortcutClose;
+                _shortcutRenameTab = shortcutRename;
+                _shortcutAddBlankLines = shortcutAddBlankLines;
+                _shortcutToggleHighlight = shortcutToggleHighlight;
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
@@ -1723,6 +1905,7 @@ public partial class MainWindow : Window
                     doc.Editor.FontSize = _fontSize;
                     doc.Editor.FontWeight = weight;
                 }
+                ApplyShortcutBindings();
                 ApplyColorThemeToOpenEditors();
 
                 SaveWindowSettings();
@@ -1730,7 +1913,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).",
+                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

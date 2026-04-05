@@ -6,23 +6,18 @@
         mc:Ignorable="d"
         Title="Noted" Height="700" Width="1100" MinWidth="600" MinHeight="300"
         Closing="Window_Closing">
-    <Window.InputBindings>
-        <KeyBinding Key="N" Modifiers="Control" Command="ApplicationCommands.New"/>
-        <KeyBinding Key="T" Modifiers="Control" Command="ApplicationCommands.New"/>
-        <KeyBinding Key="W" Modifiers="Control" Command="ApplicationCommands.Close"/>
-    </Window.InputBindings>
 
     <DockPanel>
         <DockPanel DockPanel.Dock="Top">
             <Menu DockPanel.Dock="Top">
                 <MenuItem Header="_File">
-                    <MenuItem Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
+                    <MenuItem x:Name="MenuItemNewTab" Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
                     <Separator/>
                     <MenuItem Header="Export to file..." Click="MenuExportToFile_Click"/>
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
                     <Separator/>
-                    <MenuItem Header="_Close Tab" InputGestureText="Ctrl+W" Click="MenuCloseTab_Click"/>
+                    <MenuItem x:Name="MenuItemCloseTab" Header="_Close Tab" InputGestureText="Ctrl+W" Click="MenuCloseTab_Click"/>
                     <Separator/>
                     <MenuItem Header="E_xit" Click="MenuExit_Click"/>
                 </MenuItem>
