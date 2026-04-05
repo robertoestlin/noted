@@ -5,10 +5,14 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Noted" Height="700" Width="1100" MinWidth="600" MinHeight="300"
+        Icon="logo/logo.png"
         Closing="Window_Closing">
 
     <DockPanel>
         <DockPanel DockPanel.Dock="Top">
+            <Border DockPanel.Dock="Left" Padding="6,2,4,2" VerticalAlignment="Center">
+                <Image Source="logo/logo.png" Width="24" Height="24" Stretch="Uniform"/>
+            </Border>
             <Menu DockPanel.Dock="Top">
                 <MenuItem Header="_File">
                     <MenuItem x:Name="MenuItemNewTab" Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
