@@ -4299,7 +4299,17 @@ public partial class MainWindow : Window
     }
 
     private const string DefaultMongoDbAtlasTokenUrl = "https://cloud.mongodb.com/api/oauth/token";
+    private const string DefaultMongoDbAtlasRevokeUrl = "https://cloud.mongodb.com/api/oauth/revoke";
     private const string MongoDbAtlasGenerateTokenDocsUrl = "https://www.mongodb.com/docs/atlas/api/service-accounts/generate-oauth2-token/";
+
+    private static string ResolveMongoDbOAuthRevokeUrl(string tokenEndpointUrl)
+    {
+        var t = (tokenEndpointUrl ?? string.Empty).Trim();
+        if (t.EndsWith("/oauth/token", StringComparison.OrdinalIgnoreCase))
+            return string.Concat(t.AsSpan(0, t.Length - "/token".Length), "/revoke");
+
+        return DefaultMongoDbAtlasRevokeUrl;
+    }
     private const string IfconfigMeIpUrl = "https://ifconfig.me/ip";
     private const string MongoDbPublicIpLabelPrefix = "Your IP: ";
 
@@ -4399,7 +4409,15 @@ public partial class MainWindow : Window
             Padding = new Thickness(16, 6, 16, 6),
             MinWidth = 110
         };
+        var btnRevokeToken = new Button
+        {
+            Content = "Revoke token",
+            Padding = new Thickness(16, 6, 16, 6),
+            MinWidth = 110,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
         btnRow.Children.Add(btnGetToken);
+        btnRow.Children.Add(btnRevokeToken);
 
         var lblAccess = Label("Access token (use as Authorization: Bearer … for Atlas Admin API)");
         var txtAccessToken = new TextBox
@@ -4410,8 +4428,7 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas, Courier New"),
             MinHeight = 88,
-            MaxHeight = 88,
-            IsReadOnly = true
+            MaxHeight = 88
         };
 
         string? ipForClipboard = null;
@@ -4586,6 +4603,7 @@ public partial class MainWindow : Window
             var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
 
             btnGetToken.IsEnabled = false;
+            btnRevokeToken.IsEnabled = false;
             txtAccessToken.Text = string.Empty;
             SetStatus("Requesting token…");
 
@@ -4653,6 +4671,129 @@ public partial class MainWindow : Window
             finally
             {
                 btnGetToken.IsEnabled = true;
+                btnRevokeToken.IsEnabled = true;
+            }
+        };
+
+        btnRevokeToken.Click += async (_, _) =>
+        {
+            var accessToken = (txtAccessToken.Text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                SetStatus("No access token to revoke.", Brushes.IndianRed);
+                return;
+            }
+
+            var urlText = (txtTokenUrl.Text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(urlText))
+            {
+                SetStatus("Enter a token URL.", Brushes.IndianRed);
+                return;
+            }
+
+            if (!Uri.TryCreate(ResolveMongoDbOAuthRevokeUrl(urlText), UriKind.Absolute, out var revokeUri) ||
+                (revokeUri.Scheme != Uri.UriSchemeHttp && revokeUri.Scheme != Uri.UriSchemeHttps))
+            {
+                SetStatus("Could not determine a valid revoke URL.", Brushes.IndianRed);
+                return;
+            }
+
+            var clientId = (txtClientId.Text ?? string.Empty).Trim();
+            var clientSecret = pwdSecret.Password ?? string.Empty;
+            if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+            {
+                SetStatus("Enter client ID and client secret.", Brushes.IndianRed);
+                return;
+            }
+
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+            btnGetToken.IsEnabled = false;
+            btnRevokeToken.IsEnabled = false;
+            SetStatus("Revoking token…");
+
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, revokeUri);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["token"] = accessToken,
+                    ["token_type_hint"] = "access_token"
+                });
+
+                using var response = await http.SendAsync(request).ConfigureAwait(true);
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(true);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    // RFC 7009: revoke endpoints return HTTP 200 both when a token is revoked and when the
+                    // token is unknown, invalid, or already revoked — the response does not distinguish them.
+                    if (!string.IsNullOrWhiteSpace(body))
+                    {
+                        try
+                        {
+                            using var okDoc = JsonDocument.Parse(body);
+                            if (okDoc.RootElement.TryGetProperty("error", out var errEl))
+                            {
+                                var errDesc = okDoc.RootElement.TryGetProperty("error_description", out var descEl)
+                                    ? descEl.GetString()
+                                    : errEl.GetString();
+                                SetStatus(
+                                    string.IsNullOrEmpty(errDesc)
+                                        ? "Revoke failed (error in response body)."
+                                        : $"Revoke failed: {errDesc}",
+                                    Brushes.IndianRed);
+                                return;
+                            }
+                        }
+                        catch (JsonException)
+                        {
+                            // Success with unexpected non-JSON body — still treat as accepted.
+                        }
+                    }
+
+                    SetStatus(
+                        $"HTTP {(int)response.StatusCode}: revoke request accepted. " +
+                        "The Atlas/OAuth revoke API does not indicate whether this token was valid — " +
+                        "invalid, unknown, or already-revoked tokens receive the same success response (RFC 7009).");
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+                var rootEl = doc.RootElement;
+                var err = rootEl.TryGetProperty("error_description", out var ed) ? ed.GetString() : null;
+                if (string.IsNullOrEmpty(err) && rootEl.TryGetProperty("error", out var er))
+                    err = er.GetString();
+                if (string.IsNullOrEmpty(err))
+                    err = body.Length > 500 ? body.Substring(0, 500) + "…" : body;
+
+                SetStatus(
+                    $"Revoke failed ({(int)response.StatusCode}): {err}",
+                    Brushes.IndianRed);
+            }
+            catch (HttpRequestException ex)
+            {
+                SetStatus($"Network error: {ex.Message}", Brushes.IndianRed);
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !ex.CancellationToken.IsCancellationRequested)
+            {
+                SetStatus("Revoke request timed out.", Brushes.IndianRed);
+            }
+            catch (JsonException ex)
+            {
+                SetStatus($"Invalid JSON response: {ex.Message}", Brushes.IndianRed);
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, Brushes.IndianRed);
+            }
+            finally
+            {
+                btnGetToken.IsEnabled = true;
+                btnRevokeToken.IsEnabled = true;
             }
         };
 
