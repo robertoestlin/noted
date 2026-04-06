@@ -483,6 +483,7 @@ public partial class MainWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Padding = new Thickness(4)
         };
+        editor.TextArea.TextView.Margin = new Thickness(8, 0, 0, 0);
         editor.Options.HighlightCurrentLine = true;
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
         EnableJsonSyntaxHighlighting(editor);
