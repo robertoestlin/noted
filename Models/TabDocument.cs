@@ -28,6 +28,9 @@ public class TabDocument
     /// <summary>Cached copy of the editor text, updated on every keystroke. Used by SaveSession so that text is available even during window shutdown (WPF may clear AvalonEdit content before the Closing event finishes).</summary>
     public string CachedText { get; set; } = string.Empty;
 
+    /// <summary>UTC timestamp from the last save operation that included this tab's latest edits.</summary>
+    public DateTime? LastSavedUtc { get; set; }
+
     /// <summary>Anchors for highlighted lines (track edits as text shifts).</summary>
     public List<TextAnchor> HighlightAnchors { get; } = [];
 

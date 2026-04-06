@@ -157,6 +157,9 @@ public partial class MainWindow : Window
 
         // Optional line ownership metadata.
         public List<FileLineAssignee>? Assignees { get; set; }
+
+        // UTC timestamp for when this tab was last saved with changes.
+        public DateTime? LastSavedUtc { get; set; }
     }
 
     private sealed class FileLineAssignee
@@ -1408,6 +1411,7 @@ public partial class MainWindow : Window
         if (!payload.Contains("\"HighlightLine\"", StringComparison.Ordinal)
             && !payload.Contains("\"HighlightLines\"", StringComparison.Ordinal)
             && !payload.Contains("\"Assignees\"", StringComparison.Ordinal)
+            && !payload.Contains("\"LastSavedUtc\"", StringComparison.Ordinal)
             && !payload.Contains("\"EndsWithNewline\"", StringComparison.Ordinal))
             return false;
 
@@ -2306,7 +2310,8 @@ public partial class MainWindow : Window
                         {
                             HighlightLine = entry.Metadata.HighlightLine,
                             HighlightLines = highlightedLines != null && highlightedLines.Count > 0 ? highlightedLines : null,
-                            Assignees = assignees != null && assignees.Count > 0 ? assignees : null
+                            Assignees = assignees != null && assignees.Count > 0 ? assignees : null,
+                            LastSavedUtc = entry.Metadata.LastSavedUtc
                         }
                 });
             }
@@ -2332,6 +2337,7 @@ public partial class MainWindow : Window
             highlightedLines = [legacyHighlightLine];
         SetHighlightedLines(doc, highlightedLines, markDirty: false);
         SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
+        doc.LastSavedUtc = entry.Metadata?.LastSavedUtc?.ToUniversalTime();
         doc.IsDirty = entry.IsDirty;
         RefreshTabHeader(doc);
     }
@@ -2488,13 +2494,14 @@ public partial class MainWindow : Window
             .OrderBy(entry => entry.Line)
             .ToList();
 
-        if (highlighted.Count == 0 && assignees.Count == 0)
+        if (highlighted.Count == 0 && assignees.Count == 0 && doc.LastSavedUtc == null)
             return null;
 
         return new FileMetadata
         {
             HighlightLines = highlighted.Count > 0 ? highlighted : null,
-            Assignees = assignees.Count > 0 ? assignees : null
+            Assignees = assignees.Count > 0 ? assignees : null,
+            LastSavedUtc = doc.LastSavedUtc
         };
     }
 
@@ -2521,6 +2528,9 @@ public partial class MainWindow : Window
                 {
                     if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
                         continue;
+
+                    if (doc.IsDirty)
+                        doc.LastSavedUtc = DateTime.UtcNow;
 
                     var text = doc.CachedText;
                     var metadata = CreateFileMetadata(doc);
@@ -2691,6 +2701,7 @@ public partial class MainWindow : Window
                     highlightedLines = [metadata.HighlightLine.Value];
                 SetHighlightedLines(doc, highlightedLines, markDirty: false);
                 SetLineAssignments(doc, metadata.Assignees, markDirty: false);
+                doc.LastSavedUtc = metadata.LastSavedUtc?.ToUniversalTime();
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
