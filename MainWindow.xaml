@@ -60,6 +60,7 @@
                 </MenuItem>
                 <MenuItem Header="_Plugins">
                     <MenuItem Header="_Time Report" Click="MenuTimeReport_Click"/>
+                    <MenuItem Header="_Base64..." Click="MenuBase64_Click"/>
                 </MenuItem>
             </Menu>
             </DockPanel>
