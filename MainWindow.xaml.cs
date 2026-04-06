@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -2802,6 +2804,7 @@ public partial class MainWindow : Window
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
     private void MenuBase64_Click(object sender, RoutedEventArgs e) => ShowBase64Dialog();
+    private void MenuMongoDbApiGetToken_Click(object sender, RoutedEventArgs e) => ShowMongoDbApiGetTokenDialog();
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
@@ -3463,6 +3466,248 @@ public partial class MainWindow : Window
         };
 
         btnClose.Click += (_, _) => dlg.Close();
+
+        dlg.Content = root;
+        dlg.ShowDialog();
+    }
+
+    private const string DefaultMongoDbAtlasTokenUrl = "https://cloud.mongodb.com/api/oauth/token";
+    private const string MongoDbAtlasGenerateTokenDocsUrl = "https://www.mongodb.com/docs/atlas/api/service-accounts/generate-oauth2-token/";
+
+    private void ShowMongoDbApiGetTokenDialog()
+    {
+        var dlg = new Window
+        {
+            Title = "MongoDB API Get Token",
+            Width = 640,
+            Height = 480,
+            MinWidth = 480,
+            MinHeight = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var bottom = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var status = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 8),
+            TextWrapping = TextWrapping.Wrap
+        };
+        var closeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        var btnClose = new Button
+        {
+            Content = "Close",
+            Width = 90,
+            IsCancel = true,
+            IsDefault = true
+        };
+        closeRow.Children.Add(btnClose);
+        bottom.Children.Add(status);
+        bottom.Children.Add(closeRow);
+        DockPanel.SetDock(bottom, Dock.Bottom);
+        root.Children.Add(bottom);
+
+        void SetStatus(string message, Brush? brush = null)
+        {
+            status.Text = message;
+            status.Foreground = brush ?? Brushes.DimGray;
+        }
+
+        var form = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        for (var i = 0; i < 6; i++)
+            form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        static TextBlock Label(string text) => new()
+        {
+            Text = text,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+
+        var lblUrl = Label("Token URL");
+        Grid.SetRow(lblUrl, 0);
+        form.Children.Add(lblUrl);
+
+        var txtTokenUrl = new TextBox
+        {
+            Text = DefaultMongoDbAtlasTokenUrl,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        Grid.SetRow(txtTokenUrl, 1);
+        form.Children.Add(txtTokenUrl);
+
+        var lblClientId = Label("Client ID");
+        Grid.SetRow(lblClientId, 2);
+        form.Children.Add(lblClientId);
+
+        var txtClientId = new TextBox { Margin = new Thickness(0, 0, 0, 10) };
+        Grid.SetRow(txtClientId, 3);
+        form.Children.Add(txtClientId);
+
+        var lblSecret = Label("Client secret");
+        Grid.SetRow(lblSecret, 4);
+        form.Children.Add(lblSecret);
+
+        var pwdSecret = new PasswordBox { Margin = new Thickness(0, 0, 0, 10) };
+        Grid.SetRow(pwdSecret, 5);
+        form.Children.Add(pwdSecret);
+
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var btnGetToken = new Button
+        {
+            Content = "Get token",
+            Padding = new Thickness(16, 6, 16, 6),
+            MinWidth = 110
+        };
+        btnRow.Children.Add(btnGetToken);
+
+        var lblAccess = Label("Access token (use as Authorization: Bearer … for Atlas Admin API)");
+        var txtAccessToken = new TextBox
+        {
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            MinHeight = 120,
+            IsReadOnly = true
+        };
+
+        var docLine = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            TextWrapping = TextWrapping.Wrap
+        };
+        docLine.Inlines.Add("Documentation: ");
+        var docHyperlink = new Hyperlink(new Run(MongoDbAtlasGenerateTokenDocsUrl))
+        {
+            NavigateUri = new Uri(MongoDbAtlasGenerateTokenDocsUrl)
+        };
+        docHyperlink.RequestNavigate += (_, e) =>
+        {
+            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
+            e.Handled = true;
+        };
+        docLine.Inlines.Add(docHyperlink);
+
+        var mainStack = new StackPanel();
+        mainStack.Children.Add(form);
+        mainStack.Children.Add(btnRow);
+        mainStack.Children.Add(lblAccess);
+        mainStack.Children.Add(txtAccessToken);
+        mainStack.Children.Add(docLine);
+
+        root.Children.Add(mainStack);
+
+        btnClose.Click += (_, _) => dlg.Close();
+
+        btnGetToken.Click += async (_, _) =>
+        {
+            var urlText = (txtTokenUrl.Text ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(urlText))
+            {
+                SetStatus("Enter a token URL.", Brushes.IndianRed);
+                return;
+            }
+
+            if (!Uri.TryCreate(urlText, UriKind.Absolute, out var tokenUri) ||
+                (tokenUri.Scheme != Uri.UriSchemeHttp && tokenUri.Scheme != Uri.UriSchemeHttps))
+            {
+                SetStatus("Token URL must be a valid http(s) URL.", Brushes.IndianRed);
+                return;
+            }
+
+            var clientId = (txtClientId.Text ?? string.Empty).Trim();
+            var clientSecret = pwdSecret.Password ?? string.Empty;
+            if (string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+            {
+                SetStatus("Enter client ID and client secret.", Brushes.IndianRed);
+                return;
+            }
+
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+            btnGetToken.IsEnabled = false;
+            txtAccessToken.Text = string.Empty;
+            SetStatus("Requesting token…");
+
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+                using var request = new HttpRequestMessage(HttpMethod.Post, tokenUri);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["grant_type"] = "client_credentials"
+                });
+
+                using var response = await http.SendAsync(request).ConfigureAwait(true);
+                var body = await response.Content.ReadAsStringAsync().ConfigureAwait(true);
+
+                using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+                var rootEl = doc.RootElement;
+
+                if (rootEl.TryGetProperty("access_token", out var accessTokenEl))
+                {
+                    var token = accessTokenEl.GetString() ?? string.Empty;
+                    txtAccessToken.Text = token;
+
+                    var detail = response.IsSuccessStatusCode ? "OK." : $"HTTP {(int)response.StatusCode}.";
+                    if (rootEl.TryGetProperty("expires_in", out var exp) && exp.TryGetInt32(out var sec))
+                        SetStatus($"{detail} Expires in {sec} seconds.");
+                    else
+                        SetStatus($"{detail} Copy the access token for Authorization: Bearer … on Atlas Admin API requests.");
+                    return;
+                }
+
+                txtAccessToken.Text = string.Empty;
+                var err = rootEl.TryGetProperty("error_description", out var ed) ? ed.GetString() : null;
+                if (string.IsNullOrEmpty(err) && rootEl.TryGetProperty("error", out var er))
+                    err = er.GetString();
+                if (string.IsNullOrEmpty(err))
+                    err = body.Length > 500 ? body.Substring(0, 500) + "…" : body;
+
+                SetStatus(
+                    $"Request failed ({(int)response.StatusCode}): {err}",
+                    Brushes.IndianRed);
+            }
+            catch (HttpRequestException ex)
+            {
+                txtAccessToken.Text = string.Empty;
+                SetStatus($"Network error: {ex.Message}", Brushes.IndianRed);
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !ex.CancellationToken.IsCancellationRequested)
+            {
+                txtAccessToken.Text = string.Empty;
+                SetStatus("Request timed out.", Brushes.IndianRed);
+            }
+            catch (JsonException ex)
+            {
+                txtAccessToken.Text = string.Empty;
+                SetStatus($"Invalid JSON response: {ex.Message}", Brushes.IndianRed);
+            }
+            catch (Exception ex)
+            {
+                txtAccessToken.Text = string.Empty;
+                SetStatus(ex.Message, Brushes.IndianRed);
+            }
+            finally
+            {
+                btnGetToken.IsEnabled = true;
+            }
+        };
 
         dlg.Content = root;
         dlg.ShowDialog();
