@@ -4300,6 +4300,8 @@ public partial class MainWindow : Window
 
     private const string DefaultMongoDbAtlasTokenUrl = "https://cloud.mongodb.com/api/oauth/token";
     private const string MongoDbAtlasGenerateTokenDocsUrl = "https://www.mongodb.com/docs/atlas/api/service-accounts/generate-oauth2-token/";
+    private const string IfconfigMeIpUrl = "https://ifconfig.me/ip";
+    private const string MongoDbPublicIpLabelPrefix = "Your IP: ";
 
     private void ShowMongoDbApiGetTokenDialog()
     {
@@ -4307,9 +4309,9 @@ public partial class MainWindow : Window
         {
             Title = "MongoDB API Get Token",
             Width = 640,
-            Height = 480,
+            Height = 628,
             MinWidth = 480,
-            MinHeight = 360,
+            MinHeight = 600,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -4407,9 +4409,66 @@ public partial class MainWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas, Courier New"),
-            MinHeight = 120,
+            MinHeight = 88,
+            MaxHeight = 88,
             IsReadOnly = true
         };
+
+        string? ipForClipboard = null;
+
+        var ipSection = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var ipLineGrid = new Grid
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            Visibility = Visibility.Collapsed
+        };
+        ipLineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        ipLineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        ipLineGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var txtIpPrefix = new TextBlock
+        {
+            Text = MongoDbPublicIpLabelPrefix,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var txtIpValue = new TextBlock
+        {
+            Text = "",
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 6, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap
+        };
+        var btnCopyIp = new Button
+        {
+            Padding = new Thickness(4, 2, 4, 2),
+            MinWidth = 30,
+            MinHeight = 26,
+            Visibility = Visibility.Collapsed,
+            ToolTip = "Copy IP",
+            VerticalAlignment = VerticalAlignment.Center,
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Content = "\uE8C8",
+            FontSize = 14
+        };
+
+        Grid.SetColumn(txtIpPrefix, 0);
+        Grid.SetColumn(txtIpValue, 1);
+        Grid.SetColumn(btnCopyIp, 2);
+        ipLineGrid.Children.Add(txtIpPrefix);
+        ipLineGrid.Children.Add(txtIpValue);
+        ipLineGrid.Children.Add(btnCopyIp);
+
+        var btnGetPublicIp = new Button
+        {
+            Content = "Get your IP for API Access List",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(16, 6, 16, 6)
+        };
+        ipSection.Children.Add(btnGetPublicIp);
+        ipSection.Children.Add(ipLineGrid);
 
         var docLine = new TextBlock
         {
@@ -4434,10 +4493,71 @@ public partial class MainWindow : Window
         mainStack.Children.Add(lblAccess);
         mainStack.Children.Add(txtAccessToken);
         mainStack.Children.Add(docLine);
+        mainStack.Children.Add(ipSection);
 
         root.Children.Add(mainStack);
 
         btnClose.Click += (_, _) => dlg.Close();
+
+        btnCopyIp.Click += (_, _) =>
+        {
+            if (string.IsNullOrEmpty(ipForClipboard))
+                return;
+            try
+            {
+                Clipboard.SetText(ipForClipboard);
+            }
+            catch
+            {
+                // ignore clipboard failures
+            }
+        };
+
+        btnGetPublicIp.Click += async (_, _) =>
+        {
+            btnGetPublicIp.IsEnabled = false;
+            ipLineGrid.Visibility = Visibility.Visible;
+            ipForClipboard = null;
+            txtIpValue.Text = "";
+            btnCopyIp.Visibility = Visibility.Collapsed;
+
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                http.DefaultRequestHeaders.TryAddWithoutValidation(
+                    "User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                using var response = await http.GetAsync(new Uri(IfconfigMeIpUrl)).ConfigureAwait(true);
+                response.EnsureSuccessStatusCode();
+                var body = (await response.Content.ReadAsStringAsync().ConfigureAwait(true)).Trim();
+                var line = body.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? body;
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    txtIpValue.Text = "(empty response)";
+                    return;
+                }
+
+                ipForClipboard = line;
+                txtIpValue.Text = line;
+                btnCopyIp.Visibility = Visibility.Visible;
+            }
+            catch (HttpRequestException)
+            {
+                txtIpValue.Text = "(couldn't fetch)";
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException || !ex.CancellationToken.IsCancellationRequested)
+            {
+                txtIpValue.Text = "(timed out)";
+            }
+            catch (Exception)
+            {
+                txtIpValue.Text = "(couldn't fetch)";
+            }
+            finally
+            {
+                btnGetPublicIp.IsEnabled = true;
+            }
+        };
 
         btnGetToken.Click += async (_, _) =>
         {
