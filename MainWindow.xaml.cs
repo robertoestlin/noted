@@ -4006,36 +4006,40 @@ public partial class MainWindow : Window
         var panel = new StackPanel();
         scroll.Content = panel;
 
-        var staleForeground = new SolidColorBrush(Color.FromRgb(200, 110, 110));
+        var staleForeground = new SolidColorBrush(Color.FromRgb(168, 96, 102));
         staleForeground.Freeze();
 
         void RefreshList()
         {
             panel.Children.Clear();
             var threshold = TimeSpan.FromDays(_tabCleanupStaleDays);
-            var ordered = _docs.OrderBy(kv => kv.Value.LastChangedUtc).ToList();
+            var now = DateTime.UtcNow;
 
-            if (ordered.Count == 0)
+            bool IsStale(TabDocument d) => (now - d.LastChangedUtc) > threshold;
+
+            var stale = _docs.Where(kv => IsStale(kv.Value))
+                .OrderBy(kv => kv.Value.LastChangedUtc)
+                .ToList();
+            var fresh = _docs.Where(kv => !IsStale(kv.Value))
+                .OrderBy(kv => kv.Value.LastChangedUtc)
+                .ToList();
+
+            if (stale.Count == 0 && fresh.Count == 0)
             {
                 panel.Children.Add(new TextBlock { Text = "(No tabs)", Foreground = Brushes.Gray });
                 return;
             }
 
-            foreach (var kv in ordered)
+            void AddRow(TabItem tab, TabDocument doc, bool isStaleRow)
             {
-                var tab = kv.Key;
-                var doc = kv.Value;
-                var age = DateTime.UtcNow - doc.LastChangedUtc;
-                var isStale = age > threshold;
-
                 var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-                var fgName = isStale ? staleForeground : Brushes.Black;
-                var fgDate = isStale ? staleForeground : Brushes.DimGray;
+                var fgName = isStaleRow ? staleForeground : Brushes.Black;
+                var fgDate = isStaleRow ? staleForeground : Brushes.DimGray;
 
                 var nameBlock = new TextBlock
                 {
@@ -4089,6 +4093,23 @@ public partial class MainWindow : Window
                 row.Children.Add(btnRemove);
                 panel.Children.Add(row);
             }
+
+            foreach (var kv in stale)
+                AddRow(kv.Key, kv.Value, isStaleRow: true);
+
+            if (stale.Count > 0 && fresh.Count > 0)
+            {
+                var ruler = new Border
+                {
+                    Height = 1,
+                    Background = new SolidColorBrush(Color.FromRgb(208, 208, 212)),
+                    Margin = new Thickness(0, 6, 0, 14)
+                };
+                panel.Children.Add(ruler);
+            }
+
+            foreach (var kv in fresh)
+                AddRow(kv.Key, kv.Value, isStaleRow: false);
         }
 
         RefreshList();
