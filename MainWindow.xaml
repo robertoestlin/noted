@@ -56,6 +56,7 @@
                 <MenuItem Header="_Tools">
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
+                    <MenuItem Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Plugins">
                     <MenuItem Header="_Time Report" Click="MenuTimeReport_Click"/>

@@ -62,6 +62,7 @@ public partial class MainWindow : Window
         new(@"^noted_\d{8}_\d{6}\.txt$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private const int DefaultAutoSaveSeconds = 30;
     private const int DefaultInitialLines = 50;
+    private const int DefaultTabCleanupStaleDays = 30;
     private const string DefaultFontFamily = "Consolas, Courier New";
     private const double DefaultFontSize = 13;
     private const int DefaultFontWeight = 400;
@@ -86,6 +87,7 @@ public partial class MainWindow : Window
     private const string MetadataPrefix = "^meta^";
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
+    private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     private int _fontWeight = DefaultFontWeight;
@@ -160,6 +162,9 @@ public partial class MainWindow : Window
 
         // UTC timestamp for when this tab was last saved with changes.
         public DateTime? LastSavedUtc { get; set; }
+
+        /// <summary>UTC when the tab text was last edited (optional).</summary>
+        public DateTime? LastChangedUtc { get; set; }
     }
 
     private sealed class FileLineAssignee
@@ -404,7 +409,8 @@ public partial class MainWindow : Window
             Header = name,
             Editor = editor,
             CachedText = editor.Text,
-            IsDirty = false
+            IsDirty = false,
+            LastChangedUtc = DateTime.UtcNow
         };
 
         var highlightRenderer = new HighlightLineRenderer(
@@ -421,6 +427,7 @@ public partial class MainWindow : Window
         editor.TextChanged += (_, _) =>
         {
             doc.CachedText = editor.Text;
+            doc.LastChangedUtc = DateTime.UtcNow;
             MarkDirty(doc);
             RedrawHighlight(doc);
         };
@@ -1412,6 +1419,7 @@ public partial class MainWindow : Window
             && !payload.Contains("\"HighlightLines\"", StringComparison.Ordinal)
             && !payload.Contains("\"Assignees\"", StringComparison.Ordinal)
             && !payload.Contains("\"LastSavedUtc\"", StringComparison.Ordinal)
+            && !payload.Contains("\"LastChangedUtc\"", StringComparison.Ordinal)
             && !payload.Contains("\"EndsWithNewline\"", StringComparison.Ordinal))
             return false;
 
@@ -2311,7 +2319,8 @@ public partial class MainWindow : Window
                             HighlightLine = entry.Metadata.HighlightLine,
                             HighlightLines = highlightedLines != null && highlightedLines.Count > 0 ? highlightedLines : null,
                             Assignees = assignees != null && assignees.Count > 0 ? assignees : null,
-                            LastSavedUtc = entry.Metadata.LastSavedUtc
+                            LastSavedUtc = entry.Metadata.LastSavedUtc,
+                            LastChangedUtc = entry.Metadata.LastChangedUtc
                         }
                 });
             }
@@ -2338,6 +2347,9 @@ public partial class MainWindow : Window
         SetHighlightedLines(doc, highlightedLines, markDirty: false);
         SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
         doc.LastSavedUtc = entry.Metadata?.LastSavedUtc?.ToUniversalTime();
+        doc.LastChangedUtc = entry.Metadata?.LastChangedUtc?.ToUniversalTime()
+            ?? entry.Metadata?.LastSavedUtc?.ToUniversalTime()
+            ?? DateTime.UtcNow;
         doc.IsDirty = entry.IsDirty;
         RefreshTabHeader(doc);
     }
@@ -2485,7 +2497,7 @@ public partial class MainWindow : Window
     ///   ===filename2===
     ///   ...
     /// </summary>
-    private FileMetadata? CreateFileMetadata(TabDocument doc)
+    private FileMetadata CreateFileMetadata(TabDocument doc)
     {
         var highlighted = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
         var assignees = GetLineAssignments(doc)
@@ -2494,14 +2506,12 @@ public partial class MainWindow : Window
             .OrderBy(entry => entry.Line)
             .ToList();
 
-        if (highlighted.Count == 0 && assignees.Count == 0 && doc.LastSavedUtc == null)
-            return null;
-
         return new FileMetadata
         {
             HighlightLines = highlighted.Count > 0 ? highlighted : null,
             Assignees = assignees.Count > 0 ? assignees : null,
-            LastSavedUtc = doc.LastSavedUtc
+            LastSavedUtc = doc.LastSavedUtc,
+            LastChangedUtc = doc.LastChangedUtc
         };
     }
 
@@ -2702,6 +2712,9 @@ public partial class MainWindow : Window
                 SetHighlightedLines(doc, highlightedLines, markDirty: false);
                 SetLineAssignments(doc, metadata.Assignees, markDirty: false);
                 doc.LastSavedUtc = metadata.LastSavedUtc?.ToUniversalTime();
+                doc.LastChangedUtc = metadata.LastChangedUtc?.ToUniversalTime()
+                    ?? metadata.LastSavedUtc?.ToUniversalTime()
+                    ?? DateTime.UtcNow;
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
@@ -2785,6 +2798,7 @@ public partial class MainWindow : Window
     private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
+    private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
@@ -3462,7 +3476,8 @@ public partial class MainWindow : Window
                 FridayFeelingEnabled = _isFridayFeelingEnabled,
                 Users = _users.Select(user => user.Name).ToList(),
                 UserProfiles = NormalizeUsers(_users),
-                TimeReports = BuildTimeReportSettings()
+                TimeReports = BuildTimeReportSettings(),
+                TabCleanupStaleDays = _tabCleanupStaleDays
             };
             var primary = Path.Combine(_backupFolder, SettingsFileName);
             File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
@@ -3498,6 +3513,7 @@ public partial class MainWindow : Window
             _isFredagspartySessionEnabled = false;
             _users = [];
             _timeReports.Clear();
+            _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
             if (!File.Exists(defaultPath))
                 return;
@@ -3614,6 +3630,8 @@ public partial class MainWindow : Window
                 loadedUsers = BuildUsersFromLegacyNames(state.Users);
             _users = loadedUsers;
             LoadTimeReportSettings(state.TimeReports);
+            if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
+                _tabCleanupStaleDays = state.TabCleanupStaleDays;
             if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
                 _selectedLineColor = selectedLineColor;
             if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
@@ -3713,6 +3731,7 @@ public partial class MainWindow : Window
         public List<string>? Users { get; set; }
         public List<UserProfile>? UserProfiles { get; set; }
         public List<TimeReportMonthRecord>? TimeReports { get; set; }
+        public int TabCleanupStaleDays { get; set; } = DefaultTabCleanupStaleDays;
     }
 
     // --- Settings dialog ----------------------------------------------------
@@ -3966,6 +3985,129 @@ public partial class MainWindow : Window
         foreach (var doc in _docs.Values)
             RedrawHighlight(doc);
         SaveWindowSettings();
+    }
+
+    private void ShowTabCleanupDialog()
+    {
+        var dlg = new Window
+        {
+            Title = "Tab Cleanup",
+            Width = 640,
+            Height = 480,
+            MinWidth = 420,
+            MinHeight = 280,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this
+        };
+
+        var root = new DockPanel { Margin = new Thickness(16) };
+
+        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var panel = new StackPanel();
+        scroll.Content = panel;
+
+        var staleForeground = new SolidColorBrush(Color.FromRgb(200, 110, 110));
+        staleForeground.Freeze();
+
+        void RefreshList()
+        {
+            panel.Children.Clear();
+            var threshold = TimeSpan.FromDays(_tabCleanupStaleDays);
+            var ordered = _docs.OrderBy(kv => kv.Value.LastChangedUtc).ToList();
+
+            if (ordered.Count == 0)
+            {
+                panel.Children.Add(new TextBlock { Text = "(No tabs)", Foreground = Brushes.Gray });
+                return;
+            }
+
+            foreach (var kv in ordered)
+            {
+                var tab = kv.Key;
+                var doc = kv.Value;
+                var age = DateTime.UtcNow - doc.LastChangedUtc;
+                var isStale = age > threshold;
+
+                var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var fgName = isStale ? staleForeground : Brushes.Black;
+                var fgDate = isStale ? staleForeground : Brushes.DimGray;
+
+                var nameBlock = new TextBlock
+                {
+                    Text = doc.Header,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 12, 0),
+                    Foreground = fgName,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                };
+                Grid.SetColumn(nameBlock, 0);
+
+                var dateBlock = new TextBlock
+                {
+                    Text = doc.LastChangedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    Foreground = fgDate,
+                    FontSize = 12
+                };
+                Grid.SetColumn(dateBlock, 1);
+
+                var btnGoTo = new Button
+                {
+                    Content = "Go to",
+                    Padding = new Thickness(10, 4, 10, 4),
+                    MinWidth = 64,
+                    Margin = new Thickness(0, 0, 8, 0)
+                };
+                btnGoTo.Click += (_, _) =>
+                {
+                    MainTabControl.SelectedItem = tab;
+                };
+                Grid.SetColumn(btnGoTo, 2);
+
+                var btnRemove = new Button
+                {
+                    Content = "Remove",
+                    Padding = new Thickness(12, 4, 12, 4),
+                    MinWidth = 76
+                };
+                btnRemove.Click += (_, _) =>
+                {
+                    if (CloseTab(tab))
+                        RefreshList();
+                };
+                Grid.SetColumn(btnRemove, 3);
+
+                row.Children.Add(nameBlock);
+                row.Children.Add(dateBlock);
+                row.Children.Add(btnGoTo);
+                row.Children.Add(btnRemove);
+                panel.Children.Add(row);
+            }
+        }
+
+        RefreshList();
+
+        var closeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        var btnClose = new Button { Content = "Close", Width = 88, IsDefault = true, IsCancel = true };
+        btnClose.Click += (_, _) => dlg.Close();
+        closeRow.Children.Add(btnClose);
+        DockPanel.SetDock(closeRow, Dock.Bottom);
+
+        root.Children.Add(closeRow);
+        root.Children.Add(scroll);
+        dlg.Content = root;
+        dlg.ShowDialog();
     }
 
     private void ShowSettingsDialog()
@@ -4264,6 +4406,27 @@ public partial class MainWindow : Window
             Content = fridayPanel
         });
 
+        var tabsSettingsPanel = new StackPanel { Margin = new Thickness(12) };
+        tabsSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Tab Cleanup: treat tabs as stale (soft red in Tools → Tab Cleanup) when last edit is older than this many days:",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        var txtTabStaleDays = new TextBox
+        {
+            Text = _tabCleanupStaleDays.ToString(),
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 0)
+        };
+        tabsSettingsPanel.Children.Add(txtTabStaleDays);
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Tabs",
+            Content = new ScrollViewer { Content = tabsSettingsPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
+
         var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
         var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -4440,7 +4603,8 @@ public partial class MainWindow : Window
                 && (cloudHours > 0 || cloudMinutes > 0)
                 && TryParseColor(cmbSelectedLineColor.Text, out var selectedLineColor)
                 && TryParseColor(cmbHighlightedLineColor.Text, out var highlightedLineColor)
-                && TryParseColor(cmbSelectedHighlightedLineColor.Text, out var selectedHighlightedLineColor))
+                && TryParseColor(cmbSelectedHighlightedLineColor.Text, out var selectedHighlightedLineColor)
+                && int.TryParse(txtTabStaleDays.Text, out int staleDays) && staleDays >= 1 && staleDays <= 3650)
             {
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
@@ -4472,6 +4636,7 @@ public partial class MainWindow : Window
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
                 _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
+                _tabCleanupStaleDays = staleDays;
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors
@@ -4492,7 +4657,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.",
+                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

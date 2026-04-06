@@ -31,6 +31,9 @@ public class TabDocument
     /// <summary>UTC timestamp from the last save operation that included this tab's latest edits.</summary>
     public DateTime? LastSavedUtc { get; set; }
 
+    /// <summary>UTC timestamp when this tab's text was last edited.</summary>
+    public DateTime LastChangedUtc { get; set; } = DateTime.UtcNow;
+
     /// <summary>Anchors for highlighted lines (track edits as text shifts).</summary>
     public List<TextAnchor> HighlightAnchors { get; } = [];
 
