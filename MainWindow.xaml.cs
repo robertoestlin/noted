@@ -3499,13 +3499,19 @@ public partial class MainWindow : Window
         }
     }
 
+    private const string JwtIoHomeUrl = "https://jwt.io/";
+    private const string JwtIoIntroductionUrl = "https://www.jwt.io/introduction#what-is-json-web-token";
+
+    private const string JwtSampleMongoDbAtlas =
+        "eyJhbGciOiJFUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6Im1yay01ZzFkZDU1Y2MwZDc1YzdhYTAxZzhkMjkxMDgxY2czYyJ9.eyJpc3MiOiJodHRwczovL2Nsb3VkLm1vbmdvZGIuY29tIiwiYXVkIjoiYXBpOi8vYWRtaW4iLCJzdWIiOiJtZGJfc2FfaWRfNzBlNGY5MmU5NGQ4OGRmZzk1MTM5NjU1IiwiaWF0IjoxNzc1NTAwMjMxLCJuYmYiOjE3NzU1MDAyMzEsImV4cCI6MTc3NTUwMzgzMSwianRpIjoiMjNiNDI4MjctNjRmZS01OTQwLTkyZ2UtNzVlOTFmMmY0YmUxIiwiYWN0b3JJZCI6Im1kYl9zYV9pZF83MGU0ZjkyZTk0ZDg4ZGZmOTUxMzk2NTUiLCJzZXNzaW9uU3ViIjoibWRiX3NhX2lkXzcwZTRmOTJlOTRkODhkZmY5NTEzOTY1NSIsInNlc3Npb25JZCI6IjEyM2M4OWQ5LTA0OTMtNTE1Ny1jNGMzLWc3NmYyZTQxOTU1ZCIsImNpZCI6Im1kYl9zYV9pZF83MGU0ZjkyZTk0ZDg4ZGZmOTUxMzk2NTUifQ.ANFfhFi0c7tpCF3OZfxhUWTUtXlERO0eDFToZKhQZZa5KWdKQ-ccjfntOP3EdVoapUfLs-t7ryQbJqIo7lK4bFf6ARkJwRhxHdhAGo--yPGKzi3j-hDgiq8tHvPotDOAsF51ZxM9uIbqmG04KbyrKg5MMFFoTTbl5wwp9G_6-EI_t_Pm";
+
     private void ShowJwtDecoderDialog()
     {
         var dlg = new Window
         {
             Title = "JWT Decoder",
             Width = 920,
-            Height = 640,
+            Height = 720,
             MinWidth = 560,
             MinHeight = 400,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -3556,6 +3562,14 @@ public partial class MainWindow : Window
             MinHeight = 140
         };
 
+        var lblStructure = new TextBlock
+        {
+            Text = "A JWT has three parts: Header, Payload, and Signature — xxxxx.yyyyy.zzzzz (each segment is Base64url-encoded).",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+
         var lblIn = new TextBlock
         {
             Text = "JWT (paste compact token; optional \"Bearer \" prefix is stripped)",
@@ -3574,13 +3588,26 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 8)
         };
 
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
         var btnDecode = new Button
         {
             Content = "Decode",
-            HorizontalAlignment = HorizontalAlignment.Left,
             Padding = new Thickness(16, 6, 16, 6),
-            Margin = new Thickness(0, 0, 0, 12)
+            MinWidth = 100
         };
+        var btnPasteSample = new Button
+        {
+            Content = "Paste sample JWT",
+            Padding = new Thickness(16, 6, 16, 6),
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        btnRow.Children.Add(btnDecode);
+        btnRow.Children.Add(btnPasteSample);
 
         var splitGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
         splitGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -3639,20 +3666,52 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 0)
         };
 
+        var jwtDocLine = new TextBlock
+        {
+            Margin = new Thickness(0, 8, 0, 0),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.DimGray,
+            FontSize = 11
+        };
+        jwtDocLine.Inlines.Add("Documentation: ");
+        var linkJwtIo = new Hyperlink(new Run("jwt.io"))
+        {
+            NavigateUri = new Uri(JwtIoHomeUrl)
+        };
+        linkJwtIo.RequestNavigate += (_, e) =>
+        {
+            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
+            e.Handled = true;
+        };
+        jwtDocLine.Inlines.Add(linkJwtIo);
+        jwtDocLine.Inlines.Add(new Run(" · "));
+        var linkIntro = new Hyperlink(new Run("Introduction"))
+        {
+            NavigateUri = new Uri(JwtIoIntroductionUrl)
+        };
+        linkIntro.RequestNavigate += (_, e) =>
+        {
+            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
+            e.Handled = true;
+        };
+        jwtDocLine.Inlines.Add(linkIntro);
+
         var mainStack = new StackPanel();
+        mainStack.Children.Add(lblStructure);
         mainStack.Children.Add(lblIn);
         mainStack.Children.Add(txtJwt);
-        mainStack.Children.Add(btnDecode);
+        mainStack.Children.Add(btnRow);
         mainStack.Children.Add(splitGrid);
         mainStack.Children.Add(lblSig);
         mainStack.Children.Add(txtSignature);
         mainStack.Children.Add(lblNote);
+        mainStack.Children.Add(jwtDocLine);
 
         root.Children.Add(mainStack);
 
         btnClose.Click += (_, _) => dlg.Close();
 
-        btnDecode.Click += (_, _) =>
+        void DecodeJwt()
         {
             txtHeader.Text = string.Empty;
             txtPayload.Text = string.Empty;
@@ -3699,6 +3758,14 @@ public partial class MainWindow : Window
             {
                 SetStatus($"Decode failed: {ex.Message}", Brushes.IndianRed);
             }
+        }
+
+        btnDecode.Click += (_, _) => DecodeJwt();
+
+        btnPasteSample.Click += (_, _) =>
+        {
+            txtJwt.Text = JwtSampleMongoDbAtlas;
+            DecodeJwt();
         };
 
         dlg.Content = root;
