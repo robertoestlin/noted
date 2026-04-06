@@ -64,7 +64,8 @@
                     <MenuItem Header="_MongoDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
                     </MenuItem>
-                    <MenuItem Header="_Time Report" Click="MenuTimeReport_Click"/>
+                    <MenuItem Header="_Password Generator" Click="MenuPasswordGenerator_Click"/>
+                    <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
                 </MenuItem>
             </Menu>
             </DockPanel>
