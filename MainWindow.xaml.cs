@@ -93,6 +93,8 @@ public partial class MainWindow : Window
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
+    /// <summary>Session-only offset for Ctrl+wheel zoom; not saved to settings.</summary>
+    private double _sessionEditorFontZoomDelta;
     private int _fontWeight = DefaultFontWeight;
     private string _shortcutNewPrimary = DefaultShortcutNewPrimary;
     private string _shortcutNewSecondary = DefaultShortcutNewSecondary;
@@ -478,7 +480,7 @@ public partial class MainWindow : Window
         var editor = new TextEditor
         {
             FontFamily = new FontFamily(_fontFamily),
-            FontSize = _fontSize,
+            FontSize = ClampedEditorDisplayFontSize(),
             FontWeight = FontWeight.FromOpenTypeWeight(_fontWeight),
             ShowLineNumbers = true,
             WordWrap = false,
@@ -692,22 +694,23 @@ public partial class MainWindow : Window
         destinationEditor.Focus();
     }
 
+    private double ClampedEditorDisplayFontSize()
+        => Math.Max(6, Math.Min(72, _fontSize + _sessionEditorFontZoomDelta));
+
     private void Editor_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
         e.Handled = true;
 
-        double delta = e.Delta > 0 ? 1 : -1;
-        double newSize = _fontSize + delta;
-        if (newSize < 6) newSize = 6;
-        if (newSize > 72) newSize = 72;
-        _fontSize = newSize;
+        double step = e.Delta > 0 ? 1 : -1;
+        double next = Math.Max(6, Math.Min(72, _fontSize + _sessionEditorFontZoomDelta + step));
+        _sessionEditorFontZoomDelta = next - _fontSize;
 
         var family = new FontFamily(_fontFamily);
         foreach (var doc in _docs.Values)
         {
             doc.Editor.FontFamily = family;
-            doc.Editor.FontSize = _fontSize;
+            doc.Editor.FontSize = next;
             doc.Editor.FontWeight = FontWeight.FromOpenTypeWeight(_fontWeight);
         }
     }
@@ -4390,7 +4393,7 @@ public partial class MainWindow : Window
         Grid.SetRow(txtClientId, 3);
         form.Children.Add(txtClientId);
 
-        var lblSecret = Label("Client secret");
+        var lblSecret = Label("Client Secret");
         Grid.SetRow(lblSecret, 4);
         form.Children.Add(lblSecret);
 
@@ -5989,7 +5992,7 @@ public partial class MainWindow : Window
         });
         shortkeysPanel.Children.Add(new TextBlock
         {
-            Text = "Ctrl+MouseWheel changes font size.",
+            Text = "Ctrl+MouseWheel zooms the editor for this session (saved font size is unchanged).",
             Foreground = Brushes.DimGray
         });
         tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
@@ -6254,7 +6257,7 @@ public partial class MainWindow : Window
                 foreach (var doc in _docs.Values)
                 {
                     doc.Editor.FontFamily = family;
-                    doc.Editor.FontSize = _fontSize;
+                    doc.Editor.FontSize = ClampedEditorDisplayFontSize();
                     doc.Editor.FontWeight = weight;
                 }
                 ApplyShortcutBindings();
