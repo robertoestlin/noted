@@ -60,6 +60,7 @@
                 </MenuItem>
                 <MenuItem Header="_Plugins">
                     <MenuItem Header="_Base64..." Click="MenuBase64_Click"/>
+                    <MenuItem Header="_CIDR Converter" Click="MenuCidrConverter_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_MongoDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
