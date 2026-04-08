@@ -37,6 +37,8 @@ public partial class MainWindow : Window
     // --- State -------------------------------------------------------------------------
     private readonly SettingsService _settingsService = new();
     private readonly BackupService _backupService = new();
+    private readonly ClosedTabsService _closedTabsService = new();
+    private readonly WindowSettingsStore _windowSettingsStore = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private Point _tabDragStartPoint;
@@ -2250,8 +2252,6 @@ public partial class MainWindow : Window
             CloseTab(tab);
     }
 
-    private string ClosedTabsHistoryPath() => Path.Combine(_backupFolder, ClosedTabsFileName);
-
     private void AddClosedTabToHistory(TabDocument doc)
     {
         _closedTabHistory.Insert(0, new ClosedTabEntry
@@ -2272,9 +2272,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            Directory.CreateDirectory(_backupFolder);
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            File.WriteAllText(ClosedTabsHistoryPath(), JsonSerializer.Serialize(_closedTabHistory, options));
+            _closedTabsService.SaveHistory(_backupFolder, ClosedTabsFileName, _closedTabHistory);
         }
         catch
         {
@@ -2288,11 +2286,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var path = ClosedTabsHistoryPath();
-            if (!File.Exists(path))
-                return;
-
-            var parsed = JsonSerializer.Deserialize<List<ClosedTabEntry>>(File.ReadAllText(path));
+            var parsed = _closedTabsService.LoadHistory<ClosedTabEntry>(_backupFolder, ClosedTabsFileName);
             if (parsed == null)
                 return;
 
@@ -5369,14 +5363,13 @@ public partial class MainWindow : Window
                 TabCleanupStaleDays = _tabCleanupStaleDays
             };
             var primary = Path.Combine(_backupFolder, SettingsFileName);
-            File.WriteAllText(primary, JsonSerializer.Serialize(state, opts));
+            _windowSettingsStore.Save(primary, state, opts);
 
             var def = DefaultBackupFolder();
             if (!string.Equals(Path.GetFullPath(_backupFolder), Path.GetFullPath(def), StringComparison.OrdinalIgnoreCase))
             {
-                Directory.CreateDirectory(def);
                 var bootstrap = new WindowSettings { BackupFolder = _backupFolder };
-                File.WriteAllText(Path.Combine(def, SettingsFileName), JsonSerializer.Serialize(bootstrap, opts));
+                _windowSettingsStore.Save(Path.Combine(def, SettingsFileName), bootstrap, opts);
             }
         }
         catch { /* non-critical */ }
@@ -5404,10 +5397,7 @@ public partial class MainWindow : Window
             _timeReports.Clear();
             _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
             var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
-            if (!File.Exists(defaultPath))
-                return;
-
-            var boot = JsonSerializer.Deserialize<WindowSettings>(File.ReadAllText(defaultPath));
+            var boot = _windowSettingsStore.Load<WindowSettings>(defaultPath);
             if (boot == null) return;
 
             if (!string.IsNullOrWhiteSpace(boot.BackupFolder))
@@ -5447,7 +5437,7 @@ public partial class MainWindow : Window
                 && !string.Equals(Path.GetFullPath(canonicalPath), Path.GetFullPath(defaultPath),
                     StringComparison.OrdinalIgnoreCase))
             {
-                var full = JsonSerializer.Deserialize<WindowSettings>(File.ReadAllText(canonicalPath));
+                var full = _windowSettingsStore.Load<WindowSettings>(canonicalPath);
                 if (full != null) state = full;
             }
 
