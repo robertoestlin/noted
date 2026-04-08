@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     private readonly BackupService _backupService = new();
     private readonly ClosedTabsService _closedTabsService = new();
     private readonly WindowSettingsStore _windowSettingsStore = new();
+    private readonly BackupBundleService _backupBundleService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private Point _tabDragStartPoint;
@@ -1404,50 +1405,6 @@ public partial class MainWindow : Window
         return result == true ? combo.SelectedItem as string : null;
     }
 
-    private static bool TryReadMetadataLine(string text, int startIndex, out FileMetadata metadata, out int nextContentStart)
-    {
-        metadata = new FileMetadata();
-        nextContentStart = startIndex;
-        if (startIndex >= text.Length)
-            return false;
-
-        int lineEnd = text.IndexOf('\n', startIndex);
-        if (lineEnd < 0)
-            lineEnd = text.Length;
-
-        var lineText = text[startIndex..lineEnd];
-        if (lineText.EndsWith('\r'))
-            lineText = lineText[..^1];
-
-        if (!lineText.StartsWith(MetadataPrefix, StringComparison.Ordinal))
-            return false;
-
-        var payload = lineText[MetadataPrefix.Length..].Trim();
-        if (payload.Length == 0 || payload[0] != '{')
-            return false;
-
-        // Legacy metadata line marker from older backups only.
-        if (!payload.Contains("\"HighlightLine\"", StringComparison.Ordinal)
-            && !payload.Contains("\"HighlightLines\"", StringComparison.Ordinal)
-            && !payload.Contains("\"Assignees\"", StringComparison.Ordinal)
-            && !payload.Contains("\"LastSavedUtc\"", StringComparison.Ordinal)
-            && !payload.Contains("\"LastChangedUtc\"", StringComparison.Ordinal)
-            && !payload.Contains("\"EndsWithNewline\"", StringComparison.Ordinal))
-            return false;
-
-        try
-        {
-            metadata = JsonSerializer.Deserialize<FileMetadata>(payload) ?? new FileMetadata();
-        }
-        catch
-        {
-            return false;
-        }
-
-        nextContentStart = lineEnd < text.Length ? lineEnd + 1 : lineEnd;
-        return true;
-    }
-
     private static void RedrawHighlight(TabDocument doc)
         => doc.Editor.TextArea.TextView.Redraw();
 
@@ -2523,33 +2480,22 @@ public partial class MainWindow : Window
             foreach (var doc in _docs.Values)
                 doc.CachedText = doc.Editor.Text;
 
-            Directory.CreateDirectory(_backupFolder);
-
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var path = Path.Combine(_backupFolder, $"noted_{timestamp}.txt");
-
+            var path = _backupBundleService.CreateBackupFilePath(_backupFolder, DateTime.Now);
+            var sections = new List<BackupBundleService.BackupBundleSection>();
+            foreach (var item in MainTabControl.Items)
             {
-                using var sw = new StreamWriter(path, append: false, System.Text.Encoding.UTF8);
-                foreach (var item in MainTabControl.Items)
-                {
-                    if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
-                        continue;
+                if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
+                    continue;
 
-                    if (doc.IsDirty)
-                        doc.LastSavedUtc = DateTime.UtcNow;
+                if (doc.IsDirty)
+                    doc.LastSavedUtc = DateTime.UtcNow;
 
-                    var text = doc.CachedText;
-                    var metadata = CreateFileMetadata(doc);
-
-                    // Divider format: ^---name^---
-                    // Content format: plain text (verbatim, no injected metadata line)
-                    sw.WriteLine($"{BundleDivider}{doc.Header}{BundleDivider}");
-                    if (metadata != null)
-                        sw.WriteLine($"{MetadataPrefix} {JsonSerializer.Serialize(metadata)}");
-                    sw.Write(text);
-                    sw.WriteLine();
-                }
+                var text = doc.CachedText;
+                var metadata = CreateFileMetadata(doc);
+                var metadataPayload = metadata == null ? null : JsonSerializer.Serialize(metadata);
+                sections.Add(new BackupBundleService.BackupBundleSection(doc.Header, text, metadataPayload));
             }
+            _backupBundleService.WriteBundle(path, sections, BundleDivider, MetadataPrefix);
 
             PruneBackups();
             TrySaveCloudBackup(path, forceCloudBackup, cloudBackupFolderOverride, persistCloudMetadata);
@@ -2609,22 +2555,14 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrWhiteSpace(cloudFolder)) return;
         if (!forceCloudBackup && !ShouldSaveCloudBackup()) return;
-        if (!File.Exists(justSavedBackupPath)) return;
 
-        try
-        {
-            Directory.CreateDirectory(cloudFolder);
-            var targetPath = Path.Combine(cloudFolder, Path.GetFileName(justSavedBackupPath));
-            File.Copy(justSavedBackupPath, targetPath, overwrite: true);
-            _lastCloudSaveUtc = DateTime.UtcNow;
-            _lastSaveIncludedCloudCopy = true;
-            if (persistCloudMetadata)
-                SaveWindowSettings();
-        }
-        catch
-        {
-            // Cloud copy is best-effort. The regular backup already succeeded.
-        }
+        if (!_backupService.TryCopyBackupToFolder(justSavedBackupPath, cloudFolder))
+            return;
+
+        _lastCloudSaveUtc = DateTime.UtcNow;
+        _lastSaveIncludedCloudCopy = true;
+        if (persistCloudMetadata)
+            SaveWindowSettings();
     }
 
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
@@ -2641,43 +2579,25 @@ public partial class MainWindow : Window
 
         try
         {
-            var text = File.ReadAllText(latest, System.Text.Encoding.UTF8);
-            var dividerNew = new Regex(@"^\^---(.*)\^---\r?$", RegexOptions.Multiline);
-            var dividerOld = new Regex(@"^====(.*)====\r?$", RegexOptions.Multiline);
-            var matches = dividerNew.Matches(text);
-            var useNewFormat = matches.Count > 0;
-            if (!useNewFormat)
-                matches = dividerOld.Matches(text);
+            var text = _backupBundleService.ReadBundleText(latest);
+            var sections = _backupBundleService.ParseBundle(text, MetadataPrefix);
 
-            for (int i = 0; i < matches.Count; i++)
+            foreach (var section in sections)
             {
-                var name = matches[i].Groups[1].Value;
-                int contentStart = matches[i].Index + matches[i].Length;
-
-                // Skip the line-ending after the divider
-                if (contentStart < text.Length && text[contentStart] == '\r') contentStart++;
-                if (contentStart < text.Length && text[contentStart] == '\n') contentStart++;
-
-                // Backward compatibility: older backups inserted a metadata line.
                 FileMetadata metadata = new();
-                if (TryReadMetadataLine(text, contentStart, out var parsedMetadata, out var contentAfterMetadata))
+                if (!string.IsNullOrWhiteSpace(section.MetadataPayload))
                 {
-                    contentStart = contentAfterMetadata;
-                    metadata = parsedMetadata;
+                    try
+                    {
+                        metadata = JsonSerializer.Deserialize<FileMetadata>(section.MetadataPayload) ?? new FileMetadata();
+                    }
+                    catch
+                    {
+                        metadata = new FileMetadata();
+                    }
                 }
 
-                int contentEnd = i + 1 < matches.Count
-                    ? matches[i + 1].Index
-                    : text.Length;
-
-                // Strip exactly one separator newline that SaveSession adds.
-                var content = text[contentStart..contentEnd];
-                if (content.EndsWith("\r\n")) content = content[..^2];
-                else if (content.EndsWith('\n')) content = content[..^1];
-
-                // New format keeps content verbatim; no escaping/decoding
-
-                var doc = CreateTab(name, content);
+                var doc = CreateTab(section.Header, section.Content);
                 var highlightedLines = metadata.HighlightLines ?? [];
                 if (highlightedLines.Count == 0 && metadata.HighlightLine.HasValue && metadata.HighlightLine.Value > 0)
                     highlightedLines = [metadata.HighlightLine.Value];
@@ -2691,7 +2611,7 @@ public partial class MainWindow : Window
                 RefreshTabHeader(doc);
             }
 
-            var lastSaved = File.GetLastWriteTime(latest);
+            var lastSaved = _backupBundleService.GetLastWriteTime(latest);
             StatusAutoSave.Text = $"Last saved: {lastSaved:yyyy-MM-dd HH:mm}";
         }
         catch

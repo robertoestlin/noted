@@ -50,4 +50,24 @@ public sealed class BackupService
             files.RemoveAt(0);
         }
     }
+
+    public bool TryCopyBackupToFolder(string sourceBackupPath, string targetFolder)
+    {
+        if (!File.Exists(sourceBackupPath))
+            return false;
+        if (string.IsNullOrWhiteSpace(targetFolder))
+            return false;
+
+        try
+        {
+            Directory.CreateDirectory(targetFolder);
+            var targetPath = Path.Combine(targetFolder, Path.GetFileName(sourceBackupPath));
+            File.Copy(sourceBackupPath, targetPath, overwrite: true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
