@@ -2180,6 +2180,7 @@ public partial class MainWindow : Window
             highlightedLines = [legacyHighlightLine];
         SetHighlightedLines(doc, highlightedLines, markDirty: false);
         SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
+        RestoreCaretPosition(doc, entry.Metadata);
         doc.LastSavedUtc = entry.Metadata?.LastSavedUtc?.ToUniversalTime();
         doc.LastChangedUtc = entry.Metadata?.LastChangedUtc?.ToUniversalTime()
             ?? entry.Metadata?.LastSavedUtc?.ToUniversalTime()
@@ -2337,8 +2338,19 @@ public partial class MainWindow : Window
             HighlightLines = highlighted.Count > 0 ? highlighted : null,
             Assignees = assignees.Count > 0 ? assignees : null,
             LastSavedUtc = doc.LastSavedUtc,
-            LastChangedUtc = doc.LastChangedUtc
+            LastChangedUtc = doc.LastChangedUtc,
+            CaretOffset = doc.Editor.CaretOffset
         };
+    }
+
+    private static void RestoreCaretPosition(TabDocument doc, FileMetadata? metadata)
+    {
+        if (metadata?.CaretOffset is not int savedOffset)
+            return;
+
+        int targetOffset = Math.Max(0, Math.Min(savedOffset, doc.Editor.Document.TextLength));
+        doc.Editor.CaretOffset = targetOffset;
+        doc.Editor.Select(targetOffset, 0);
     }
 
     private void SaveSession(
@@ -2476,6 +2488,7 @@ public partial class MainWindow : Window
                     highlightedLines = [metadata.HighlightLine.Value];
                 SetHighlightedLines(doc, highlightedLines, markDirty: false);
                 SetLineAssignments(doc, metadata.Assignees, markDirty: false);
+                RestoreCaretPosition(doc, metadata);
                 doc.LastSavedUtc = metadata.LastSavedUtc?.ToUniversalTime();
                 doc.LastChangedUtc = metadata.LastChangedUtc?.ToUniversalTime()
                     ?? metadata.LastSavedUtc?.ToUniversalTime()

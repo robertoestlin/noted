@@ -16,6 +16,9 @@ public sealed class FileMetadata
 
     /// <summary>UTC when the tab text was last edited (optional).</summary>
     public DateTime? LastChangedUtc { get; set; }
+
+    /// <summary>0-based caret offset in the tab text.</summary>
+    public int? CaretOffset { get; set; }
 }
 
 public sealed class FileLineAssignee
