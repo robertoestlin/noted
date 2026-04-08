@@ -192,6 +192,18 @@ public partial class MainWindow
         fieldsGrid.Children.Add(spacer);
 
         panel.Children.Add(fieldsGrid);
+        panel.Children.Add(Label("How ObjectId is calculated"));
+        var txtCalculation = new TextBox
+        {
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            MinHeight = 92,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        panel.Children.Add(txtCalculation);
         root.Children.Add(panel);
 
         void ClearOutput()
@@ -204,6 +216,7 @@ public partial class MainWindow
             txtSeconds.Text = string.Empty;
             txtUtcTimestamp.Text = string.Empty;
             txtUtcDateTime.Text = string.Empty;
+            txtCalculation.Text = "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"";
         }
 
         var isUpdating = false;
@@ -271,7 +284,20 @@ public partial class MainWindow
         {
             txtObjectIdRaw.Text = InvalidObjectIdText;
             txtObjectIdWrapped.Text = InvalidObjectIdText;
+            txtCalculation.Text = "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\nCannot build valid ObjectId from current inputs.";
             SetStatus(message, Brushes.IndianRed);
+        }
+
+        void UpdateCalculationDetails(DateTimeOffset utc, long unixTimestamp, string objectId, string suffix)
+        {
+            var prefix = objectId[..8];
+            txtCalculation.Text =
+                "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\n"
+                + $"date (UTC): {utc.UtcDateTime:yyyy-MM-ddTHH:mm:ss.fffZ}\n"
+                + $"Math.floor(date.getTime() / 1000): {unixTimestamp}\n"
+                + $"toString(16): {prefix}\n"
+                + $"suffix used: {suffix}\n"
+                + $"ObjectId: {objectId}";
         }
 
         void PopulateFromUtc(DateTimeOffset utc, string suffix)
@@ -296,6 +322,7 @@ public partial class MainWindow
             txtSeconds.Text = dateParts.Second.ToString("00", CultureInfo.InvariantCulture);
             txtUtcTimestamp.Text = unixTimestamp.ToString(CultureInfo.InvariantCulture);
             txtUtcDateTime.Text = utc.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+            UpdateCalculationDetails(utc, unixTimestamp, objectId, suffix);
             SetStatus("Values synchronized.");
         }
 
