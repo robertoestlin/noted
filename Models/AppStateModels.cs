@@ -40,6 +40,12 @@ public sealed class TimeReportMonthRecord
     public Dictionary<string, string>? WeekComments { get; set; }
 }
 
+public sealed class TimeReportMonthState
+{
+    public Dictionary<int, string> DayValues { get; } = [];
+    public Dictionary<string, string> WeekComments { get; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 public sealed class ClosedTabEntry
 {
     public string Header { get; set; } = string.Empty;

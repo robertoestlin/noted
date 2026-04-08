@@ -43,6 +43,8 @@ public partial class MainWindow : Window
     private readonly BackupBundleService _backupBundleService = new();
     private readonly ShortcutService _shortcutService = new();
     private readonly ColorThemeService _colorThemeService = new();
+    private readonly UserProfileService _userProfileService = new();
+    private readonly TimeReportSettingsService _timeReportSettingsService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private Point _tabDragStartPoint;
@@ -161,12 +163,6 @@ public partial class MainWindow : Window
         var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
-    }
-
-    private sealed class TimeReportMonthState
-    {
-        public Dictionary<int, string> DayValues { get; } = [];
-        public Dictionary<string, string> WeekComments { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private sealed class HighlightLineRenderer : IBackgroundRenderer
@@ -4926,96 +4922,20 @@ public partial class MainWindow : Window
 
     private List<TimeReportMonthRecord> BuildTimeReportSettings()
     {
-        var result = new List<TimeReportMonthRecord>();
         var monthKeys = _timeReports.Keys
             .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
             .ToList();
         foreach (var monthKey in monthKeys)
-        {
             PruneTimeReportMonth(monthKey);
-            if (!_timeReports.TryGetValue(monthKey, out var monthState))
-                continue;
 
-            if (monthState.DayValues.Count == 0 && monthState.WeekComments.Count == 0)
-                continue;
-
-            result.Add(new TimeReportMonthRecord
-            {
-                Month = monthKey,
-                DayValues = monthState.DayValues.Count == 0
-                    ? null
-                    : monthState.DayValues.ToDictionary(entry => entry.Key, entry => entry.Value),
-                WeekComments = monthState.WeekComments.Count == 0
-                    ? null
-                    : monthState.WeekComments.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase)
-            });
-        }
-        return result;
+        return _timeReportSettingsService.BuildRecords(_timeReports);
     }
 
     private void LoadTimeReportSettings(IEnumerable<TimeReportMonthRecord>? records)
     {
         _timeReports.Clear();
-        if (records == null)
-            return;
-
-        foreach (var record in records)
-        {
-            if (record == null || string.IsNullOrWhiteSpace(record.Month))
-                continue;
-
-            if (!DateTime.TryParseExact(
-                    $"{record.Month}-01",
-                    "yyyy-MM-dd",
-                    CultureInfo.InvariantCulture,
-                    DateTimeStyles.None,
-                    out var parsedMonth))
-            {
-                continue;
-            }
-
-            var monthKey = ToMonthKey(parsedMonth);
-            var state = new TimeReportMonthState();
-
-            if (record.DayValues != null)
-            {
-                foreach (var pair in record.DayValues)
-                {
-                    if (pair.Key is >= 1 and <= 31
-                        && TryNormalizeTimeReportDayValue(pair.Value, out var normalizedValue))
-                    {
-                        state.DayValues[pair.Key] = normalizedValue;
-                    }
-                }
-            }
-
-            if (record.DayHours != null)
-            {
-                foreach (var pair in record.DayHours)
-                {
-                    if (pair.Key is >= 1 and <= 31
-                        && pair.Value is >= 0 and <= 24
-                        && !state.DayValues.ContainsKey(pair.Key))
-                    {
-                        state.DayValues[pair.Key] =
-                            Math.Round(pair.Value, 2, MidpointRounding.AwayFromZero).ToString("0.##", CultureInfo.InvariantCulture);
-                    }
-                }
-            }
-
-            if (record.WeekComments != null)
-            {
-                foreach (var pair in record.WeekComments)
-                {
-                    if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value))
-                        continue;
-                    state.WeekComments[pair.Key.Trim()] = pair.Value.Trim();
-                }
-            }
-
-            if (state.DayValues.Count > 0 || state.WeekComments.Count > 0)
-                _timeReports[monthKey] = state;
-        }
+        foreach (var entry in _timeReportSettingsService.LoadStates(records))
+            _timeReports[entry.Key] = entry.Value;
     }
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -5026,96 +4946,17 @@ public partial class MainWindow : Window
             SaveSession(updateStatus: false);
     }
 
-    private static List<UserProfile> NormalizeUsers(IEnumerable<UserProfile>? users)
-    {
-        if (users == null)
-            return [];
+    private List<UserProfile> NormalizeUsers(IEnumerable<UserProfile>? users)
+        => _userProfileService.NormalizeUsers(users);
 
-        var byName = new Dictionary<string, UserProfile>(StringComparer.OrdinalIgnoreCase);
-        foreach (var user in users)
-        {
-            if (user == null || string.IsNullOrWhiteSpace(user.Name))
-                continue;
+    private List<UserProfile> BuildUsersFromLegacyNames(IEnumerable<string>? userNames)
+        => _userProfileService.BuildUsersFromLegacyNames(userNames);
 
-            var name = user.Name.Trim();
-            var color = NormalizeUserColor(user.Color, fallbackSeed: name);
-            byName[name] = new UserProfile { Name = name, Color = color };
-        }
-
-        return byName.Values
-            .OrderBy(user => user.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static List<UserProfile> BuildUsersFromLegacyNames(IEnumerable<string>? userNames)
-    {
-        if (userNames == null)
-            return [];
-
-        return NormalizeUsers(userNames
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Select(name => new UserProfile
-            {
-                Name = name.Trim(),
-                Color = ColorToHex(DeterministicUserColor(name.Trim()))
-            }));
-    }
-
-    private static string NormalizeUserColor(string? input, string fallbackSeed)
-    {
-        if (TryParseColor(input, out var parsed))
-            return ColorToHex(parsed);
-
-        return ColorToHex(DeterministicUserColor(fallbackSeed));
-    }
-
-    private static Color DeterministicUserColor(string seed)
-    {
-        int hash = Math.Abs((seed ?? string.Empty).GetHashCode(StringComparison.OrdinalIgnoreCase));
-        double hue = hash % 360;
-        return ColorFromHsv(hue, 0.50, 0.88);
-    }
-
-    private static Color RandomUserColor()
-    {
-        double hue = Random.Shared.NextDouble() * 360.0;
-        double saturation = 0.45 + (Random.Shared.NextDouble() * 0.30);
-        double value = 0.78 + (Random.Shared.NextDouble() * 0.18);
-        return ColorFromHsv(hue, saturation, value);
-    }
-
-    private static Color ColorFromHsv(double hue, double saturation, double value)
-    {
-        hue = ((hue % 360) + 360) % 360;
-        saturation = Math.Clamp(saturation, 0, 1);
-        value = Math.Clamp(value, 0, 1);
-
-        double c = value * saturation;
-        double x = c * (1 - Math.Abs(((hue / 60.0) % 2) - 1));
-        double m = value - c;
-
-        double r = 0, g = 0, b = 0;
-        if (hue < 60) { r = c; g = x; b = 0; }
-        else if (hue < 120) { r = x; g = c; b = 0; }
-        else if (hue < 180) { r = 0; g = c; b = x; }
-        else if (hue < 240) { r = 0; g = x; b = c; }
-        else if (hue < 300) { r = x; g = 0; b = c; }
-        else { r = c; g = 0; b = x; }
-
-        return Color.FromRgb(
-            (byte)Math.Round((r + m) * 255),
-            (byte)Math.Round((g + m) * 255),
-            (byte)Math.Round((b + m) * 255));
-    }
+    private Color RandomUserColor()
+        => _userProfileService.RandomUserColor();
 
     private Color GetUserColor(string person)
-    {
-        var user = _users.FirstOrDefault(u => string.Equals(u.Name, person, StringComparison.OrdinalIgnoreCase));
-        if (user != null && TryParseColor(user.Color, out var parsed))
-            return parsed;
-
-        return DeterministicUserColor(person);
-    }
+        => _userProfileService.ResolveUserColor(_users, person);
 
     // -- Window settings ------------------------------------------------------------------
 
