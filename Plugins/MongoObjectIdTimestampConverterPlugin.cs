@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 
 namespace Noted;
@@ -62,9 +63,9 @@ public partial class MainWindow
         {
             Title = "ObjectId to Timestamp Converter",
             Width = 1020,
-            Height = 780,
+            Height = 840,
             MinWidth = 900,
-            MinHeight = 700,
+            MinHeight = 760,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -90,6 +91,14 @@ public partial class MainWindow
             IsCancel = true,
             IsDefault = true
         };
+        var btnLoadSample = new Button
+        {
+            Content = "Load sample ObjectId",
+            Margin = new Thickness(0, 0, 8, 0),
+            Padding = new Thickness(12, 0, 12, 0),
+            MinWidth = 160
+        };
+        closeRow.Children.Add(btnLoadSample);
         closeRow.Children.Add(btnClose);
         bottom.Children.Add(status);
         bottom.Children.Add(closeRow);
@@ -119,7 +128,7 @@ public partial class MainWindow
 
         panel.Children.Add(new TextBlock
         {
-            Text = "Edit ObjectId or any date/time field. Values sync both ways, and invalid combinations mark ObjectId as invalid.",
+            Text = "Edit ObjectId or any date/time field. Values sync both ways, and invalid combinations mark ObjectId as invalid. Note: ObjectId timestamp precision is 1 second.",
             Foreground = Brushes.DimGray,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10)
@@ -216,6 +225,88 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 8)
         };
         panel.Children.Add(txtCalculationReverse);
+
+        panel.Children.Add(Label("ObjectId byte layout"));
+        var txtLayoutHint = new TextBlock
+        {
+            Text = "12 bytes total: 4-byte timestamp, 3-byte machine identifier, 2-byte process id, 3-byte counter.",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        panel.Children.Add(txtLayoutHint);
+
+        var txtObjectIdColored = new TextBlock
+        {
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            FontSize = 14,
+            Margin = new Thickness(0, 0, 0, 2),
+            TextWrapping = TextWrapping.Wrap
+        };
+        var runTimestamp = new Run("00000000");
+        var runMachine = new Run("000000");
+        var runProcess = new Run("0000");
+        var runCounter = new Run("000000");
+        runTimestamp.Foreground = Brushes.SteelBlue;
+        runMachine.Foreground = Brushes.SeaGreen;
+        runProcess.Foreground = Brushes.DarkGoldenrod;
+        runCounter.Foreground = Brushes.IndianRed;
+        txtObjectIdColored.Inlines.Add(runTimestamp);
+        txtObjectIdColored.Inlines.Add(new Run(" "));
+        txtObjectIdColored.Inlines.Add(runMachine);
+        txtObjectIdColored.Inlines.Add(new Run(" "));
+        txtObjectIdColored.Inlines.Add(runProcess);
+        txtObjectIdColored.Inlines.Add(new Run(" "));
+        txtObjectIdColored.Inlines.Add(runCounter);
+        panel.Children.Add(txtObjectIdColored);
+
+        var partGrid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        partGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        partGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        partGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        partGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        partGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        TextBox MakePartBox(Brush background)
+        {
+            return new TextBox
+            {
+                IsReadOnly = true,
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = background,
+                BorderBrush = Brushes.Gray
+            };
+        }
+
+        var txtPartTimestamp = MakePartBox(new SolidColorBrush(Color.FromRgb(224, 238, 255)));
+        var txtPartMachine = MakePartBox(new SolidColorBrush(Color.FromRgb(226, 246, 231)));
+        var txtPartProcess = MakePartBox(new SolidColorBrush(Color.FromRgb(255, 244, 212)));
+        var txtPartCounter = MakePartBox(new SolidColorBrush(Color.FromRgb(255, 226, 226)));
+        txtPartCounter.Margin = new Thickness(0);
+
+        Grid.SetColumn(txtPartTimestamp, 0);
+        Grid.SetColumn(txtPartMachine, 1);
+        Grid.SetColumn(txtPartProcess, 2);
+        Grid.SetColumn(txtPartCounter, 3);
+        partGrid.Children.Add(txtPartTimestamp);
+        partGrid.Children.Add(txtPartMachine);
+        partGrid.Children.Add(txtPartProcess);
+        partGrid.Children.Add(txtPartCounter);
+        panel.Children.Add(partGrid);
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "1 byte = 8 bits\n"
+                + "1 hex char = 4 bits\n"
+                + "1 byte = 2 hex characters\n"
+                + "12 bytes x 2 hex chars = 24 characters",
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            FontSize = 12,
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
         root.Children.Add(panel);
 
         void ClearOutput()
@@ -234,6 +325,14 @@ public partial class MainWindow
             txtCalculationReverse.Text =
                 "new Date(parseInt(objectId.substring(0, 8), 16) * 1000)\n"
                 + "Extracts first 8 hex chars, converts to seconds, then to JS Date.";
+            runTimestamp.Text = "00000000";
+            runMachine.Text = "000000";
+            runProcess.Text = "0000";
+            runCounter.Text = "000000";
+            txtPartTimestamp.Text = "timestamp (4 bytes)";
+            txtPartMachine.Text = "machine (3 bytes)";
+            txtPartProcess.Text = "process (2 bytes)";
+            txtPartCounter.Text = "counter (3 bytes)";
         }
 
         var isUpdating = false;
@@ -288,6 +387,17 @@ public partial class MainWindow
                 out utc);
         }
 
+        static string FormatHexAsBytes(string hex)
+        {
+            if (string.IsNullOrWhiteSpace(hex) || (hex.Length % 2) != 0)
+                return hex;
+
+            var parts = new string[hex.Length / 2];
+            for (var i = 0; i < parts.Length; i++)
+                parts[i] = hex.Substring(i * 2, 2);
+            return string.Join(" ", parts);
+        }
+
         string GetSuffixFromCurrentObjectId()
         {
             if (TryNormalizeMongoObjectId(txtObjectIdRaw.Text, out var currentObjectId))
@@ -326,6 +436,18 @@ public partial class MainWindow
                 + $"ObjectId first 8 hex chars: {prefix}\n"
                 + $"parseInt(\"{prefix}\", 16): {Convert.ToInt64(prefix, 16)} // set base to 16 (not 10) to interpret string as hexadecimal\n"
                 + $"Date result (UTC): {derivedDate:yyyy-MM-ddTHH:mm:ss.fffZ}";
+
+            var machine = objectId.Substring(8, 6);
+            var process = objectId.Substring(14, 4);
+            var counter = objectId.Substring(18, 6);
+            runTimestamp.Text = prefix;
+            runMachine.Text = machine;
+            runProcess.Text = process;
+            runCounter.Text = counter;
+            txtPartTimestamp.Text = $"timestamp (4 bytes): {FormatHexAsBytes(prefix)}";
+            txtPartMachine.Text = $"machine (3 bytes): {FormatHexAsBytes(machine)}";
+            txtPartProcess.Text = $"process id (2 bytes): {FormatHexAsBytes(process)}";
+            txtPartCounter.Text = $"counter (3 bytes): {FormatHexAsBytes(counter)}";
         }
 
         void PopulateFromUtc(DateTimeOffset utc, string suffix)
@@ -541,6 +663,11 @@ public partial class MainWindow
                 return;
             UpdateDatePartLabels();
             RefreshDisplayedFromCurrentState();
+        };
+        btnLoadSample.Click += (_, _) =>
+        {
+            txtObjectIdRaw.Text = "6613f8a5a9d4c8b72f6e3402";
+            SetStatus("Sample ObjectId loaded.");
         };
         btnClose.Click += (_, _) => dlg.Close();
 
