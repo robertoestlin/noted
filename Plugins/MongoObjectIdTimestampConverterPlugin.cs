@@ -61,10 +61,10 @@ public partial class MainWindow
         var dlg = new Window
         {
             Title = "ObjectId to Timestamp Converter",
-            Width = 760,
-            Height = 540,
-            MinWidth = 620,
-            MinHeight = 460,
+            Width = 1020,
+            Height = 780,
+            MinWidth = 900,
+            MinHeight = 700,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -192,18 +192,30 @@ public partial class MainWindow
         fieldsGrid.Children.Add(spacer);
 
         panel.Children.Add(fieldsGrid);
-        panel.Children.Add(Label("How ObjectId is calculated"));
-        var txtCalculation = new TextBox
+        panel.Children.Add(Label("How ObjectId is calculated (date -> ObjectId)"));
+        var txtCalculationForward = new TextBox
         {
             IsReadOnly = true,
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             FontFamily = new FontFamily("Consolas, Courier New"),
-            MinHeight = 92,
+            MinHeight = 96,
             Margin = new Thickness(0, 0, 0, 8)
         };
-        panel.Children.Add(txtCalculation);
+        panel.Children.Add(txtCalculationForward);
+        panel.Children.Add(Label("How date is calculated from ObjectId (ObjectId -> date)"));
+        var txtCalculationReverse = new TextBox
+        {
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            MinHeight = 96,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        panel.Children.Add(txtCalculationReverse);
         root.Children.Add(panel);
 
         void ClearOutput()
@@ -216,7 +228,12 @@ public partial class MainWindow
             txtSeconds.Text = string.Empty;
             txtUtcTimestamp.Text = string.Empty;
             txtUtcDateTime.Text = string.Empty;
-            txtCalculation.Text = "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"";
+            txtCalculationForward.Text =
+                "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\n"
+                + "Creates ObjectId prefix from UTC seconds, then appends suffix.";
+            txtCalculationReverse.Text =
+                "new Date(parseInt(objectId.substring(0, 8), 16) * 1000)\n"
+                + "Extracts first 8 hex chars, converts to seconds, then to JS Date.";
         }
 
         var isUpdating = false;
@@ -284,20 +301,31 @@ public partial class MainWindow
         {
             txtObjectIdRaw.Text = InvalidObjectIdText;
             txtObjectIdWrapped.Text = InvalidObjectIdText;
-            txtCalculation.Text = "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\nCannot build valid ObjectId from current inputs.";
+            txtCalculationForward.Text =
+                "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\n"
+                + "Cannot build valid ObjectId from current inputs.";
+            txtCalculationReverse.Text =
+                "new Date(parseInt(objectId.substring(0, 8), 16) * 1000)\n"
+                + "Cannot derive valid date from current ObjectId.";
             SetStatus(message, Brushes.IndianRed);
         }
 
         void UpdateCalculationDetails(DateTimeOffset utc, long unixTimestamp, string objectId, string suffix)
         {
             var prefix = objectId[..8];
-            txtCalculation.Text =
+            var derivedDate = DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(prefix, 16)).UtcDateTime;
+            txtCalculationForward.Text =
                 "Math.floor(date.getTime() / 1000).toString(16) + \"0000000000000000\"\n"
                 + $"date (UTC): {utc.UtcDateTime:yyyy-MM-ddTHH:mm:ss.fffZ}\n"
-                + $"Math.floor(date.getTime() / 1000): {unixTimestamp}\n"
+                + $"Math.floor(date.getTime() / 1000): {unixTimestamp} // Unix time (Linux epoch seconds)\n"
                 + $"toString(16): {prefix}\n"
                 + $"suffix used: {suffix}\n"
                 + $"ObjectId: {objectId}";
+            txtCalculationReverse.Text =
+                "new Date(parseInt(objectId.substring(0, 8), 16) * 1000)\n"
+                + $"ObjectId first 8 hex chars: {prefix}\n"
+                + $"parseInt(\"{prefix}\", 16): {Convert.ToInt64(prefix, 16)} // set base to 16 (not 10) to interpret string as hexadecimal\n"
+                + $"Date result (UTC): {derivedDate:yyyy-MM-ddTHH:mm:ss.fffZ}";
         }
 
         void PopulateFromUtc(DateTimeOffset utc, string suffix)
