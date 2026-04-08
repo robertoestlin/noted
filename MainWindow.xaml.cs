@@ -39,7 +39,10 @@ public partial class MainWindow : Window
     private readonly BackupService _backupService = new();
     private readonly ClosedTabsService _closedTabsService = new();
     private readonly WindowSettingsStore _windowSettingsStore = new();
+    private readonly WindowSettingsService _windowSettingsService = new();
     private readonly BackupBundleService _backupBundleService = new();
+    private readonly ShortcutService _shortcutService = new();
+    private readonly ColorThemeService _colorThemeService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private Point _tabDragStartPoint;
@@ -160,58 +163,10 @@ public partial class MainWindow : Window
         return brush;
     }
 
-    private sealed class FileMetadata
-    {
-        // Backward-compatible legacy field (single highlight).
-        public int? HighlightLine { get; set; }
-
-        // Current format supports multiple highlighted lines.
-        public List<int>? HighlightLines { get; set; }
-
-        // Optional line ownership metadata.
-        public List<FileLineAssignee>? Assignees { get; set; }
-
-        // UTC timestamp for when this tab was last saved with changes.
-        public DateTime? LastSavedUtc { get; set; }
-
-        /// <summary>UTC when the tab text was last edited (optional).</summary>
-        public DateTime? LastChangedUtc { get; set; }
-    }
-
-    private sealed class FileLineAssignee
-    {
-        public int Line { get; set; }
-        public string Person { get; set; } = string.Empty;
-    }
-
-    private sealed class UserProfile
-    {
-        public string Name { get; set; } = string.Empty;
-        public string Color { get; set; } = string.Empty;
-
-        public override string ToString() => Name;
-    }
-
-    private sealed class TimeReportMonthRecord
-    {
-        public string Month { get; set; } = string.Empty;
-        public Dictionary<int, double>? DayHours { get; set; }
-        public Dictionary<int, string>? DayValues { get; set; }
-        public Dictionary<string, string>? WeekComments { get; set; }
-    }
-
     private sealed class TimeReportMonthState
     {
         public Dictionary<int, string> DayValues { get; } = [];
         public Dictionary<string, string> WeekComments { get; } = new(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private sealed class ClosedTabEntry
-    {
-        public string Header { get; set; } = string.Empty;
-        public string Content { get; set; } = string.Empty;
-        public bool IsDirty { get; set; }
-        public FileMetadata? Metadata { get; set; }
     }
 
     private sealed class HighlightLineRenderer : IBackgroundRenderer
@@ -893,27 +848,7 @@ public partial class MainWindow : Window
     }
 
     private static bool TryParseColor(string? input, out Color color)
-    {
-        color = default;
-        if (string.IsNullOrWhiteSpace(input))
-            return false;
-
-        try
-        {
-            var parsed = ColorConverter.ConvertFromString(input.Trim());
-            if (parsed is Color c)
-            {
-                color = c;
-                return true;
-            }
-        }
-        catch
-        {
-            // handled by caller
-        }
-
-        return false;
-    }
+        => new ColorThemeService().TryParseColor(input, out color);
 
     private static string ColorToHex(Color color)
         => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
@@ -1409,29 +1344,8 @@ public partial class MainWindow : Window
         => doc.Editor.TextArea.TextView.Redraw();
 
 
-    private static bool TryParseKeyGesture(string? input, out KeyGesture gesture)
-    {
-        gesture = null!;
-        if (string.IsNullOrWhiteSpace(input))
-            return false;
-
-        try
-        {
-            var converter = new KeyGestureConverter();
-            var parsed = converter.ConvertFromInvariantString(input.Trim());
-            if (parsed is KeyGesture keyGesture && keyGesture.Key != Key.None)
-            {
-                gesture = keyGesture;
-                return true;
-            }
-        }
-        catch
-        {
-            // Invalid gesture text.
-        }
-
-        return false;
-    }
+    private bool TryParseKeyGesture(string? input, out KeyGesture gesture)
+        => _shortcutService.TryParseKeyGesture(input, out gesture);
 
     private void ApplyShortcutBindings()
     {
@@ -2247,44 +2161,7 @@ public partial class MainWindow : Window
             if (parsed == null)
                 return;
 
-            foreach (var entry in parsed
-                .Where(e => e != null)
-                .Where(e => !string.IsNullOrWhiteSpace(e.Header))
-                .Take(MaxClosedTabs))
-            {
-                var highlightedLines = entry.Metadata?.HighlightLines?
-                    .Where(line => line > 0)
-                    .Distinct()
-                    .OrderBy(line => line)
-                    .ToList();
-
-                var assignees = entry.Metadata?.Assignees?
-                    .Where(a => a != null && a.Line > 0 && !string.IsNullOrWhiteSpace(a.Person))
-                    .Select(a => new FileLineAssignee
-                    {
-                        Line = a.Line,
-                        Person = a.Person.Trim()
-                    })
-                    .OrderBy(a => a.Line)
-                    .ToList();
-
-                _closedTabHistory.Add(new ClosedTabEntry
-                {
-                    Header = entry.Header.Trim(),
-                    Content = entry.Content ?? string.Empty,
-                    IsDirty = entry.IsDirty,
-                    Metadata = entry.Metadata == null
-                        ? null
-                        : new FileMetadata
-                        {
-                            HighlightLine = entry.Metadata.HighlightLine,
-                            HighlightLines = highlightedLines != null && highlightedLines.Count > 0 ? highlightedLines : null,
-                            Assignees = assignees != null && assignees.Count > 0 ? assignees : null,
-                            LastSavedUtc = entry.Metadata.LastSavedUtc,
-                            LastChangedUtc = entry.Metadata.LastChangedUtc
-                        }
-                });
-            }
+            _closedTabHistory.AddRange(_closedTabsService.NormalizeHistory(parsed, MaxClosedTabs));
         }
         catch
         {
@@ -5248,215 +5125,69 @@ public partial class MainWindow : Window
         {
             var opts = new JsonSerializerOptions { WriteIndented = true };
             Directory.CreateDirectory(_backupFolder);
-            var state = new WindowSettings
-            {
-                Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
-                Top = WindowState == WindowState.Normal ? Top : RestoreBounds.Top,
-                Width = WindowState == WindowState.Normal ? Width : RestoreBounds.Width,
-                Height = WindowState == WindowState.Normal ? Height : RestoreBounds.Height,
-                Maximized = WindowState == WindowState.Maximized,
-                AutoSaveSeconds = (int)_autoSaveTimer.Interval.TotalSeconds,
-                InitialLines = _initialLines,
-                FontFamily = _fontFamily,
-                FontSize = _fontSize,
-                FontWeight = _fontWeight,
-                ShortcutNewPrimary = _shortcutNewPrimary,
-                ShortcutNewSecondary = _shortcutNewSecondary,
-                ShortcutCloseTab = _shortcutCloseTab,
-                ShortcutRenameTab = _shortcutRenameTab,
-                ShortcutAddBlankLines = _shortcutAddBlankLines,
-                ShortcutToggleHighlight = _shortcutToggleHighlight,
-                ShortcutGoToLine = _shortcutGoToLine,
-                SelectedLineColor = ColorToHex(_selectedLineColor),
-                HighlightedLineColor = ColorToHex(_highlightedLineColor),
-                SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
-                BackupFolder = _backupFolder,
-                CloudBackupFolder = _cloudBackupFolder,
-                CloudSaveHours = _cloudSaveIntervalHours,
-                CloudSaveMinutes = _cloudSaveIntervalMinutes,
-                LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
-                ActiveTabIndex = MainTabControl.SelectedIndex,
-                FridayFeelingEnabled = _isFridayFeelingEnabled,
-                Users = _users.Select(user => user.Name).ToList(),
-                UserProfiles = NormalizeUsers(_users),
-                TimeReports = BuildTimeReportSettings(),
-                TabCleanupStaleDays = _tabCleanupStaleDays
-            };
-            var primary = Path.Combine(_backupFolder, SettingsFileName);
-            _windowSettingsStore.Save(primary, state, opts);
-
-            var def = DefaultBackupFolder();
-            if (!string.Equals(Path.GetFullPath(_backupFolder), Path.GetFullPath(def), StringComparison.OrdinalIgnoreCase))
-            {
-                var bootstrap = new WindowSettings { BackupFolder = _backupFolder };
-                _windowSettingsStore.Save(Path.Combine(def, SettingsFileName), bootstrap, opts);
-            }
+            var state = CreateWindowSettingsSnapshot();
+            _windowSettingsService.SaveWithBootstrap(
+                _windowSettingsStore,
+                state,
+                _backupFolder,
+                DefaultBackupFolder(),
+                SettingsFileName,
+                opts);
         }
         catch { /* non-critical */ }
     }
+
+    private WindowSettings CreateWindowSettingsSnapshot()
+        => new()
+        {
+            Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
+            Top = WindowState == WindowState.Normal ? Top : RestoreBounds.Top,
+            Width = WindowState == WindowState.Normal ? Width : RestoreBounds.Width,
+            Height = WindowState == WindowState.Normal ? Height : RestoreBounds.Height,
+            Maximized = WindowState == WindowState.Maximized,
+            AutoSaveSeconds = (int)_autoSaveTimer.Interval.TotalSeconds,
+            InitialLines = _initialLines,
+            FontFamily = _fontFamily,
+            FontSize = _fontSize,
+            FontWeight = _fontWeight,
+            ShortcutNewPrimary = _shortcutNewPrimary,
+            ShortcutNewSecondary = _shortcutNewSecondary,
+            ShortcutCloseTab = _shortcutCloseTab,
+            ShortcutRenameTab = _shortcutRenameTab,
+            ShortcutAddBlankLines = _shortcutAddBlankLines,
+            ShortcutToggleHighlight = _shortcutToggleHighlight,
+            ShortcutGoToLine = _shortcutGoToLine,
+            SelectedLineColor = ColorToHex(_selectedLineColor),
+            HighlightedLineColor = ColorToHex(_highlightedLineColor),
+            SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
+            BackupFolder = _backupFolder,
+            CloudBackupFolder = _cloudBackupFolder,
+            CloudSaveHours = _cloudSaveIntervalHours,
+            CloudSaveMinutes = _cloudSaveIntervalMinutes,
+            LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
+            ActiveTabIndex = MainTabControl.SelectedIndex,
+            FridayFeelingEnabled = _isFridayFeelingEnabled,
+            Users = _users.Select(user => user.Name).ToList(),
+            UserProfiles = NormalizeUsers(_users),
+            TimeReports = BuildTimeReportSettings(),
+            TabCleanupStaleDays = _tabCleanupStaleDays
+        };
 
     private void LoadWindowSettings()
     {
         try
         {
-            _backupFolder = DefaultBackupFolder();
-            _cloudBackupFolder = DefaultCloudBackupFolder();
-            _selectedLineColor = DefaultSelectedLineColor;
-            _highlightedLineColor = DefaultHighlightedLineColor;
-            _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
-            _shortcutNewPrimary = DefaultShortcutNewPrimary;
-            _shortcutNewSecondary = DefaultShortcutNewSecondary;
-            _shortcutCloseTab = DefaultShortcutCloseTab;
-            _shortcutRenameTab = DefaultShortcutRenameTab;
-            _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
-            _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
-            _shortcutGoToLine = DefaultShortcutGoToLine;
-            _isFridayFeelingEnabled = true;
-            _isFredagspartySessionEnabled = false;
-            _users = [];
-            _timeReports.Clear();
-            _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
-            var defaultPath = Path.Combine(DefaultBackupFolder(), SettingsFileName);
-            var boot = _windowSettingsStore.Load<WindowSettings>(defaultPath);
-            if (boot == null) return;
+            ResetSettingsToDefaults();
+            var loaded = _windowSettingsService.LoadWithFallback(
+                _windowSettingsStore,
+                DefaultBackupFolder(),
+                DefaultCloudBackupFolder(),
+                SettingsFileName);
+            if (loaded == null)
+                return;
 
-            if (!string.IsNullOrWhiteSpace(boot.BackupFolder))
-            {
-                try
-                {
-                    _backupFolder = Path.GetFullPath(boot.BackupFolder.Trim());
-                }
-                catch
-                {
-                    _backupFolder = DefaultBackupFolder();
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(boot.CloudBackupFolder))
-            {
-                try
-                {
-                    _cloudBackupFolder = Path.GetFullPath(boot.CloudBackupFolder.Trim());
-                }
-                catch
-                {
-                    _cloudBackupFolder = DefaultCloudBackupFolder();
-                }
-            }
-
-            if (boot.CloudSaveHours is >= 0 and <= 50)
-                _cloudSaveIntervalHours = boot.CloudSaveHours.Value;
-            if (boot.CloudSaveMinutes is >= 0 and <= 55 && boot.CloudSaveMinutes.Value % 5 == 0)
-                _cloudSaveIntervalMinutes = boot.CloudSaveMinutes.Value;
-            if (boot.LastCloudCopyUtc is DateTime bootCloudCopyUtc && bootCloudCopyUtc > DateTime.MinValue)
-                _lastCloudSaveUtc = bootCloudCopyUtc.Kind == DateTimeKind.Utc ? bootCloudCopyUtc : bootCloudCopyUtc.ToUniversalTime();
-
-            var canonicalPath = Path.Combine(_backupFolder, SettingsFileName);
-            WindowSettings? state = boot;
-            if (File.Exists(canonicalPath)
-                && !string.Equals(Path.GetFullPath(canonicalPath), Path.GetFullPath(defaultPath),
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                var full = _windowSettingsStore.Load<WindowSettings>(canonicalPath);
-                if (full != null) state = full;
-            }
-
-            if (state == null) return;
-
-            Left = state.Left;
-            Top = state.Top;
-            Width = state.Width;
-            Height = state.Height;
-            if (state.AutoSaveSeconds > 0)
-                _autoSaveTimer.Interval = TimeSpan.FromSeconds(state.AutoSaveSeconds);
-            if (state.InitialLines >= 1)
-                _initialLines = state.InitialLines;
-            if (!string.IsNullOrWhiteSpace(state.FontFamily))
-                _fontFamily = state.FontFamily;
-            if (state.FontSize >= 6)
-                _fontSize = state.FontSize;
-            if (state.FontWeight >= 100 && state.FontWeight <= 900)
-                _fontWeight = state.FontWeight;
-            if (TryParseKeyGesture(state.ShortcutNewPrimary, out _))
-                _shortcutNewPrimary = state.ShortcutNewPrimary!.Trim();
-            if (string.IsNullOrWhiteSpace(state.ShortcutNewSecondary))
-                _shortcutNewSecondary = string.Empty;
-            else if (TryParseKeyGesture(state.ShortcutNewSecondary, out _))
-                _shortcutNewSecondary = state.ShortcutNewSecondary.Trim();
-            if (TryParseKeyGesture(state.ShortcutCloseTab, out _))
-                _shortcutCloseTab = state.ShortcutCloseTab!.Trim();
-            if (TryParseKeyGesture(state.ShortcutRenameTab, out _))
-                _shortcutRenameTab = state.ShortcutRenameTab!.Trim();
-            if (TryParseKeyGesture(state.ShortcutAddBlankLines, out _))
-                _shortcutAddBlankLines = state.ShortcutAddBlankLines!.Trim();
-            if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
-                _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
-            if (TryParseKeyGesture(state.ShortcutGoToLine, out _))
-                _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
-            if (!string.IsNullOrWhiteSpace(state.BackupFolder))
-            {
-                try
-                {
-                    _backupFolder = Path.GetFullPath(state.BackupFolder.Trim());
-                }
-                catch
-                {
-                    /* keep prior */
-                }
-            }
-            if (!string.IsNullOrWhiteSpace(state.CloudBackupFolder))
-            {
-                try
-                {
-                    _cloudBackupFolder = Path.GetFullPath(state.CloudBackupFolder.Trim());
-                }
-                catch
-                {
-                    /* keep prior */
-                }
-            }
-            if (state.CloudSaveHours is >= 0 and <= 50)
-                _cloudSaveIntervalHours = state.CloudSaveHours.Value;
-            if (state.CloudSaveMinutes is >= 0 and <= 55 && state.CloudSaveMinutes.Value % 5 == 0)
-                _cloudSaveIntervalMinutes = state.CloudSaveMinutes.Value;
-            if (state.LastCloudCopyUtc is DateTime cloudCopyUtc && cloudCopyUtc > DateTime.MinValue)
-                _lastCloudSaveUtc = cloudCopyUtc.Kind == DateTimeKind.Utc ? cloudCopyUtc : cloudCopyUtc.ToUniversalTime();
-            if (state.ActiveTabIndex >= 0)
-                _activeTabIndex = state.ActiveTabIndex;
-            _isFridayFeelingEnabled = state.FridayFeelingEnabled;
-            var loadedUsers = NormalizeUsers(state.UserProfiles);
-            if (loadedUsers.Count == 0)
-                loadedUsers = BuildUsersFromLegacyNames(state.Users);
-            _users = loadedUsers;
-            LoadTimeReportSettings(state.TimeReports);
-            if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
-                _tabCleanupStaleDays = state.TabCleanupStaleDays;
-            if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
-                _selectedLineColor = selectedLineColor;
-            if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
-            {
-                // Migrate prior built-in defaults to the current highlight palette.
-                if (highlightedLineColor == Color.FromRgb(255, 196, 128))
-                    highlightedLineColor = DefaultHighlightedLineColor;
-                if (highlightedLineColor == Color.FromRgb(255, 105, 180))
-                    highlightedLineColor = DefaultHighlightedLineColor;
-                if (highlightedLineColor == Color.FromRgb(255, 182, 193))
-                    highlightedLineColor = DefaultHighlightedLineColor;
-                _highlightedLineColor = highlightedLineColor;
-            }
-            if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
-            {
-                // Migrate prior built-in defaults to the current highlight palette.
-                if (selectedHighlightedLineColor == Color.FromRgb(255, 160, 96))
-                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
-                if (selectedHighlightedLineColor == Color.FromRgb(255, 105, 180))
-                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
-                if (selectedHighlightedLineColor == Color.FromRgb(255, 182, 193))
-                    selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
-                _selectedHighlightedLineColor = selectedHighlightedLineColor;
-            }
-
-            _startMaximized = state.Maximized;
+            ApplyBootstrapSettings(loaded.BootstrapBackupFolder, loaded.BootstrapCloudBackupFolder, loaded.BootstrapSettings);
+            ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
@@ -5464,6 +5195,118 @@ public partial class MainWindow : Window
         }
         catch { /* ignore corrupt settings */ }
     }
+
+    private void ResetSettingsToDefaults()
+    {
+        _backupFolder = DefaultBackupFolder();
+        _cloudBackupFolder = DefaultCloudBackupFolder();
+        _selectedLineColor = DefaultSelectedLineColor;
+        _highlightedLineColor = DefaultHighlightedLineColor;
+        _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+        _shortcutNewPrimary = DefaultShortcutNewPrimary;
+        _shortcutNewSecondary = DefaultShortcutNewSecondary;
+        _shortcutCloseTab = DefaultShortcutCloseTab;
+        _shortcutRenameTab = DefaultShortcutRenameTab;
+        _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
+        _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
+        _shortcutGoToLine = DefaultShortcutGoToLine;
+        _isFridayFeelingEnabled = true;
+        _isFredagspartySessionEnabled = false;
+        _users = [];
+        _timeReports.Clear();
+        _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
+    }
+
+    private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
+    {
+        _backupFolder = backupFolder;
+        _cloudBackupFolder = cloudBackupFolder;
+        if (_windowSettingsService.TryGetValidCloudHours(bootstrap.CloudSaveHours, out var cloudHours))
+            _cloudSaveIntervalHours = cloudHours;
+        if (_windowSettingsService.TryGetValidCloudMinutes(bootstrap.CloudSaveMinutes, out var cloudMinutes))
+            _cloudSaveIntervalMinutes = cloudMinutes;
+        if (_windowSettingsService.TryGetNormalizedUtc(bootstrap.LastCloudCopyUtc, out var cloudCopyUtc))
+            _lastCloudSaveUtc = cloudCopyUtc;
+    }
+
+    private void ApplyEffectiveWindowSettings(WindowSettings state)
+    {
+        Left = state.Left;
+        Top = state.Top;
+        Width = state.Width;
+        Height = state.Height;
+        if (state.AutoSaveSeconds > 0)
+            _autoSaveTimer.Interval = TimeSpan.FromSeconds(state.AutoSaveSeconds);
+        if (state.InitialLines >= 1)
+            _initialLines = state.InitialLines;
+        if (!string.IsNullOrWhiteSpace(state.FontFamily))
+            _fontFamily = state.FontFamily;
+        if (state.FontSize >= 6)
+            _fontSize = state.FontSize;
+        if (state.FontWeight >= 100 && state.FontWeight <= 900)
+            _fontWeight = state.FontWeight;
+
+        ApplyShortcutSettings(state);
+
+        _backupFolder = _windowSettingsService.NormalizePathOrFallback(state.BackupFolder, _backupFolder);
+        _cloudBackupFolder = _windowSettingsService.NormalizePathOrFallback(state.CloudBackupFolder, _cloudBackupFolder);
+        if (_windowSettingsService.TryGetValidCloudHours(state.CloudSaveHours, out var cloudHours))
+            _cloudSaveIntervalHours = cloudHours;
+        if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSaveMinutes, out var cloudMinutes))
+            _cloudSaveIntervalMinutes = cloudMinutes;
+        if (_windowSettingsService.TryGetNormalizedUtc(state.LastCloudCopyUtc, out var cloudCopyUtc))
+            _lastCloudSaveUtc = cloudCopyUtc;
+        if (state.ActiveTabIndex >= 0)
+            _activeTabIndex = state.ActiveTabIndex;
+        _isFridayFeelingEnabled = state.FridayFeelingEnabled;
+
+        var loadedUsers = NormalizeUsers(state.UserProfiles);
+        if (loadedUsers.Count == 0)
+            loadedUsers = BuildUsersFromLegacyNames(state.Users);
+        _users = loadedUsers;
+        LoadTimeReportSettings(state.TimeReports);
+        if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
+            _tabCleanupStaleDays = state.TabCleanupStaleDays;
+
+        ApplyThemeColorsFromSettings(state);
+        _startMaximized = state.Maximized;
+    }
+
+    private void ApplyShortcutSettings(WindowSettings state)
+    {
+        if (TryParseKeyGesture(state.ShortcutNewPrimary, out _))
+            _shortcutNewPrimary = state.ShortcutNewPrimary!.Trim();
+        if (string.IsNullOrWhiteSpace(state.ShortcutNewSecondary))
+            _shortcutNewSecondary = string.Empty;
+        else if (TryParseKeyGesture(state.ShortcutNewSecondary, out _))
+            _shortcutNewSecondary = state.ShortcutNewSecondary.Trim();
+        if (TryParseKeyGesture(state.ShortcutCloseTab, out _))
+            _shortcutCloseTab = state.ShortcutCloseTab!.Trim();
+        if (TryParseKeyGesture(state.ShortcutRenameTab, out _))
+            _shortcutRenameTab = state.ShortcutRenameTab!.Trim();
+        if (TryParseKeyGesture(state.ShortcutAddBlankLines, out _))
+            _shortcutAddBlankLines = state.ShortcutAddBlankLines!.Trim();
+        if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
+            _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
+        if (TryParseKeyGesture(state.ShortcutGoToLine, out _))
+            _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
+    }
+
+    private void ApplyThemeColorsFromSettings(WindowSettings state)
+    {
+        if (TryParseColor(state.SelectedLineColor, out var selectedLineColor))
+            _selectedLineColor = selectedLineColor;
+        if (TryParseColor(state.HighlightedLineColor, out var highlightedLineColor))
+            _highlightedLineColor = MigrateHighlightedLineColor(highlightedLineColor);
+        if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
+            _selectedHighlightedLineColor = MigrateSelectedHighlightedLineColor(selectedHighlightedLineColor);
+    }
+
+    private Color MigrateHighlightedLineColor(Color color)
+        => _colorThemeService.MigrateHighlightedLineColor(color, DefaultHighlightedLineColor);
+
+    private Color MigrateSelectedHighlightedLineColor(Color color)
+        => _colorThemeService.MigrateSelectedHighlightedLineColor(color, DefaultSelectedHighlightedLineColor);
 
     /// <summary>Creates <see cref="SettingsFileName"/> under the current backup folder when missing.</summary>
     private void EnsureSettingsFileExists()
@@ -5474,41 +5317,6 @@ public partial class MainWindow : Window
 
     private void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, ClosedTabsFileName);
-
-    private sealed class WindowSettings
-    {
-        public double Left { get; set; } = 100;
-        public double Top { get; set; } = 100;
-        public double Width { get; set; } = 1100;
-        public double Height { get; set; } = 700;
-        public bool Maximized { get; set; } = false;
-        public int AutoSaveSeconds { get; set; } = DefaultAutoSaveSeconds;
-        public int InitialLines { get; set; } = DefaultInitialLines;
-        public string FontFamily { get; set; } = DefaultFontFamily;
-        public double FontSize { get; set; } = DefaultFontSize;
-        public int FontWeight { get; set; } = DefaultFontWeight;
-        public string ShortcutNewPrimary { get; set; } = DefaultShortcutNewPrimary;
-        public string ShortcutNewSecondary { get; set; } = DefaultShortcutNewSecondary;
-        public string ShortcutCloseTab { get; set; } = DefaultShortcutCloseTab;
-        public string ShortcutRenameTab { get; set; } = DefaultShortcutRenameTab;
-        public string ShortcutAddBlankLines { get; set; } = DefaultShortcutAddBlankLines;
-        public string ShortcutToggleHighlight { get; set; } = DefaultShortcutToggleHighlight;
-        public string ShortcutGoToLine { get; set; } = DefaultShortcutGoToLine;
-        public string? SelectedLineColor { get; set; }
-        public string? HighlightedLineColor { get; set; }
-        public string? SelectedHighlightedLineColor { get; set; }
-        public string? BackupFolder { get; set; }
-        public string? CloudBackupFolder { get; set; }
-        public int? CloudSaveHours { get; set; }
-        public int? CloudSaveMinutes { get; set; }
-        public DateTime? LastCloudCopyUtc { get; set; }
-        public int ActiveTabIndex { get; set; } = 0;
-        public bool FridayFeelingEnabled { get; set; } = true;
-        public List<string>? Users { get; set; }
-        public List<UserProfile>? UserProfiles { get; set; }
-        public List<TimeReportMonthRecord>? TimeReports { get; set; }
-        public int TabCleanupStaleDays { get; set; } = DefaultTabCleanupStaleDays;
-    }
 
     // --- Settings dialog ----------------------------------------------------
 
