@@ -27,6 +27,7 @@ using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using ICSharpCode.AvalonEdit.Rendering;
 using Microsoft.Win32;
 using Noted.Models;
+using Noted.Services;
 using Ookii.Dialogs.Wpf;
 
 namespace Noted;
@@ -34,6 +35,8 @@ namespace Noted;
 public partial class MainWindow : Window
 {
     // --- State -------------------------------------------------------------------------
+    private readonly SettingsService _settingsService = new();
+    private readonly BackupService _backupService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private Point _tabDragStartPoint;
@@ -2460,16 +2463,8 @@ public partial class MainWindow : Window
     // -- Session serialisation ----------------------------------------------------
 
     /// <summary>Most recently written <c>noted_*.txt</c> in the folder (by last write time).</summary>
-    private static string? GetLatestBackupFilePath(string folder)
-    {
-        if (!Directory.Exists(folder)) return null;
-
-        return Directory.GetFiles(folder, "noted_*.txt")
-            .Select(f => new FileInfo(f))
-            .OrderByDescending(fi => fi.LastWriteTimeUtc)
-            .ThenByDescending(fi => fi.FullName, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault()?.FullName;
-    }
+    private string? GetLatestBackupFilePath(string folder)
+        => _backupService.GetLatestBackupFilePath(folder);
 
     /// <summary>
     /// Resolves a GUI editor executable so we do not spawn <c>code.cmd</c> (which leaves <c>cmd.exe</c> running).
@@ -2584,19 +2579,8 @@ public partial class MainWindow : Window
     private TimeSpan CloudSaveInterval()
         => TimeSpan.FromHours(_cloudSaveIntervalHours) + TimeSpan.FromMinutes(_cloudSaveIntervalMinutes);
 
-    private static DateTime GetLatestBackupWriteUtcOrMin(string folder)
-    {
-        var latest = GetLatestBackupFilePath(folder);
-        if (latest == null) return DateTime.MinValue;
-        try
-        {
-            return File.GetLastWriteTimeUtc(latest);
-        }
-        catch
-        {
-            return DateTime.MinValue;
-        }
-    }
+    private DateTime GetLatestBackupWriteUtcOrMin(string folder)
+        => _backupService.GetLatestBackupWriteUtcOrMin(folder);
 
     private static string FormatCloudCopyTimestamp(DateTime utcTimestamp)
         => utcTimestamp == DateTime.MinValue
@@ -2651,20 +2635,7 @@ public partial class MainWindow : Window
 
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
     private void PruneBackups()
-    {
-        if (!Directory.Exists(_backupFolder)) return;
-
-        var files = Directory.GetFiles(_backupFolder, "noted_*.txt")
-            .Where(f => NotedBackupFileNameRegex.IsMatch(Path.GetFileName(f)))
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // yyyyMMdd_HHmmss sorts chronologically
-            .ToList();
-
-        while (files.Count > MaxBackups)
-        {
-            File.Delete(files[0]);
-            files.RemoveAt(0);
-        }
-    }
+        => _backupService.PruneBackups(_backupFolder, NotedBackupFileNameRegex, MaxBackups);
 
     /// <summary>Restores all tabs from the most recent backup file, if one exists.</summary>
     private void LoadSession()
@@ -5586,36 +5557,13 @@ public partial class MainWindow : Window
 
     /// <summary>Creates <see cref="SettingsFileName"/> under the current backup folder when missing.</summary>
     private void EnsureSettingsFileExists()
-    {
-        try
-        {
-            if (File.Exists(Path.Combine(_backupFolder, SettingsFileName)))
-                return;
-            SaveWindowSettings();
-        }
-        catch
-        {
-            /* non-critical */
-        }
-    }
+        => _settingsService.EnsureFileExists(_backupFolder, SettingsFileName, SaveWindowSettings);
 
-    private static void CopySettingsFileToBackupFolder(string fromFolder, string toFolder)
-    {
-        var src = Path.Combine(fromFolder, SettingsFileName);
-        if (!File.Exists(src)) return;
-        Directory.CreateDirectory(toFolder);
-        var dst = Path.Combine(toFolder, SettingsFileName);
-        File.Copy(src, dst, overwrite: true);
-    }
+    private void CopySettingsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, SettingsFileName);
 
-    private static void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
-    {
-        var src = Path.Combine(fromFolder, ClosedTabsFileName);
-        if (!File.Exists(src)) return;
-        Directory.CreateDirectory(toFolder);
-        var dst = Path.Combine(toFolder, ClosedTabsFileName);
-        File.Copy(src, dst, overwrite: true);
-    }
+    private void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, ClosedTabsFileName);
 
     private sealed class WindowSettings
     {
