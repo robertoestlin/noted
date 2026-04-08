@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -103,6 +104,7 @@ public partial class MainWindow
         string? currentPassword = null;
         string? currentPart1 = null;
         string? currentPart2 = null;
+        var clipboardCopyVersion = 0;
         const int TwoPartPasswordLength = 40;
 
         var root = new DockPanel { Margin = new Thickness(12) };
@@ -401,6 +403,48 @@ public partial class MainWindow
             btnCopyPart2.IsEnabled = false;
         }
 
+        async void CopyToClipboardWithAutoClear(string value, string successMessage)
+        {
+            try
+            {
+                Clipboard.SetText(value);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Copy failed: {ex.Message}", Brushes.IndianRed);
+                return;
+            }
+
+            clipboardCopyVersion++;
+            var copyVersion = clipboardCopyVersion;
+            SetStatus($"{successMessage} Clipboard will clear in 10 seconds.");
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10));
+            }
+            catch
+            {
+                return;
+            }
+
+            if (copyVersion != clipboardCopyVersion)
+                return;
+
+            try
+            {
+                if (Clipboard.ContainsText() && string.Equals(Clipboard.GetText(), value, StringComparison.Ordinal))
+                {
+                    Clipboard.Clear();
+                    SetStatus("Clipboard cleared.");
+                }
+            }
+            catch
+            {
+                // ignore clipboard clear failures
+            }
+        }
+
         void RunGenerate()
         {
             CommitLengthField();
@@ -488,45 +532,24 @@ public partial class MainWindow
         {
             if (string.IsNullOrEmpty(currentPassword))
                 return;
-            try
-            {
-                Clipboard.SetText(currentPassword);
-                SetStatus("Copied to clipboard.");
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Copy failed: {ex.Message}", Brushes.IndianRed);
-            }
+
+            CopyToClipboardWithAutoClear(currentPassword, "Copied to clipboard.");
         };
 
         btnCopyPart1.Click += (_, _) =>
         {
             if (string.IsNullOrEmpty(currentPart1))
                 return;
-            try
-            {
-                Clipboard.SetText(currentPart1);
-                SetStatus("Part 1 copied to clipboard.");
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Copy failed: {ex.Message}", Brushes.IndianRed);
-            }
+
+            CopyToClipboardWithAutoClear(currentPart1, "Part 1 copied to clipboard.");
         };
 
         btnCopyPart2.Click += (_, _) =>
         {
             if (string.IsNullOrEmpty(currentPart2))
                 return;
-            try
-            {
-                Clipboard.SetText(currentPart2);
-                SetStatus("Part 2 copied to clipboard.");
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Copy failed: {ex.Message}", Brushes.IndianRed);
-            }
+
+            CopyToClipboardWithAutoClear(currentPart2, "Part 2 copied to clipboard.");
         };
 
         btnClose.Click += (_, _) => dlg.Close();
