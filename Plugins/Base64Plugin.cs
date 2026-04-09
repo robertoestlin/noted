@@ -46,6 +46,92 @@ public partial class MainWindow
         return sb.ToString();
     }
 
+    private static string BuildBase64CalculationText(string plainText, bool outputAsBase64Url)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        var input = plainText ?? string.Empty;
+        var bytes = Encoding.UTF8.GetBytes(input);
+        var sb = new StringBuilder();
+
+        static string ShowChar(char ch)
+        {
+            return ch switch
+            {
+                '\r' => "\\r",
+                '\n' => "\\n",
+                '\t' => "\\t",
+                _ => ch.ToString()
+            };
+        }
+
+        sb.AppendLine("How this value is calculated");
+        sb.AppendLine($"Input text: \"{input}\"");
+        sb.AppendLine($"UTF-8 bytes: {bytes.Length}");
+        sb.AppendLine($"Mode: {(outputAsBase64Url ? "Base64URL" : "Base64")}");
+        sb.AppendLine();
+
+        if (bytes.Length == 0)
+        {
+            sb.AppendLine("No bytes to encode. Output is empty.");
+            return sb.ToString();
+        }
+
+        sb.AppendLine("Input characters -> UTF-8 bytes:");
+        for (var i = 0; i < input.Length; i++)
+        {
+            var ch = input[i];
+            var charBytes = Encoding.UTF8.GetBytes(new[] { ch });
+            var byteList = string.Join(" ", Array.ConvertAll(charBytes, b => b.ToString()));
+            var bitList = string.Join(" ", Array.ConvertAll(charBytes, b => Convert.ToString(b, 2).PadLeft(8, '0')));
+            sb.AppendLine($"  '{ShowChar(ch)}' -> [{byteList}] -> [{bitList}]");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("Per 3-byte block:");
+        var blockCount = (bytes.Length + 2) / 3;
+        for (var block = 0; block < blockCount; block++)
+        {
+            var i = block * 3;
+            var b0 = bytes[i];
+            var hasB1 = i + 1 < bytes.Length;
+            var hasB2 = i + 2 < bytes.Length;
+            var b1 = hasB1 ? bytes[i + 1] : (byte)0;
+            var b2 = hasB2 ? bytes[i + 2] : (byte)0;
+
+            var twentyFourBits = (b0 << 16) | (b1 << 8) | b2;
+            var s0 = (twentyFourBits >> 18) & 0x3F;
+            var s1 = (twentyFourBits >> 12) & 0x3F;
+            var s2 = (twentyFourBits >> 6) & 0x3F;
+            var s3 = twentyFourBits & 0x3F;
+
+            var c0 = alphabet[s0];
+            var c1 = alphabet[s1];
+            var c2 = hasB1 ? alphabet[s2] : '=';
+            var c3 = hasB2 ? alphabet[s3] : '=';
+
+            sb.AppendLine($"Block {block + 1}:");
+            sb.AppendLine(
+                $"  bytes: {b0} ({Convert.ToString(b0, 2).PadLeft(8, '0')})" +
+                (hasB1 ? $", {b1} ({Convert.ToString(b1, 2).PadLeft(8, '0')})" : ", [pad 00000000]") +
+                (hasB2 ? $", {b2} ({Convert.ToString(b2, 2).PadLeft(8, '0')})" : ", [pad 00000000]"));
+            sb.AppendLine($"  24 bits: {Convert.ToString(twentyFourBits, 2).PadLeft(24, '0')}");
+            sb.AppendLine(
+                $"  sextets: {Convert.ToString(s0, 2).PadLeft(6, '0')}({s0} -> {c0}), " +
+                $"{Convert.ToString(s1, 2).PadLeft(6, '0')}({s1} -> {c1}), " +
+                $"{Convert.ToString(s2, 2).PadLeft(6, '0')}({s2} -> {(hasB1 ? c2.ToString() : "'='")}), " +
+                $"{Convert.ToString(s3, 2).PadLeft(6, '0')}({s3} -> {(hasB2 ? c3.ToString() : "'='")})");
+        }
+
+        var base64 = Convert.ToBase64String(bytes);
+        var base64Url = ToBase64Url(base64);
+        sb.AppendLine();
+        sb.AppendLine($"Base64 output: {base64}");
+        sb.AppendLine($"Base64URL output: {base64Url}");
+        sb.AppendLine($"Selected mode output: {(outputAsBase64Url ? base64Url : base64)}");
+
+        return sb.ToString();
+    }
+
     private static string NormalizeBase64Input(string? text, bool isBase64Url = false)
     {
         if (string.IsNullOrEmpty(text))
@@ -389,8 +475,22 @@ public partial class MainWindow
             Padding = new Thickness(16, 6, 16, 6),
             Margin = new Thickness(0, 8, 0, 8)
         };
-        Grid.SetRow(btnEncode, 4);
-        encodeColumn.Children.Add(btnEncode);
+        var btnExplainEncode = new Button
+        {
+            Content = "Explain encoding",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(16, 6, 16, 6),
+            Margin = new Thickness(8, 8, 0, 8)
+        };
+        var encodeButtonsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        encodeButtonsRow.Children.Add(btnEncode);
+        encodeButtonsRow.Children.Add(btnExplainEncode);
+        Grid.SetRow(encodeButtonsRow, 4);
+        encodeColumn.Children.Add(encodeButtonsRow);
 
         var lblEncodeOut = new TextBlock
         {
@@ -822,6 +922,17 @@ public partial class MainWindow
         btnEncode.Click += (_, _) =>
         {
             _ = TryEncode(true);
+        };
+
+        btnExplainEncode.Click += (_, _) =>
+        {
+            var useBase64Url = rbEncodeBase64Url.IsChecked == true;
+            MessageBox.Show(
+                dlg,
+                BuildBase64CalculationText(txtEncodeIn.Text ?? string.Empty, useBase64Url),
+                "Encode Calculation",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         };
 
         btnDecode.Click += (_, _) =>
