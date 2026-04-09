@@ -260,6 +260,7 @@ public partial class MainWindow
                 {
                     var date = weekStart.AddDays(offset);
                     bool inCurrentMonth = date.Month == currentMonth.Month && date.Year == currentMonth.Year;
+                    bool isWeekend = date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
                     int dayOfMonth = date.Day;
 
                     var cell = new Border
@@ -271,7 +272,9 @@ public partial class MainWindow
                         Padding = new Thickness(4),
                         Background = date.Date == today && inCurrentMonth
                             ? new SolidColorBrush(Color.FromRgb(255, 245, 199))
-                            : Brushes.Transparent,
+                            : inCurrentMonth && isWeekend
+                                ? new SolidColorBrush(Color.FromRgb(255, 236, 236))
+                                : Brushes.Transparent,
                         Opacity = inCurrentMonth ? 1.0 : 0.45
                     };
 
