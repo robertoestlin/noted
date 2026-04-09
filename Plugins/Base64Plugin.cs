@@ -46,10 +46,12 @@ public partial class MainWindow
         return sb.ToString();
     }
 
-    private static string BuildBase64CalculationText(string plainText, bool outputAsBase64Url)
+    private static string BuildBase64CalculationText(string plainText, bool outputAsBase64Url, bool addNewline)
     {
         const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         var input = plainText ?? string.Empty;
+        if (addNewline)
+            input += "\n";
         var bytes = Encoding.UTF8.GetBytes(input);
         var sb = new StringBuilder();
 
@@ -68,6 +70,7 @@ public partial class MainWindow
         sb.AppendLine($"Input text: \"{input}\"");
         sb.AppendLine($"UTF-8 bytes: {bytes.Length}");
         sb.AppendLine($"Mode: {(outputAsBase64Url ? "Base64URL" : "Base64")}");
+        sb.AppendLine($"Add newline (\\n): {(addNewline ? "yes" : "no")}");
         sb.AppendLine();
 
         if (bytes.Length == 0)
@@ -128,6 +131,84 @@ public partial class MainWindow
         sb.AppendLine($"Base64 output: {base64}");
         sb.AppendLine($"Base64URL output: {base64Url}");
         sb.AppendLine($"Selected mode output: {(outputAsBase64Url ? base64Url : base64)}");
+
+        return sb.ToString();
+    }
+
+    private static string BuildBase64DecodeCalculationText(string rawInput, bool decodeAsBase64Url)
+    {
+        var input = rawInput ?? string.Empty;
+        var sb = new StringBuilder();
+
+        static string ShowChar(char ch)
+        {
+            return ch switch
+            {
+                '\r' => "\\r",
+                '\n' => "\\n",
+                '\t' => "\\t",
+                _ => ch.ToString()
+            };
+        }
+
+        static bool TryDecodeBytesLocal(string source, bool asBase64Url, out byte[] bytes)
+        {
+            bytes = [];
+            try
+            {
+                var normalized = NormalizeBase64Input(source, asBase64Url);
+                if (string.IsNullOrEmpty(normalized))
+                    return false;
+
+                bytes = Convert.FromBase64String(normalized);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        sb.AppendLine("How this value is decoded");
+        sb.AppendLine($"Input: \"{input}\"");
+        sb.AppendLine($"Mode: {(decodeAsBase64Url ? "Base64URL" : "Base64")}");
+        if (string.IsNullOrEmpty(input))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Nothing to decode.");
+            return sb.ToString();
+        }
+
+        var strictValid = IsValidBase64Syntax(input, decodeAsBase64Url);
+        sb.AppendLine($"Strict valid for selected mode: {(strictValid ? "yes" : "no")}");
+        sb.AppendLine($"Normalized input used for decode: \"{NormalizeBase64Input(input, decodeAsBase64Url)}\"");
+        sb.AppendLine();
+
+        var decoded = TryDecodeBytesLocal(input, decodeAsBase64Url, out var bytes);
+        var usedFallback = false;
+        if (!decoded)
+        {
+            decoded = TryDecodeBytesLocal(input, !decodeAsBase64Url, out bytes);
+            usedFallback = decoded;
+        }
+
+        if (!decoded)
+        {
+            sb.AppendLine("Could not decode bytes.");
+            return sb.ToString();
+        }
+
+        var text = Encoding.UTF8.GetString(bytes);
+        sb.AppendLine($"Decoded bytes ({bytes.Length}): [{string.Join(" ", Array.ConvertAll(bytes, b => b.ToString()))}]");
+        sb.AppendLine("Decoded text chars:");
+        foreach (var ch in text)
+        {
+            sb.AppendLine($"  '{ShowChar(ch)}'");
+        }
+        sb.AppendLine();
+        sb.AppendLine($"Decoded text (raw): \"{text}\"");
+        if (usedFallback)
+            sb.AppendLine("Note: used opposite flavor fallback for best-effort decode.");
 
         return sb.ToString();
     }
@@ -262,9 +343,9 @@ public partial class MainWindow
         {
             Title = "Base64",
             Width = 1040,
-            Height = 760,
+            Height = 820,
             MinWidth = 680,
-            MinHeight = 560,
+            MinHeight = 620,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -407,7 +488,9 @@ public partial class MainWindow
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         encodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -468,6 +551,14 @@ public partial class MainWindow
         Grid.SetRow(txtEncodeIn, 3);
         encodeColumn.Children.Add(txtEncodeIn);
 
+        var chkEncodeAddNewline = new CheckBox
+        {
+            Content = "Add newline (\\n)",
+            Margin = new Thickness(0, 6, 0, 0)
+        };
+        Grid.SetRow(chkEncodeAddNewline, 4);
+        encodeColumn.Children.Add(chkEncodeAddNewline);
+
         var btnEncode = new Button
         {
             Content = "Encode",
@@ -489,7 +580,7 @@ public partial class MainWindow
         };
         encodeButtonsRow.Children.Add(btnEncode);
         encodeButtonsRow.Children.Add(btnExplainEncode);
-        Grid.SetRow(encodeButtonsRow, 4);
+        Grid.SetRow(encodeButtonsRow, 5);
         encodeColumn.Children.Add(encodeButtonsRow);
 
         var lblEncodeOut = new TextBlock
@@ -498,12 +589,21 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 4)
         };
-        Grid.SetRow(lblEncodeOut, 5);
+        Grid.SetRow(lblEncodeOut, 6);
         encodeColumn.Children.Add(lblEncodeOut);
 
         var txtEncodeOut = CreateBase64TextBox();
-        Grid.SetRow(txtEncodeOut, 6);
+        Grid.SetRow(txtEncodeOut, 7);
         encodeColumn.Children.Add(txtEncodeOut);
+
+        var lblEncodeOutMeta = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 4, 0, 4),
+            Text = "Output controls: none"
+        };
+        Grid.SetRow(lblEncodeOutMeta, 8);
+        encodeColumn.Children.Add(lblEncodeOutMeta);
 
         var lblEncodeIncludingPadding = new TextBlock
         {
@@ -511,7 +611,7 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 8, 0, 4)
         };
-        Grid.SetRow(lblEncodeIncludingPadding, 7);
+        Grid.SetRow(lblEncodeIncludingPadding, 9);
         encodeColumn.Children.Add(lblEncodeIncludingPadding);
 
         var txtEncodeIncludingPadding = new TextBox
@@ -519,7 +619,7 @@ public partial class MainWindow
             IsReadOnly = true,
             FontFamily = new FontFamily("Consolas, Courier New")
         };
-        Grid.SetRow(txtEncodeIncludingPadding, 8);
+        Grid.SetRow(txtEncodeIncludingPadding, 10);
         encodeColumn.Children.Add(txtEncodeIncludingPadding);
 
         var columnSeparator = new Border
@@ -537,7 +637,9 @@ public partial class MainWindow
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         decodeColumn.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -598,6 +700,15 @@ public partial class MainWindow
         Grid.SetRow(txtDecodeIn, 3);
         decodeColumn.Children.Add(txtDecodeIn);
 
+        var decodeOptionSpacer = new TextBlock
+        {
+            Text = " ",
+            Margin = new Thickness(0, 6, 0, 0),
+            Foreground = Brushes.Transparent
+        };
+        Grid.SetRow(decodeOptionSpacer, 4);
+        decodeColumn.Children.Add(decodeOptionSpacer);
+
         var btnDecode = new Button
         {
             Content = "Decode",
@@ -605,8 +716,22 @@ public partial class MainWindow
             Padding = new Thickness(16, 6, 16, 6),
             Margin = new Thickness(0, 8, 0, 8)
         };
-        Grid.SetRow(btnDecode, 4);
-        decodeColumn.Children.Add(btnDecode);
+        var btnExplainDecode = new Button
+        {
+            Content = "Explain decoding",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Padding = new Thickness(16, 6, 16, 6),
+            Margin = new Thickness(8, 8, 0, 8)
+        };
+        var decodeButtonsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        decodeButtonsRow.Children.Add(btnDecode);
+        decodeButtonsRow.Children.Add(btnExplainDecode);
+        Grid.SetRow(decodeButtonsRow, 5);
+        decodeColumn.Children.Add(decodeButtonsRow);
 
         var lblDecodeOut = new TextBlock
         {
@@ -614,12 +739,21 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 4)
         };
-        Grid.SetRow(lblDecodeOut, 5);
+        Grid.SetRow(lblDecodeOut, 6);
         decodeColumn.Children.Add(lblDecodeOut);
 
         var txtDecodeOut = CreateBase64TextBox();
-        Grid.SetRow(txtDecodeOut, 6);
+        Grid.SetRow(txtDecodeOut, 7);
         decodeColumn.Children.Add(txtDecodeOut);
+
+        var lblDecodeOutMeta = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 4, 0, 4),
+            Text = "Output controls: none"
+        };
+        Grid.SetRow(lblDecodeOutMeta, 8);
+        decodeColumn.Children.Add(lblDecodeOutMeta);
 
         var lblDecodeIncludingPadding = new TextBlock
         {
@@ -627,7 +761,7 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 8, 0, 4)
         };
-        Grid.SetRow(lblDecodeIncludingPadding, 7);
+        Grid.SetRow(lblDecodeIncludingPadding, 9);
         decodeColumn.Children.Add(lblDecodeIncludingPadding);
 
         var txtDecodeIncludingPadding = new TextBox
@@ -635,7 +769,7 @@ public partial class MainWindow
             IsReadOnly = true,
             FontFamily = new FontFamily("Consolas, Courier New")
         };
-        Grid.SetRow(txtDecodeIncludingPadding, 8);
+        Grid.SetRow(txtDecodeIncludingPadding, 10);
         decodeColumn.Children.Add(txtDecodeIncludingPadding);
 
         Grid.SetColumn(encodeColumn, 0);
@@ -652,15 +786,66 @@ public partial class MainWindow
             status.Foreground = brush ?? Brushes.DimGray;
         }
 
+        void ShowScrollableTextDialog(string title, string content)
+        {
+            var popup = new Window
+            {
+                Title = title,
+                Owner = dlg,
+                Width = 860,
+                Height = 640,
+                MinWidth = 640,
+                MinHeight = 420,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+
+            var popupRoot = new DockPanel { Margin = new Thickness(12) };
+            var popupButtons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            var popupClose = new Button
+            {
+                Content = "Close",
+                Width = 90,
+                IsDefault = true,
+                IsCancel = true
+            };
+            popupClose.Click += (_, _) => popup.Close();
+            popupButtons.Children.Add(popupClose);
+            DockPanel.SetDock(popupButtons, Dock.Bottom);
+            popupRoot.Children.Add(popupButtons);
+
+            var popupText = new TextBox
+            {
+                Text = content,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.NoWrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                FontFamily = new FontFamily("Consolas, Courier New")
+            };
+            popupRoot.Children.Add(popupText);
+            popup.Content = popupRoot;
+            popup.ShowDialog();
+        }
+
         void UpdatePaddingMathCards()
         {
-            var encodeBytes = Encoding.UTF8.GetByteCount(txtEncodeIn.Text ?? string.Empty);
+            var encodeTextForMath = txtEncodeIn.Text ?? string.Empty;
+            if (chkEncodeAddNewline.IsChecked == true)
+                encodeTextForMath += "\n";
+            var encodeBytes = Encoding.UTF8.GetByteCount(encodeTextForMath);
             var encodeRemainder = encodeBytes % 3;
             var encodePaddingCount = (3 - encodeRemainder) % 3;
             var encodeEncodedChars = ((encodeBytes + 2) / 3) * 4;
             encodeMathText.Text =
                 "Base64 Encode Padding Math\n" +
                 $"input_bytes = {encodeBytes}\n" +
+                $"add_newline = {(chkEncodeAddNewline.IsChecked == true ? "yes (\\n)" : "no")}\n" +
                 $"remainder = input_bytes % 3 = {encodeRemainder}\n" +
                 $"padding '=' count = (3 - remainder) % 3 = {encodePaddingCount}\n" +
                 $"encoded_chars_with_padding = ceil(input_bytes / 3) * 4 = {encodeEncodedChars}";
@@ -715,6 +900,27 @@ public partial class MainWindow
             txtDecodeIncludingPadding.Text = string.Empty;
         }
 
+        void UpdateDecodeOutputMeta(string text)
+        {
+            var lf = 0;
+            var cr = 0;
+            var tab = 0;
+            foreach (var c in text)
+            {
+                if (c == '\n')
+                    lf++;
+                else if (c == '\r')
+                    cr++;
+                else if (c == '\t')
+                    tab++;
+            }
+
+            if (lf == 0 && cr == 0 && tab == 0)
+                lblDecodeOutMeta.Text = "Output controls: none";
+            else
+                lblDecodeOutMeta.Text = $"Output controls: LF={lf}, CR={cr}, TAB={tab}";
+        }
+
         var suppressModeRefresh = false;
 
         bool TryEncode(bool setStatusMessage)
@@ -722,6 +928,8 @@ public partial class MainWindow
             try
             {
                 var plain = txtEncodeIn.Text ?? string.Empty;
+                if (chkEncodeAddNewline.IsChecked == true)
+                    plain += "\n";
                 var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(plain));
                 var useBase64Url = rbEncodeBase64Url.IsChecked == true;
                 txtEncodeIncludingPadding.Text = useBase64Url ? ToBase64UrlPadded(base64) : base64;
@@ -766,6 +974,7 @@ public partial class MainWindow
                 if (string.IsNullOrEmpty(rawDecode))
                 {
                     txtDecodeOut.Text = string.Empty;
+                    UpdateDecodeOutputMeta(string.Empty);
                     ClearDecodePaddedOutputs();
                     if (setStatusMessage)
                         SetStatus("Decode: nothing to decode.");
@@ -785,6 +994,7 @@ public partial class MainWindow
                     if (!decoded)
                     {
                         txtDecodeOut.Text = string.Empty;
+                        UpdateDecodeOutputMeta(string.Empty);
                         ClearDecodePaddedOutputs();
                         if (setStatusMessage)
                             SetStatus(useBase64Url
@@ -795,6 +1005,7 @@ public partial class MainWindow
                     }
 
                     txtDecodeOut.Text = Encoding.UTF8.GetString(strictModeBytes);
+                    UpdateDecodeOutputMeta(txtDecodeOut.Text);
                     var paddedBase64Fallback = Convert.ToBase64String(strictModeBytes);
                     txtDecodeIncludingPadding.Text = useBase64Url
                         ? ToBase64UrlPadded(paddedBase64Fallback)
@@ -809,6 +1020,7 @@ public partial class MainWindow
 
                 var bytes = Convert.FromBase64String(NormalizeBase64Input(rawDecode, useBase64Url));
                 txtDecodeOut.Text = Encoding.UTF8.GetString(bytes);
+                UpdateDecodeOutputMeta(txtDecodeOut.Text);
                 var paddedBase64 = Convert.ToBase64String(bytes);
                 txtDecodeIncludingPadding.Text = useBase64Url ? ToBase64UrlPadded(paddedBase64) : paddedBase64;
                 if (setStatusMessage)
@@ -818,6 +1030,7 @@ public partial class MainWindow
             catch (FormatException)
             {
                 txtDecodeOut.Text = string.Empty;
+                UpdateDecodeOutputMeta(string.Empty);
                 ClearDecodePaddedOutputs();
                 if (setStatusMessage)
                     SetStatus("Decode: invalid Base64/Base64URL input.", Brushes.IndianRed);
@@ -826,6 +1039,7 @@ public partial class MainWindow
             catch (Exception ex)
             {
                 txtDecodeOut.Text = string.Empty;
+                UpdateDecodeOutputMeta(string.Empty);
                 ClearDecodePaddedOutputs();
                 if (setStatusMessage)
                     SetStatus($"Decode: {ex.Message}", Brushes.IndianRed);
@@ -865,6 +1079,16 @@ public partial class MainWindow
             _ = TryDecode(false);
             UpdatePaddingMathCards();
         };
+        chkEncodeAddNewline.Checked += (_, _) =>
+        {
+            _ = TryEncode(false);
+            UpdatePaddingMathCards();
+        };
+        chkEncodeAddNewline.Unchecked += (_, _) =>
+        {
+            _ = TryEncode(false);
+            UpdatePaddingMathCards();
+        };
 
         txtSharedInput.TextChanged += (_, _) =>
         {
@@ -875,6 +1099,7 @@ public partial class MainWindow
                 txtDecodeIn.Text = string.Empty;
                 txtEncodeOut.Text = string.Empty;
                 txtDecodeOut.Text = string.Empty;
+                UpdateDecodeOutputMeta(string.Empty);
                 ClearEncodePaddedOutputs();
                 ClearDecodePaddedOutputs();
                 SetStatus("Quick paste: input cleared.");
@@ -914,6 +1139,7 @@ public partial class MainWindow
 
             txtDecodeIn.Text = string.Empty;
             txtDecodeOut.Text = string.Empty;
+            UpdateDecodeOutputMeta(string.Empty);
             ClearDecodePaddedOutputs();
             _ = TryEncode(false);
             SetStatus("Quick paste: treated as text, copied to encode input only, and auto-ran encode.");
@@ -927,17 +1153,28 @@ public partial class MainWindow
         btnExplainEncode.Click += (_, _) =>
         {
             var useBase64Url = rbEncodeBase64Url.IsChecked == true;
-            MessageBox.Show(
-                dlg,
-                BuildBase64CalculationText(txtEncodeIn.Text ?? string.Empty, useBase64Url),
+            ShowScrollableTextDialog(
                 "Encode Calculation",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                BuildBase64CalculationText(
+                    txtEncodeIn.Text ?? string.Empty,
+                    useBase64Url,
+                    chkEncodeAddNewline.IsChecked == true));
         };
 
         btnDecode.Click += (_, _) =>
         {
             _ = TryDecode(true);
+        };
+
+        btnExplainDecode.Click += (_, _) =>
+        {
+            var useBase64Url = rbDecodeBase64Url.IsChecked == true;
+            MessageBox.Show(
+                dlg,
+                BuildBase64DecodeCalculationText(txtDecodeIn.Text ?? string.Empty, useBase64Url),
+                "Decode Calculation",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         };
 
         btnClose.Click += (_, _) => dlg.Close();
