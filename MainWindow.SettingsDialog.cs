@@ -285,6 +285,10 @@ public partial class MainWindow
         var txtShortcutGoToLine = new TextBox { Text = _shortcutGoToLine, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutGoToLine);
 
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Go to tab:" });
+        var txtShortcutGoToTab = new TextBox { Text = _shortcutGoToTab, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutGoToTab);
+
         shortkeysPanel.Children.Add(new TextBlock
         {
             Text = "Ctrl+Shift+T reopens the most recently closed tab.",
@@ -482,6 +486,7 @@ public partial class MainWindow
             var shortcutTrimTrailingEmptyLines = txtShortcutTrimTrailingEmptyLines.Text.Trim();
             var shortcutToggleHighlight = txtShortcutToggleHighlight.Text.Trim();
             var shortcutGoToLine = txtShortcutGoToLine.Text.Trim();
+            var shortcutGoToTab = txtShortcutGoToTab.Text.Trim();
 
             if (string.IsNullOrWhiteSpace(shortcutNewPrimary)
                 || string.IsNullOrWhiteSpace(shortcutClose)
@@ -489,7 +494,8 @@ public partial class MainWindow
                 || string.IsNullOrWhiteSpace(shortcutAddBlankLines)
                 || string.IsNullOrWhiteSpace(shortcutTrimTrailingEmptyLines)
                 || string.IsNullOrWhiteSpace(shortcutToggleHighlight)
-                || string.IsNullOrWhiteSpace(shortcutGoToLine))
+                || string.IsNullOrWhiteSpace(shortcutGoToLine)
+                || string.IsNullOrWhiteSpace(shortcutGoToTab))
             {
                 MessageBox.Show("Shortcut fields cannot be empty (except secondary New tab shortcut).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -503,7 +509,8 @@ public partial class MainWindow
                 || !TryParseKeyGesture(shortcutAddBlankLines, out _)
                 || !TryParseKeyGesture(shortcutTrimTrailingEmptyLines, out _)
                 || !TryParseKeyGesture(shortcutToggleHighlight, out _)
-                || !TryParseKeyGesture(shortcutGoToLine, out _))
+                || !TryParseKeyGesture(shortcutGoToLine, out _)
+                || !TryParseKeyGesture(shortcutGoToTab, out _))
             {
                 MessageBox.Show("One or more shortcuts have an invalid format.\nUse values like Ctrl+N, Ctrl+Shift+N, F2.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -518,7 +525,8 @@ public partial class MainWindow
                 shortcutAddBlankLines,
                 shortcutTrimTrailingEmptyLines,
                 shortcutToggleHighlight,
-                shortcutGoToLine
+                shortcutGoToLine,
+                shortcutGoToTab
             };
             if (!string.IsNullOrWhiteSpace(shortcutNewSecondary))
                 shortcutList.Add(shortcutNewSecondary);
@@ -568,6 +576,7 @@ public partial class MainWindow
                 _shortcutTrimTrailingEmptyLines = shortcutTrimTrailingEmptyLines;
                 _shortcutToggleHighlight = shortcutToggleHighlight;
                 _shortcutGoToLine = shortcutGoToLine;
+                _shortcutGoToTab = shortcutGoToTab;
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;

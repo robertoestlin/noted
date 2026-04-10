@@ -65,6 +65,7 @@ public partial class MainWindow
             ShortcutTrimTrailingEmptyLines = _shortcutTrimTrailingEmptyLines,
             ShortcutToggleHighlight = _shortcutToggleHighlight,
             ShortcutGoToLine = _shortcutGoToLine,
+            ShortcutGoToTab = _shortcutGoToTab,
             SelectedLineColor = ColorToHex(_selectedLineColor),
             HighlightedLineColor = ColorToHex(_highlightedLineColor),
             SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
@@ -119,6 +120,7 @@ public partial class MainWindow
         _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
         _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
         _shortcutGoToLine = DefaultShortcutGoToLine;
+        _shortcutGoToTab = DefaultShortcutGoToTab;
         _isFridayFeelingEnabled = true;
         _isFredagspartySessionEnabled = false;
         _users = [];
@@ -201,6 +203,8 @@ public partial class MainWindow
             _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
         if (TryParseKeyGesture(state.ShortcutGoToLine, out _))
             _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
+        if (TryParseKeyGesture(state.ShortcutGoToTab, out _))
+            _shortcutGoToTab = state.ShortcutGoToTab!.Trim();
     }
 
     private void ApplyThemeColorsFromSettings(WindowSettings state)

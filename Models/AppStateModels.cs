@@ -77,6 +77,7 @@ public sealed class WindowSettings
     public string ShortcutTrimTrailingEmptyLines { get; set; } = "Ctrl+Shift+Space";
     public string ShortcutToggleHighlight { get; set; } = "Ctrl+J";
     public string ShortcutGoToLine { get; set; } = "Ctrl+G";
+    public string ShortcutGoToTab { get; set; } = "Ctrl+P";
     public string? SelectedLineColor { get; set; }
     public string? HighlightedLineColor { get; set; }
     public string? SelectedHighlightedLineColor { get; set; }

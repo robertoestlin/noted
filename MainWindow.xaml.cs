@@ -89,6 +89,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutTrimTrailingEmptyLines = "Ctrl+Shift+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
+    private const string DefaultShortcutGoToTab = "Ctrl+P";
     private static readonly string[] FridayBackgroundImageUris =
     [
         "pack://application:,,,/Noted;component/logo/friday.png",
@@ -116,6 +117,7 @@ public partial class MainWindow : Window
     private string _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
     private string _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
     private string _shortcutGoToLine = DefaultShortcutGoToLine;
+    private string _shortcutGoToTab = DefaultShortcutGoToTab;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
@@ -134,6 +136,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand TrimTrailingEmptyLinesCommand = new("Trim Trailing Empty Lines", nameof(TrimTrailingEmptyLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
 
     private static IHighlightingDefinition CreateJsonSyntaxHighlighting()
@@ -308,6 +311,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed class GoToTabOption
+    {
+        public required string Header { get; init; }
+        public required TabItem Tab { get; init; }
+    }
+
     // --- Constructor -------------------------------------------------------------
     public MainWindow()
     {
@@ -322,6 +331,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(TrimTrailingEmptyLinesCommand, (_, _) => ExecuteTrimTrailingEmptyLines()));
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
+        CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
 
         MainTabControl.AllowDrop = true;
         MainTabControl.DragOver += MainTabControl_DragOver;
@@ -1364,6 +1374,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutTrimTrailingEmptyLines, TrimTrailingEmptyLinesCommand);
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
+        AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
         UpdateMenuShortcutTexts();
     }
 
@@ -1444,6 +1455,25 @@ public partial class MainWindow : Window
         CenterCaretLine(doc.Editor, targetLine);
         doc.Editor.Focus();
         UpdateStatusBar(doc);
+    }
+
+    private void ExecuteGoToTab()
+    {
+        var availableTabs = MainTabControl.Items
+            .OfType<TabItem>()
+            .Where(tab => tab.Tag is TabDocument)
+            .ToList();
+        if (availableTabs.Count == 0)
+            return;
+
+        var selectedTab = MainTabControl.SelectedItem as TabItem;
+        var targetTab = ShowGoToTabDialog(availableTabs, selectedTab);
+        if (targetTab == null)
+            return;
+
+        MainTabControl.SelectedItem = targetTab;
+        if (targetTab.Tag is TabDocument targetDoc)
+            targetDoc.Editor.Focus();
     }
 
     private static bool IsWordChar(char c)
@@ -1969,6 +1999,163 @@ public partial class MainWindow : Window
         return result == true ? parsedLine : null;
     }
 
+    private TabItem? ShowGoToTabDialog(IReadOnlyList<TabItem> tabs, TabItem? currentTab)
+    {
+        var dlg = new Window
+        {
+            Title = "Go To Tab",
+            Width = 420,
+            Height = 245,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.CanResize,
+            MinWidth = 340,
+            MinHeight = 220
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var input = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        DockPanel.SetDock(input, Dock.Top);
+        root.Children.Add(input);
+
+        var list = new ListBox
+        {
+            DisplayMemberPath = nameof(GoToTabOption.Header),
+            Height = 130,
+            MinHeight = 120
+        };
+        root.Children.Add(list);
+
+        TabItem? chosenTab = null;
+
+        void MoveSelection(int delta)
+        {
+            if (list.Items.Count == 0)
+                return;
+
+            int nextIndex = list.SelectedIndex;
+            if (nextIndex < 0)
+                nextIndex = 0;
+            else
+                nextIndex = Math.Clamp(nextIndex + delta, 0, list.Items.Count - 1);
+
+            list.SelectedIndex = nextIndex;
+            list.ScrollIntoView(list.SelectedItem);
+        }
+
+        void ConfirmSelection()
+        {
+            if (list.SelectedItem is not GoToTabOption selected)
+                return;
+
+            chosenTab = selected.Tab;
+            dlg.DialogResult = true;
+        }
+
+        void RefreshList()
+        {
+            var filter = (input.Text ?? string.Empty).Trim();
+            var filtered = tabs
+                .Where(tab =>
+                {
+                    var header = (tab.Tag as TabDocument)?.Header ?? tab.Header?.ToString() ?? string.Empty;
+                    return filter.Length == 0
+                        || header.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                })
+                .Select(tab => new GoToTabOption
+                {
+                    Header = (tab.Tag as TabDocument)?.Header ?? tab.Header?.ToString() ?? string.Empty,
+                    Tab = tab
+                })
+                .ToList();
+
+            list.ItemsSource = filtered;
+            if (filtered.Count == 0)
+            {
+                list.SelectedItem = null;
+                return;
+            }
+
+            if (list.SelectedItem is not GoToTabOption selected || !filtered.Any(item => ReferenceEquals(item.Tab, selected.Tab)))
+            {
+                list.SelectedItem = currentTab != null
+                    ? filtered.FirstOrDefault(item => ReferenceEquals(item.Tab, currentTab)) ?? filtered[0]
+                    : filtered[0];
+            }
+        }
+
+        input.TextChanged += (_, _) => RefreshList();
+        input.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Down && list.Items.Count > 0)
+            {
+                e.Handled = true;
+                MoveSelection(1);
+            }
+            else if (e.Key == Key.Up && list.Items.Count > 0)
+            {
+                e.Handled = true;
+                MoveSelection(-1);
+            }
+            else if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                ConfirmSelection();
+            }
+        };
+
+        list.MouseDoubleClick += (_, _) =>
+        {
+            if (list.SelectedItem is GoToTabOption)
+                ConfirmSelection();
+        };
+
+        list.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Down)
+            {
+                e.Handled = true;
+                MoveSelection(1);
+            }
+            else if (e.Key == Key.Up)
+            {
+                e.Handled = true;
+                MoveSelection(-1);
+            }
+            else if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                ConfirmSelection();
+            }
+            else if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                dlg.DialogResult = false;
+            }
+        };
+
+        dlg.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                dlg.DialogResult = false;
+            }
+        };
+
+        dlg.Loaded += (_, _) =>
+        {
+            input.Focus();
+            Keyboard.Focus(input);
+            RefreshList();
+        };
+
+        dlg.Content = root;
+        var result = dlg.ShowDialog();
+        return result == true ? chosenTab : null;
+    }
+
     private static void CenterCaretLine(TextEditor editor, int line)
     {
         editor.ScrollTo(line, 1);
@@ -2001,6 +2188,8 @@ public partial class MainWindow : Window
             MenuItemCloseTab.InputGestureText = GestureDisplayText(_shortcutCloseTab);
         if (MenuItemGoToLine != null)
             MenuItemGoToLine.InputGestureText = GestureDisplayText(_shortcutGoToLine);
+        if (MenuItemGoToTab != null)
+            MenuItemGoToTab.InputGestureText = GestureDisplayText(_shortcutGoToTab);
         if (MenuItemTrimTrailingEmptyLines != null)
             MenuItemTrimTrailingEmptyLines.InputGestureText = GestureDisplayText(_shortcutTrimTrailingEmptyLines);
     }
@@ -2620,6 +2809,7 @@ public partial class MainWindow : Window
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
     private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
+    private void MenuGoToTab_Click(object sender, RoutedEventArgs e) => ExecuteGoToTab();
     private void MenuTrimTrailingEmptyLines_Click(object sender, RoutedEventArgs e) => ExecuteTrimTrailingEmptyLines();
     private void MenuCopySelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
     {
