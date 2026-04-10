@@ -2586,6 +2586,7 @@ public partial class MainWindow : Window
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
     private void MenuMongoObjectIdTimestampConverter_Click(object sender, RoutedEventArgs e) => ShowMongoObjectIdTimestampConverterDialog();
     private void MenuMongoDbApiGetToken_Click(object sender, RoutedEventArgs e) => ShowMongoDbApiGetTokenDialog();
+    private void MenuMongoSrvLookup_Click(object sender, RoutedEventArgs e) => ShowMongoSrvLookupDialog();
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
