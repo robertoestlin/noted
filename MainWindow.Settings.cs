@@ -62,6 +62,7 @@ public partial class MainWindow
             ShortcutCloseTab = _shortcutCloseTab,
             ShortcutRenameTab = _shortcutRenameTab,
             ShortcutAddBlankLines = _shortcutAddBlankLines,
+            ShortcutTrimTrailingEmptyLines = _shortcutTrimTrailingEmptyLines,
             ShortcutToggleHighlight = _shortcutToggleHighlight,
             ShortcutGoToLine = _shortcutGoToLine,
             SelectedLineColor = ColorToHex(_selectedLineColor),
@@ -115,6 +116,7 @@ public partial class MainWindow
         _shortcutCloseTab = DefaultShortcutCloseTab;
         _shortcutRenameTab = DefaultShortcutRenameTab;
         _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
+        _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
         _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _isFridayFeelingEnabled = true;
@@ -193,6 +195,8 @@ public partial class MainWindow
             _shortcutRenameTab = state.ShortcutRenameTab!.Trim();
         if (TryParseKeyGesture(state.ShortcutAddBlankLines, out _))
             _shortcutAddBlankLines = state.ShortcutAddBlankLines!.Trim();
+        if (TryParseKeyGesture(state.ShortcutTrimTrailingEmptyLines, out _))
+            _shortcutTrimTrailingEmptyLines = state.ShortcutTrimTrailingEmptyLines!.Trim();
         if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
             _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
         if (TryParseKeyGesture(state.ShortcutGoToLine, out _))

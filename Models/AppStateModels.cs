@@ -74,6 +74,7 @@ public sealed class WindowSettings
     public string ShortcutCloseTab { get; set; } = "Ctrl+W";
     public string ShortcutRenameTab { get; set; } = "F2";
     public string ShortcutAddBlankLines { get; set; } = "Ctrl+Space";
+    public string ShortcutTrimTrailingEmptyLines { get; set; } = "Ctrl+Shift+Space";
     public string ShortcutToggleHighlight { get; set; } = "Ctrl+J";
     public string ShortcutGoToLine { get; set; } = "Ctrl+G";
     public string? SelectedLineColor { get; set; }

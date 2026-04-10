@@ -39,6 +39,7 @@
                     <MenuItem Header="_Find + Replace..." InputGestureText="Ctrl+F / Ctrl+H" Click="MenuFindReplace_Click"/>
                     <Separator/>
                     <MenuItem x:Name="MenuItemGoToLine" Header="_Go To Line..." InputGestureText="Ctrl+G" Click="MenuGoToLine_Click"/>
+                    <MenuItem x:Name="MenuItemTrimTrailingEmptyLines" Header="Trim _Trailing Empty Lines" InputGestureText="Ctrl+Shift+Space" Click="MenuTrimTrailingEmptyLines_Click"/>
                     <Separator/>
                     <MenuItem Header="Selection _Actions">
                         <MenuItem x:Name="MenuItemCopySelectionTo"

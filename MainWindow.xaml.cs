@@ -86,6 +86,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutReopenClosedTab = "Ctrl+Shift+T";
     private const string DefaultShortcutRenameTab = "F2";
     private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
+    private const string DefaultShortcutTrimTrailingEmptyLines = "Ctrl+Shift+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private static readonly string[] FridayBackgroundImageUris =
@@ -112,6 +113,7 @@ public partial class MainWindow : Window
     private string _shortcutCloseTab = DefaultShortcutCloseTab;
     private string _shortcutRenameTab = DefaultShortcutRenameTab;
     private string _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
+    private string _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
     private string _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
     private string _shortcutGoToLine = DefaultShortcutGoToLine;
     private Color _selectedLineColor = DefaultSelectedLineColor;
@@ -129,6 +131,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand TrimTrailingEmptyLinesCommand = new("Trim Trailing Empty Lines", nameof(TrimTrailingEmptyLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
@@ -316,6 +319,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(ReopenClosedTabCommand, (_, _) => ReopenLastClosedTab()));
         CommandBindings.Add(new CommandBinding(RenameTabCommand, (_, _) => ExecuteRenameCurrentTab()));
         CommandBindings.Add(new CommandBinding(AddBlankLinesCommand, (_, _) => ExecuteAddBlankLines()));
+        CommandBindings.Add(new CommandBinding(TrimTrailingEmptyLinesCommand, (_, _) => ExecuteTrimTrailingEmptyLines()));
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
 
@@ -1357,6 +1361,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(DefaultShortcutReopenClosedTab, ReopenClosedTabCommand);
         AddShortcutBinding(_shortcutRenameTab, RenameTabCommand);
         AddShortcutBinding(_shortcutAddBlankLines, AddBlankLinesCommand);
+        AddShortcutBinding(_shortcutTrimTrailingEmptyLines, TrimTrailingEmptyLinesCommand);
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         UpdateMenuShortcutTexts();
@@ -1386,6 +1391,24 @@ public partial class MainWindow : Window
 
         doc.Editor.Document.Insert(doc.Editor.Document.TextLength, new string('\n', 10));
         doc.Editor.ScrollToEnd();
+    }
+
+    private void ExecuteTrimTrailingEmptyLines()
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        var text = doc.Editor.Text;
+        var preferredNewLine = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var trimmed = Regex.Replace(text, @"(?:\r?\n[ \t]*)+$", string.Empty);
+        var updated = trimmed + preferredNewLine;
+        if (string.Equals(text, updated, StringComparison.Ordinal))
+            return;
+
+        int caretOffset = Math.Min(doc.Editor.CaretOffset, updated.Length);
+        doc.Editor.Text = updated;
+        doc.Editor.CaretOffset = caretOffset;
     }
 
     private void ExecuteToggleHighlight()
@@ -1978,6 +2001,8 @@ public partial class MainWindow : Window
             MenuItemCloseTab.InputGestureText = GestureDisplayText(_shortcutCloseTab);
         if (MenuItemGoToLine != null)
             MenuItemGoToLine.InputGestureText = GestureDisplayText(_shortcutGoToLine);
+        if (MenuItemTrimTrailingEmptyLines != null)
+            MenuItemTrimTrailingEmptyLines.InputGestureText = GestureDisplayText(_shortcutTrimTrailingEmptyLines);
     }
 
     private void TabHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -2595,6 +2620,7 @@ public partial class MainWindow : Window
     private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
     private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
+    private void MenuTrimTrailingEmptyLines_Click(object sender, RoutedEventArgs e) => ExecuteTrimTrailingEmptyLines();
     private void MenuCopySelectionTo_SubmenuOpened(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuItem menu)

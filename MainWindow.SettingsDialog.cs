@@ -149,7 +149,11 @@ public partial class MainWindow
         }
         cmbFontWeight.SelectedIndex = selectedIdx;
         fontPanel.Children.Add(cmbFontWeight);
-        tabControl.Items.Add(new TabItem { Header = "Fonts", Content = fontPanel });
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Fonts",
+            Content = new ScrollViewer { Content = fontPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
 
         var colorsPanel = new Grid { Margin = new Thickness(12) };
         colorsPanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
@@ -236,7 +240,11 @@ public partial class MainWindow
         Grid.SetColumn(selectedHighlightedLinePreview, 2);
         colorsPanel.Children.Add(selectedHighlightedLinePreview);
 
-        tabControl.Items.Add(new TabItem { Header = "Colors", Content = colorsPanel });
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Colors",
+            Content = new ScrollViewer { Content = colorsPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
 
         var shortkeysPanel = new StackPanel { Margin = new Thickness(12) };
         shortkeysPanel.Children.Add(new TextBlock
@@ -265,6 +273,10 @@ public partial class MainWindow
         var txtShortcutAddBlankLines = new TextBox { Text = _shortcutAddBlankLines, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutAddBlankLines);
 
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Remove trailing empty lines (keep one final line):" });
+        var txtShortcutTrimTrailingEmptyLines = new TextBox { Text = _shortcutTrimTrailingEmptyLines, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutTrimTrailingEmptyLines);
+
         shortkeysPanel.Children.Add(new TextBlock { Text = "Toggle highlight on current/selected lines:" });
         var txtShortcutToggleHighlight = new TextBox { Text = _shortcutToggleHighlight, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutToggleHighlight);
@@ -284,7 +296,11 @@ public partial class MainWindow
             Text = "Ctrl+MouseWheel zooms the editor for this session (saved font size is unchanged).",
             Foreground = Brushes.DimGray
         });
-        tabControl.Items.Add(new TabItem { Header = "Shortkeys", Content = shortkeysPanel });
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Shortcuts",
+            Content = new ScrollViewer { Content = shortkeysPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
 
         var fridayPanel = new StackPanel { Margin = new Thickness(12) };
         var chkFridayFeeling = new CheckBox
@@ -319,7 +335,7 @@ public partial class MainWindow
         tabControl.Items.Add(new TabItem
         {
             Header = "Friday",
-            Content = fridayPanel
+            Content = new ScrollViewer { Content = fridayPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
         });
 
         var tabsSettingsPanel = new StackPanel { Margin = new Thickness(12) };
@@ -463,6 +479,7 @@ public partial class MainWindow
             var shortcutClose = txtShortcutClose.Text.Trim();
             var shortcutRename = txtShortcutRename.Text.Trim();
             var shortcutAddBlankLines = txtShortcutAddBlankLines.Text.Trim();
+            var shortcutTrimTrailingEmptyLines = txtShortcutTrimTrailingEmptyLines.Text.Trim();
             var shortcutToggleHighlight = txtShortcutToggleHighlight.Text.Trim();
             var shortcutGoToLine = txtShortcutGoToLine.Text.Trim();
 
@@ -470,6 +487,7 @@ public partial class MainWindow
                 || string.IsNullOrWhiteSpace(shortcutClose)
                 || string.IsNullOrWhiteSpace(shortcutRename)
                 || string.IsNullOrWhiteSpace(shortcutAddBlankLines)
+                || string.IsNullOrWhiteSpace(shortcutTrimTrailingEmptyLines)
                 || string.IsNullOrWhiteSpace(shortcutToggleHighlight)
                 || string.IsNullOrWhiteSpace(shortcutGoToLine))
             {
@@ -483,6 +501,7 @@ public partial class MainWindow
                 || !TryParseKeyGesture(shortcutClose, out _)
                 || !TryParseKeyGesture(shortcutRename, out _)
                 || !TryParseKeyGesture(shortcutAddBlankLines, out _)
+                || !TryParseKeyGesture(shortcutTrimTrailingEmptyLines, out _)
                 || !TryParseKeyGesture(shortcutToggleHighlight, out _)
                 || !TryParseKeyGesture(shortcutGoToLine, out _))
             {
@@ -497,6 +516,7 @@ public partial class MainWindow
                 shortcutClose,
                 shortcutRename,
                 shortcutAddBlankLines,
+                shortcutTrimTrailingEmptyLines,
                 shortcutToggleHighlight,
                 shortcutGoToLine
             };
@@ -545,6 +565,7 @@ public partial class MainWindow
                 _shortcutCloseTab = shortcutClose;
                 _shortcutRenameTab = shortcutRename;
                 _shortcutAddBlankLines = shortcutAddBlankLines;
+                _shortcutTrimTrailingEmptyLines = shortcutTrimTrailingEmptyLines;
                 _shortcutToggleHighlight = shortcutToggleHighlight;
                 _shortcutGoToLine = shortcutGoToLine;
                 _selectedLineColor = selectedLineColor;
