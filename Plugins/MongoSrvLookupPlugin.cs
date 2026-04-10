@@ -124,12 +124,29 @@ public partial class MainWindow
         var root = new DockPanel { Margin = new Thickness(12) };
         var top = new StackPanel();
 
-        top.Children.Add(new TextBlock
+        var topHeader = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        topHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        topHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        topHeader.Children.Add(new TextBlock
         {
-            Text = "SRV record or mongodb+srv:// URI",
+            Text = "Cluster host or connection string",
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 4)
+            VerticalAlignment = VerticalAlignment.Center
         });
+        var btnInfo = new Button
+        {
+            Content = "i",
+            Width = 24,
+            Height = 24,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.Bold,
+            ToolTip = "Examples"
+        };
+        Grid.SetColumn(btnInfo, 1);
+        topHeader.Children.Add(btnInfo);
+        top.Children.Add(topHeader);
         var txtInput = new TextBox
         {
             Text = string.Empty,
@@ -196,6 +213,8 @@ public partial class MainWindow
 
         async Task RunLookupAsync()
         {
+            btnLookup.IsEnabled = false;
+
             if (TryRedactMongoConnectionStringPassword(txtInput.Text, out var redactedInput))
                 txtInput.Text = redactedInput;
 
@@ -206,7 +225,6 @@ public partial class MainWindow
                 return;
             }
 
-            btnLookup.IsEnabled = false;
             SetStatus("Looking up DNS SRV records...");
             txtOutput.Text = string.Empty;
 
@@ -232,6 +250,17 @@ public partial class MainWindow
                 foreach (var record in records)
                 {
                     sb.AppendLine($"{query} service = {record.Priority} {record.Weight} {record.Port} {record.Target}");
+                }
+
+                var ports = records
+                    .Select(record => record.Port)
+                    .Distinct()
+                    .OrderBy(port => port)
+                    .ToList();
+                if (ports.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"Ports found: {string.Join(", ", ports)}");
                 }
 
                 var nameservers = result.Authorities.NsRecords()
@@ -268,6 +297,17 @@ public partial class MainWindow
         }
 
         btnLookup.Click += async (_, _) => await RunLookupAsync().ConfigureAwait(true);
+        btnInfo.Click += (_, _) =>
+        {
+            MessageBox.Show(
+                "Examples:\n"
+                + "- mongodb+srv://a:pwd@cluster1-pl-0.odjn3h.mongodb.net\n"
+                + "- cluster1-pl-0.odjn3h.mongodb.net\n\n"
+                + "If you paste a connection string with a password, the password is automatically redacted to PWD_REDACTED.",
+                "MongoDB SRV Lookup - Examples",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        };
         DataObject.AddPastingHandler(txtInput, (_, _) => lookupOnNextTextChange = true);
         txtInput.TextChanged += async (_, _) =>
         {
