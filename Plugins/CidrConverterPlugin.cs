@@ -102,9 +102,9 @@ public partial class MainWindow
         {
             Title = "CIDR Converter",
             Width = 920,
-            Height = 740,
+            Height = 860,
             MinWidth = 820,
-            MinHeight = 700,
+            MinHeight = 820,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -127,8 +127,7 @@ public partial class MainWindow
         {
             Content = "Close",
             Width = 90,
-            IsCancel = true,
-            IsDefault = true
+            IsCancel = true
         };
         closeRow.Children.Add(btnClose);
         bottom.Children.Add(status);
@@ -185,6 +184,7 @@ public partial class MainWindow
             Content = "Convert CIDR",
             Padding = new Thickness(16, 6, 16, 6),
             MinWidth = 120,
+            IsDefault = true,
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 0, 0, 10)
         };
@@ -254,6 +254,36 @@ public partial class MainWindow
         var txtCidrOut = ReadOnlyField();
         panel.Children.Add(txtCidrOut);
 
+        panel.Children.Add(new Separator { Margin = new Thickness(0, 8, 0, 10) });
+        panel.Children.Add(Label("IP in CIDR range?"));
+
+        panel.Children.Add(Label("IP to check"));
+        var txtRangeIpIn = new TextBox
+        {
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        panel.Children.Add(txtRangeIpIn);
+
+        var btnCheckRange = new Button
+        {
+            Content = "Check IP in Range",
+            Padding = new Thickness(16, 6, 16, 6),
+            MinWidth = 120,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        panel.Children.Add(btnCheckRange);
+
+        var txtRangeResult = new TextBlock
+        {
+            Text = "Uses the CIDR input above.",
+            Foreground = Brushes.DimGray,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        panel.Children.Add(txtRangeResult);
+
         void PopulateFromNetwork(uint ip, int prefixLength)
         {
             var mask = PrefixToMask(prefixLength);
@@ -294,16 +324,28 @@ public partial class MainWindow
             txtCidrOut.Text = $"{ToIpv4String(network)}/{prefixLength}";
         }
 
-        btnFromCidr.Click += (_, _) =>
+        bool TryPopulateFromCidrInput(bool updateStatusOnFailure)
         {
             if (!TryParseCidr(txtCidrIn.Text, out var ip, out var prefixLength))
             {
-                SetStatus("Enter a valid CIDR like 10.0.2.15/24.", Brushes.IndianRed);
-                return;
+                if (updateStatusOnFailure)
+                    SetStatus("Enter a valid CIDR like 10.0.2.15/24.", Brushes.IndianRed);
+                return false;
             }
 
             PopulateFromNetwork(ip, prefixLength);
             SetStatus("CIDR converted.");
+            return true;
+        }
+
+        btnFromCidr.Click += (_, _) =>
+        {
+            _ = TryPopulateFromCidrInput(updateStatusOnFailure: true);
+        };
+
+        txtCidrIn.TextChanged += (_, _) =>
+        {
+            _ = TryPopulateFromCidrInput(updateStatusOnFailure: false);
         };
 
         btnToCidr.Click += (_, _) =>
@@ -325,6 +367,41 @@ public partial class MainWindow
             txtCidrIn.Text = canonicalCidr;
             PopulateFromNetwork(ip, prefixLength);
             SetStatus("CIDR built from input.");
+        };
+
+        btnCheckRange.Click += (_, _) =>
+        {
+            var cidrText = string.IsNullOrWhiteSpace(txtCidrIn.Text)
+                ? txtCidrOut.Text
+                : txtCidrIn.Text;
+
+            if (!TryParseCidr(cidrText, out var cidrIp, out var prefixLength))
+            {
+                txtRangeResult.Text = "Invalid CIDR range.";
+                txtRangeResult.Foreground = Brushes.IndianRed;
+                SetStatus("Enter a valid CIDR in the input above.", Brushes.IndianRed);
+                return;
+            }
+
+            if (!TryParseIpv4(txtRangeIpIn.Text, out var testIp))
+            {
+                txtRangeResult.Text = "Invalid IPv4 address.";
+                txtRangeResult.Foreground = Brushes.IndianRed;
+                SetStatus("Enter a valid IPv4 address to test.", Brushes.IndianRed);
+                return;
+            }
+
+            var mask = PrefixToMask(prefixLength);
+            var network = cidrIp & mask;
+            var isInRange = (testIp & mask) == network;
+
+            txtRangeResult.Text = isInRange
+                ? "In range"
+                : "Not in range";
+            txtRangeResult.Foreground = isInRange
+                ? Brushes.ForestGreen
+                : Brushes.IndianRed;
+            SetStatus("CIDR membership checked.");
         };
 
         btnClose.Click += (_, _) => dlg.Close();
