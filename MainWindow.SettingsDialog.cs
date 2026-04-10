@@ -299,8 +299,23 @@ public partial class MainWindow
             IsChecked = _isFredagspartySessionEnabled,
             Margin = new Thickness(0, 0, 0, 10)
         };
+        var btnTurnOffFredagspartyTemporarily = new Button
+        {
+            Content = "Turn off Fredagsparty until restart",
+            Padding = new Thickness(10, 2, 10, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        btnTurnOffFredagspartyTemporarily.IsEnabled = !_isFredagspartyTemporarilyDisabled;
+        btnTurnOffFredagspartyTemporarily.Click += (_, _) =>
+        {
+            _isFredagspartyTemporarilyDisabled = true;
+            ApplyFridayFeelingToOpenEditors();
+            btnTurnOffFredagspartyTemporarily.IsEnabled = false;
+        };
         fridayPanel.Children.Add(chkFridayFeeling);
         fridayPanel.Children.Add(chkFredagsparty);
+        fridayPanel.Children.Add(btnTurnOffFredagspartyTemporarily);
         tabControl.Items.Add(new TabItem
         {
             Header = "Friday",

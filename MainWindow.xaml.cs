@@ -122,6 +122,7 @@ public partial class MainWindow : Window
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
     private bool _isFridayFeelingEnabled = true;
     private bool _isFredagspartySessionEnabled = false;
+    private bool _isFredagspartyTemporarilyDisabled;
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
 
@@ -785,7 +786,8 @@ public partial class MainWindow : Window
     }
 
     private bool ShouldUseFridayBackground()
-        => _isFredagspartySessionEnabled || (_isFridayFeelingEnabled && DateTime.Now.DayOfWeek == DayOfWeek.Friday);
+        => !_isFredagspartyTemporarilyDisabled
+            && (_isFredagspartySessionEnabled || (_isFridayFeelingEnabled && DateTime.Now.DayOfWeek == DayOfWeek.Friday));
 
     private ImageBrush? GetFridayBackgroundBrush()
     {
