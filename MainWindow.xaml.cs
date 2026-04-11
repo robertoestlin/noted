@@ -3428,6 +3428,12 @@ public partial class MainWindow : Window
     }
 
     private void MenuNew_Click(object sender, RoutedEventArgs e) => NewTab();
+    private void MenuOpenFile_Click(object sender, RoutedEventArgs e)
+        => MessageBox.Show(
+            "Sorry, you can't open a file, you think this is a text editor?",
+            "Open file",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     private void MenuExportToFile_Click(object sender, RoutedEventArgs e) => ExportCurrentTabToFile();
 
     private void MenuOpenLastBackup_Click(object sender, RoutedEventArgs e)

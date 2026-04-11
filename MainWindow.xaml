@@ -18,6 +18,8 @@
                 <MenuItem Header="_File">
                     <MenuItem x:Name="MenuItemNewTab" Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
                     <Separator/>
+                    <MenuItem Header="_Open file" Click="MenuOpenFile_Click"/>
+                    <Separator/>
                     <MenuItem Header="Export to file..." Click="MenuExportToFile_Click"/>
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
