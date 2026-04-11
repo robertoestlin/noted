@@ -3481,6 +3481,7 @@ public partial class MainWindow : Window
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
     private void MenuBase64_Click(object sender, RoutedEventArgs e) => ShowBase64Dialog();
+    private void MenuQuickMessageOverlay_Click(object sender, RoutedEventArgs e) => ShowQuickMessageOverlayDialog();
     private void MenuCidrConverter_Click(object sender, RoutedEventArgs e) => ShowCidrConverterDialog();
     private void MenuPasswordGenerator_Click(object sender, RoutedEventArgs e) => ShowPasswordGeneratorDialog();
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
