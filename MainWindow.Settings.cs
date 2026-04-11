@@ -79,7 +79,10 @@ public partial class MainWindow
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
             TimeReports = BuildTimeReportSettings(),
-            TabCleanupStaleDays = _tabCleanupStaleDays
+            TabCleanupStaleDays = _tabCleanupStaleDays,
+            QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
+            QuickMessageColor = _quickMessageColorHex,
+            QuickMessageCustom = _quickMessageCustom
         };
 
     private void LoadWindowSettings()
@@ -126,6 +129,7 @@ public partial class MainWindow
         _users = [];
         _timeReports.Clear();
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
+        ResetQuickMessageOverlaySettings();
     }
 
     private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
@@ -178,6 +182,7 @@ public partial class MainWindow
         LoadTimeReportSettings(state.TimeReports);
         if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
+        ApplyQuickMessageOverlaySettings(state);
 
         ApplyThemeColorsFromSettings(state);
         _startMaximized = state.Maximized;

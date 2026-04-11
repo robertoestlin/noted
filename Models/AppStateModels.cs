@@ -92,4 +92,7 @@ public sealed class WindowSettings
     public List<UserProfile>? UserProfiles { get; set; }
     public List<TimeReportMonthRecord>? TimeReports { get; set; }
     public int TabCleanupStaleDays { get; set; } = 30;
+    public List<string>? QuickMessagePresets { get; set; }
+    public string? QuickMessageColor { get; set; }
+    public string? QuickMessageCustom { get; set; }
 }
