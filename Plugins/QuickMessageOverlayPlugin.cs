@@ -11,9 +11,9 @@ namespace Noted;
 
 public partial class MainWindow
 {
-    private const string DefaultQuickMessageColorHex = "#FF62E5FF";
+    private const string DefaultQuickMessageColorHex = "#FFFF66CC";
     private const string QuickMessageButtonBackgroundHex = "#D9111827";
-    private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB"];
+    private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB", "GLHF"];
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
     private string _quickMessageColorHex = DefaultQuickMessageColorHex;
@@ -352,7 +352,6 @@ public partial class MainWindow
         var btnAdd    = MakeIconButton("+", "Add");
         var btnUpdate = MakeIconButton("✎", "Update selected", enabled: false);
         var btnRemove = MakeIconButton("−", "Remove selected", enabled: false);
-        var btnReset  = MakeIconButton("↺", "Reset defaults");
 
         var iconStack = new StackPanel
         {
@@ -363,16 +362,7 @@ public partial class MainWindow
         iconStack.Children.Add(btnUpdate);
         iconStack.Children.Add(btnRemove);
 
-        var resetStack = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Bottom
-        };
-        resetStack.Children.Add(btnReset);
-
         var sidePanel = new DockPanel { LastChildFill = false };
-        DockPanel.SetDock(resetStack, Dock.Bottom);
-        sidePanel.Children.Add(resetStack);
         sidePanel.Children.Add(iconStack);
 
         Grid.SetRow(sidePanel, 0);
@@ -460,17 +450,6 @@ public partial class MainWindow
             list.SelectedIndex = idx < list.Items.Count ? idx : list.Items.Count - 1;
             if (list.SelectedIndex < 0)
                 txtMessage.Clear();
-            RefreshButtonState();
-        };
-
-        btnReset.Click += (_, _) =>
-        {
-            list.Items.Clear();
-            foreach (var preset in DefaultQuickMessagePresets)
-                list.Items.Add(preset);
-            list.SelectedIndex = -1;
-            txtMessage.Clear();
-            CommitPresets();
             RefreshButtonState();
         };
 
