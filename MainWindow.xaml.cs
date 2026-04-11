@@ -508,6 +508,7 @@ public partial class MainWindow : Window
         };
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
         editor.PreviewKeyDown += (_, e) => HandleEditorPreviewKeyDown(doc, e);
+        editor.PreviewMouseRightButtonDown += (_, e) => MoveCaretToMousePosition(editor, e);
 
         // Build tab header
         var headerLabel = new TextBlock
@@ -923,10 +924,14 @@ public partial class MainWindow : Window
         assignLineOwnerItem.Click += (_, _) => AssignSelectedLines(editor);
         var clearLineOwnerItem = new MenuItem { Header = "Clear Selected Line Assignment(s)" };
         clearLineOwnerItem.Click += (_, _) => ClearSelectedLineAssignments(editor);
+        var resetImageSizeItem = new MenuItem { Header = "Reset Image Size to Original" };
+        resetImageSizeItem.Click += (_, _) => ResetInlineImageSizeToOriginal(editor);
 
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(resetImageSizeItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(assignLineOwnerItem);
         menu.Items.Add(clearLineOwnerItem);
@@ -942,9 +947,48 @@ public partial class MainWindow : Window
             bool canAssign = doc != null && _users.Count > 0;
             assignLineOwnerItem.IsEnabled = canAssign;
             clearLineOwnerItem.IsEnabled = doc != null;
+            resetImageSizeItem.IsEnabled = CanResetInlineImageSizeAtCaret(editor);
         };
 
         return menu;
+    }
+
+    private static void MoveCaretToMousePosition(TextEditor editor, MouseButtonEventArgs e)
+    {
+        var position = editor.GetPositionFromPoint(e.GetPosition(editor));
+        if (!position.HasValue)
+            return;
+
+        editor.TextArea.Caret.Location = position.Value.Location;
+        editor.Select(editor.CaretOffset, 0);
+    }
+
+    private bool CanResetInlineImageSizeAtCaret(TextEditor editor)
+    {
+        if (editor.Document == null || editor.Document.LineCount == 0)
+            return false;
+
+        int lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
+        var line = editor.Document.GetLineByNumber(lineNumber);
+        var lineText = editor.Document.GetText(line.Offset, line.Length);
+        if (!TryGetInlineImageMarker(lineText, out var marker))
+            return false;
+
+        return marker.ScalePercent != 100;
+    }
+
+    private void ResetInlineImageSizeToOriginal(TextEditor editor)
+    {
+        if (editor.Document == null || editor.Document.LineCount == 0)
+            return;
+
+        int lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
+        var line = editor.Document.GetLineByNumber(lineNumber);
+        var lineText = editor.Document.GetText(line.Offset, line.Length);
+        if (!TryGetInlineImageMarker(lineText, out var marker))
+            return;
+
+        UpdateInlineImageMarkerScale(editor, lineNumber, marker.FileName, 100);
     }
 
     private void FormatSelectedJson(TextEditor editor)
