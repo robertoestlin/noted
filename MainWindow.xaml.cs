@@ -103,6 +103,7 @@ public partial class MainWindow : Window
     private const string MetadataPrefix = "^meta^";
     private const string BackupImagesFolderName = "images";
     private const string DeletedImagesFolderName = "deleted";
+    private const int MaxDeletedInlineImages = 100;
     private static readonly Regex ImageLineMarkerRegex =
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -639,6 +640,37 @@ public partial class MainWindow : Window
             catch
             {
                 // Best-effort cleanup; keep the file in place on failure.
+            }
+        }
+
+        PruneDeletedInlineImages();
+    }
+
+    private void PruneDeletedInlineImages()
+    {
+        var deletedFolder = GetDeletedImagesFolderPath();
+        if (!Directory.Exists(deletedFolder))
+            return;
+
+        var files = Directory.EnumerateFiles(deletedFolder, "*.png", SearchOption.TopDirectoryOnly)
+            .Select(path => new FileInfo(path))
+            .OrderBy(info => info.LastWriteTimeUtc)
+            .ThenBy(info => info.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        int deleteCount = files.Count - MaxDeletedInlineImages;
+        if (deleteCount <= 0)
+            return;
+
+        foreach (var file in files.Take(deleteCount))
+        {
+            try
+            {
+                file.Delete();
+            }
+            catch
+            {
+                // Best-effort pruning; ignore files that cannot be deleted.
             }
         }
     }
