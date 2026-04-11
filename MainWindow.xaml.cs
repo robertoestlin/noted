@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private readonly TimeReportSettingsService _timeReportSettingsService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
+    private readonly DispatcherTimer _pluginAlarmTimer;
     private Point _tabDragStartPoint;
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
@@ -56,6 +57,12 @@ public partial class MainWindow : Window
     private readonly List<ClosedTabEntry> _closedTabHistory = [];
     private List<UserProfile> _users = [];
     private readonly Dictionary<string, TimeReportMonthState> _timeReports = new(StringComparer.OrdinalIgnoreCase);
+    private List<PluginAlarmSettings> _pluginAlarms = [];
+    private bool _pluginAlarmsEnabled = true;
+    private readonly HashSet<string> _triggeredPluginAlarmKeysForMinute = new(StringComparer.OrdinalIgnoreCase);
+    private string _triggeredPluginAlarmMinuteKey = string.Empty;
+    private double? _alarmPopupLeft;
+    private double? _alarmPopupTop;
 
     private const string SettingsFileName = "settings.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
@@ -449,9 +456,12 @@ public partial class MainWindow : Window
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };
         _autoSaveTimer.Tick += (_, _) => SaveSession();
         _autoSaveTimer.Start();
+        _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        _pluginAlarmTimer.Start();
         ApplyShortcutBindings();
         EnsureSettingsFileExists();
         EnsureBackupImagesFolderExists();
@@ -3477,6 +3487,7 @@ public partial class MainWindow : Window
     private void MenuReopenClosedTab_Click(object sender, RoutedEventArgs e) => ReopenLastClosedTab();
     private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
+    private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
@@ -3573,6 +3584,7 @@ public partial class MainWindow : Window
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
         _autoSaveTimer.Stop();
+        _pluginAlarmTimer.Stop();
         SaveWindowSettings();
         if (!_sessionSaved)
             SaveSession(updateStatus: false);

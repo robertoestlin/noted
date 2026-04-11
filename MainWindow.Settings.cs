@@ -79,6 +79,10 @@ public partial class MainWindow
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
             TimeReports = BuildTimeReportSettings(),
+            PluginAlarms = BuildPluginAlarmsSnapshot(),
+            PluginAlarmsEnabled = _pluginAlarmsEnabled,
+            AlarmPopupLeft = _alarmPopupLeft,
+            AlarmPopupTop = _alarmPopupTop,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
@@ -128,6 +132,10 @@ public partial class MainWindow
         _isFredagspartySessionEnabled = false;
         _users = [];
         _timeReports.Clear();
+        _pluginAlarms = [];
+        _pluginAlarmsEnabled = true;
+        _alarmPopupLeft = null;
+        _alarmPopupTop = null;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         ResetQuickMessageOverlaySettings();
     }
@@ -180,6 +188,20 @@ public partial class MainWindow
             loadedUsers = BuildUsersFromLegacyNames(state.Users);
         _users = loadedUsers;
         LoadTimeReportSettings(state.TimeReports);
+        ApplyPluginAlarmSettings(state.PluginAlarms);
+        _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
+        if (state.AlarmPopupLeft is double popupLeft
+            && !double.IsNaN(popupLeft)
+            && !double.IsInfinity(popupLeft))
+        {
+            _alarmPopupLeft = popupLeft;
+        }
+        if (state.AlarmPopupTop is double popupTop
+            && !double.IsNaN(popupTop)
+            && !double.IsInfinity(popupTop))
+        {
+            _alarmPopupTop = popupTop;
+        }
         if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
         ApplyQuickMessageOverlaySettings(state);

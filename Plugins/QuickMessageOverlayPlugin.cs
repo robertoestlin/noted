@@ -13,7 +13,7 @@ public partial class MainWindow
 {
     private const string DefaultQuickMessageColorHex = "#FFFF66CC";
     private const string QuickMessageButtonBackgroundHex = "#D9111827";
-    private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB", "GLHF"];
+    private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB", "GLHF", "LOL"];
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
     private string _quickMessageColorHex = DefaultQuickMessageColorHex;

@@ -49,6 +49,18 @@ public sealed class TimeReportMonthState
     public Dictionary<string, string> WeekComments { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+public sealed class PluginAlarmSettings
+{
+    public string Name { get; set; } = string.Empty;
+    public List<PluginAlarmTime>? Times { get; set; }
+}
+
+public sealed class PluginAlarmTime
+{
+    public int Hour { get; set; }
+    public int Minute { get; set; }
+}
+
 public sealed class ClosedTabEntry
 {
     public string Header { get; set; } = string.Empty;
@@ -91,6 +103,10 @@ public sealed class WindowSettings
     public List<string>? Users { get; set; }
     public List<UserProfile>? UserProfiles { get; set; }
     public List<TimeReportMonthRecord>? TimeReports { get; set; }
+    public List<PluginAlarmSettings>? PluginAlarms { get; set; }
+    public bool PluginAlarmsEnabled { get; set; } = true;
+    public double? AlarmPopupLeft { get; set; }
+    public double? AlarmPopupTop { get; set; }
     public int TabCleanupStaleDays { get; set; } = 30;
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }

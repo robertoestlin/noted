@@ -63,9 +63,10 @@
                     <MenuItem Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Plugins">
-                    <MenuItem Header="_Base64..." Click="MenuBase64_Click"/>
+                    <MenuItem Header="Alarms" Click="MenuAlarms_Click"/>
+                    <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
-                    <MenuItem Header="_Quick Message Overlay" Click="MenuQuickMessageOverlay_Click"/>
+                    <MenuItem Header="_Message Overlay" Click="MenuQuickMessageOverlay_Click"/>
                     <MenuItem Header="_MongoDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
                         <MenuItem Header="ObjectId to _Timestamp Converter" Click="MenuMongoObjectIdTimestampConverter_Click"/>
