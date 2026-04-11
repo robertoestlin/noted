@@ -101,6 +101,9 @@ public partial class MainWindow : Window
     private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 234, 128);
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
+    private const string BackupImagesFolderName = "images";
+    private static readonly Regex ImageLineMarkerRegex =
+        new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
@@ -129,6 +132,7 @@ public partial class MainWindow : Window
     private bool _isFredagspartyTemporarilyDisabled;
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
+    private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
@@ -317,6 +321,79 @@ public partial class MainWindow : Window
         public required TabItem Tab { get; init; }
     }
 
+    private sealed class ImageLineElementGenerator : VisualLineElementGenerator
+    {
+        private readonly Func<string, UIElement?> _elementFactory;
+        private readonly Func<string, bool> _canRenderImageLine;
+
+        public ImageLineElementGenerator(
+            Func<string, UIElement?> elementFactory,
+            Func<string, bool> canRenderImageLine)
+        {
+            _elementFactory = elementFactory;
+            _canRenderImageLine = canRenderImageLine;
+        }
+
+        public override int GetFirstInterestedOffset(int startOffset)
+        {
+            try
+            {
+                var document = CurrentContext.Document;
+                if (document == null || document.TextLength == 0)
+                    return -1;
+
+                int safeOffset = Math.Max(0, Math.Min(startOffset, document.TextLength - 1));
+                var line = document.GetLineByOffset(safeOffset);
+                while (line != null)
+                {
+                    var lineText = document.GetText(line.Offset, line.Length);
+                    if (TryGetImageMarkerFileName(lineText, out _)
+                        && line.Offset >= startOffset)
+                    {
+                        if (TryGetImageMarkerFileName(lineText, out var fileName)
+                            && _canRenderImageLine(fileName))
+                            return line.Offset;
+                    }
+                    line = line.NextLine;
+                }
+
+                return -1;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        public override VisualLineElement? ConstructElement(int offset)
+        {
+            try
+            {
+                var document = CurrentContext.Document;
+                if (document == null || document.TextLength == 0 || offset < 0 || offset >= document.TextLength)
+                    return null;
+
+                var line = document.GetLineByOffset(offset);
+                if (line.Offset != offset || line.Length <= 0)
+                    return null;
+
+                var lineText = document.GetText(line.Offset, line.Length);
+                if (!TryGetImageMarkerFileName(lineText, out var fileName))
+                    return null;
+
+                var element = _elementFactory(fileName);
+                if (element == null)
+                    return null;
+
+                return new InlineObjectElement(line.Length, element);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
     // --- Constructor -------------------------------------------------------------
     public MainWindow()
     {
@@ -346,6 +423,7 @@ public partial class MainWindow : Window
         LoadWindowSettings();
         ApplyShortcutBindings();
         EnsureSettingsFileExists();
+        EnsureBackupImagesFolderExists();
         LoadClosedTabHistory();
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
 
@@ -463,10 +541,188 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.Margin = new Thickness(8, 0, 0, 0);
         editor.Options.HighlightCurrentLine = true;
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
+        editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(CreateInlineImageElement, CanRenderInlineImageLine));
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
         return editor;
+    }
+
+    private string GetBackupImagesFolderPath()
+        => Path.Combine(_backupFolder, BackupImagesFolderName);
+
+    private void EnsureBackupImagesFolderExists()
+    {
+        try
+        {
+            Directory.CreateDirectory(GetBackupImagesFolderPath());
+        }
+        catch
+        {
+            // Best-effort folder bootstrap.
+        }
+    }
+
+    private static bool TryGetImageMarkerFileName(string lineText, out string fileName)
+    {
+        fileName = string.Empty;
+        if (string.IsNullOrEmpty(lineText))
+            return false;
+
+        var match = ImageLineMarkerRegex.Match(lineText);
+        if (!match.Success)
+            return false;
+
+        fileName = match.Groups["file"].Value;
+        return fileName.Length > 0;
+    }
+
+    private bool TryGetInlineImageSource(string fileName, out BitmapSource imageSource)
+    {
+        imageSource = null!;
+        if (_inlineImageCache.TryGetValue(fileName, out var cached))
+        {
+            imageSource = cached;
+            return true;
+        }
+
+        var imagePath = Path.Combine(GetBackupImagesFolderPath(), fileName);
+        if (!File.Exists(imagePath))
+            return false;
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            _inlineImageCache[fileName] = bitmap;
+            imageSource = bitmap;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool CanRenderInlineImageLine(string fileName)
+    {
+        if (_inlineImageCache.ContainsKey(fileName))
+            return true;
+        return File.Exists(Path.Combine(GetBackupImagesFolderPath(), fileName));
+    }
+
+    private UIElement? CreateInlineImageElement(string fileName)
+    {
+        if (!TryGetInlineImageSource(fileName, out var imageSource))
+            return null;
+
+        var image = new Image
+        {
+            Source = imageSource,
+            Stretch = Stretch.Uniform,
+            MaxHeight = 280,
+            MaxWidth = 900,
+            Margin = new Thickness(2)
+        };
+
+        return new Border
+        {
+            Child = image,
+            Margin = new Thickness(2, 1, 2, 1),
+            Padding = new Thickness(2),
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.LightGray,
+            CornerRadius = new CornerRadius(4)
+        };
+    }
+
+    private static string BuildImageFileName(DateTime timestamp)
+        => $"screenshot-{timestamp:yyyy-MM-dd-HHmmss}.png";
+
+    private static string EnsureUniqueImageFilePath(string folder, string desiredFileName)
+    {
+        string baseName = Path.GetFileNameWithoutExtension(desiredFileName);
+        string extension = Path.GetExtension(desiredFileName);
+        string candidatePath = Path.Combine(folder, desiredFileName);
+        int suffix = 1;
+
+        while (File.Exists(candidatePath))
+        {
+            candidatePath = Path.Combine(folder, $"{baseName}-{suffix:00}{extension}");
+            suffix++;
+        }
+
+        return candidatePath;
+    }
+
+    private static void InsertImageMarkerLine(TextEditor editor, string marker)
+    {
+        if (editor.Document == null)
+            return;
+
+        int replaceStart = editor.SelectionStart;
+        int replaceLength = editor.SelectionLength;
+        int anchorOffset = Math.Max(0, Math.Min(replaceStart, editor.Document.TextLength));
+        var anchorLine = editor.Document.GetLineByOffset(anchorOffset);
+
+        bool needsLeadingNewLine = anchorOffset > anchorLine.Offset;
+        bool needsTrailingNewLine = anchorOffset < anchorLine.EndOffset;
+        string replacement =
+            $"{(needsLeadingNewLine ? Environment.NewLine : string.Empty)}{marker}{(needsTrailingNewLine ? Environment.NewLine : string.Empty)}";
+
+        editor.Document.Replace(replaceStart, replaceLength, replacement);
+        editor.TextArea.Caret.Offset = replaceStart + replacement.Length;
+        editor.Select(editor.TextArea.Caret.Offset, 0);
+    }
+
+    private bool TryPasteClipboardImage(TabDocument doc)
+    {
+        BitmapSource? clipboardImage;
+        try
+        {
+            if (!Clipboard.ContainsImage())
+                return false;
+            clipboardImage = Clipboard.GetImage();
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (clipboardImage == null)
+            return false;
+
+        try
+        {
+            var imageFolder = GetBackupImagesFolderPath();
+            Directory.CreateDirectory(imageFolder);
+
+            var desiredFileName = BuildImageFileName(DateTime.Now);
+            var imagePath = EnsureUniqueImageFilePath(imageFolder, desiredFileName);
+            var imageFileName = Path.GetFileName(imagePath);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(clipboardImage));
+
+            using (var stream = new FileStream(imagePath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                encoder.Save(stream);
+
+            _inlineImageCache.Remove(imageFileName);
+            InsertImageMarkerLine(doc.Editor, $"^<{imageFileName}>");
+            doc.Editor.TextArea.TextView.Redraw();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not save image from clipboard:\n{ex.Message}", "Paste image",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
     }
 
     private ContextMenu BuildEditorContextMenu(TextEditor editor)
@@ -1023,6 +1279,14 @@ public partial class MainWindow : Window
 
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && e.Key == Key.V
+            && TryPasteClipboardImage(doc))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && (e.Key == Key.F || e.Key == Key.H))
         {
@@ -2807,7 +3071,14 @@ public partial class MainWindow : Window
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
     private void MenuCut_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Cut();
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
-    private void MenuPaste_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Paste();
+    private void MenuPaste_Click(object sender, RoutedEventArgs e)
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+        if (!TryPasteClipboardImage(doc))
+            doc.Editor.Paste();
+    }
     private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
     private void MenuGoToTab_Click(object sender, RoutedEventArgs e) => ExecuteGoToTab();

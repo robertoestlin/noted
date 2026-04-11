@@ -233,6 +233,28 @@ public partial class MainWindow
     private void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, ClosedTabsFileName);
 
+    private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
+    {
+        try
+        {
+            var sourceImageFolder = Path.Combine(fromFolder, BackupImagesFolderName);
+            if (!Directory.Exists(sourceImageFolder))
+                return;
+
+            var destinationImageFolder = Path.Combine(toFolder, BackupImagesFolderName);
+            Directory.CreateDirectory(destinationImageFolder);
+            foreach (var sourcePath in Directory.GetFiles(sourceImageFolder, "*.png"))
+            {
+                var targetPath = Path.Combine(destinationImageFolder, Path.GetFileName(sourcePath));
+                File.Copy(sourcePath, targetPath, overwrite: true);
+            }
+        }
+        catch
+        {
+            // Best-effort migration.
+        }
+    }
+
     // --- Settings dialog ----------------------------------------------------
 
     private void ShowUsersDialog()

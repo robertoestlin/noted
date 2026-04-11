@@ -39,6 +39,35 @@ public partial class MainWindow
         backupRow.Children.Add(txtBackup);
         backupRow.Children.Add(btnBrowseBackup);
         backupPanel.Children.Add(backupRow);
+        backupPanel.Children.Add(new TextBlock { Text = "Image folder:" });
+        var txtImageFolder = new TextBox
+        {
+            IsReadOnly = true,
+            Margin = new Thickness(0, 4, 0, 10),
+            Background = Brushes.WhiteSmoke
+        };
+        backupPanel.Children.Add(txtImageFolder);
+
+        void RefreshImageFolderPreview()
+        {
+            var backupText = (txtBackup.Text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(backupText))
+            {
+                txtImageFolder.Text = string.Empty;
+                return;
+            }
+
+            try
+            {
+                txtImageFolder.Text = Path.Combine(Path.GetFullPath(backupText), BackupImagesFolderName);
+            }
+            catch
+            {
+                txtImageFolder.Text = Path.Combine(backupText, BackupImagesFolderName);
+            }
+        }
+        RefreshImageFolderPreview();
+        txtBackup.TextChanged += (_, _) => RefreshImageFolderPreview();
 
         backupPanel.Children.Add(new TextBlock { Text = "Cloud storage folder:" });
         var cloudRow = new Grid { Margin = new Thickness(0, 4, 0, 10) };
@@ -556,9 +585,12 @@ public partial class MainWindow
                 {
                     CopySettingsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyClosedTabsFileToBackupFolder(previousBackupFolder, backupPath);
+                    CopyImageFolderToBackupFolder(previousBackupFolder, backupPath);
                 }
 
                 _backupFolder = backupPath;
+                EnsureBackupImagesFolderExists();
+                _inlineImageCache.Clear();
                 _cloudBackupFolder = cloudBackupPath;
                 _cloudSaveIntervalHours = cloudHours;
                 _cloudSaveIntervalMinutes = cloudMinutes;
@@ -593,6 +625,7 @@ public partial class MainWindow
                     doc.Editor.FontFamily = family;
                     doc.Editor.FontSize = ClampedEditorDisplayFontSize();
                     doc.Editor.FontWeight = weight;
+                    doc.Editor.TextArea.TextView.Redraw();
                 }
                 ApplyShortcutBindings();
                 ApplyColorThemeToOpenEditors();
