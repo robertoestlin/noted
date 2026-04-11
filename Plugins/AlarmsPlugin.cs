@@ -13,6 +13,21 @@ public partial class MainWindow
 {
     private const int MaxAlarmTimesPerAlarm = 10;
 
+    private static (double Left, double Top) ClampAlarmPopupPositionToVisibleArea(double left, double top, double width, double height)
+    {
+        var virtualLeft = SystemParameters.VirtualScreenLeft;
+        var virtualTop = SystemParameters.VirtualScreenTop;
+        var virtualWidth = SystemParameters.VirtualScreenWidth;
+        var virtualHeight = SystemParameters.VirtualScreenHeight;
+
+        var maxLeft = virtualLeft + Math.Max(0, virtualWidth - Math.Min(width, virtualWidth));
+        var maxTop = virtualTop + Math.Max(0, virtualHeight - Math.Min(height, virtualHeight));
+
+        var clampedLeft = Math.Max(virtualLeft, Math.Min(left, maxLeft));
+        var clampedTop = Math.Max(virtualTop, Math.Min(top, maxTop));
+        return (clampedLeft, clampedTop);
+    }
+
     private List<PluginAlarmSettings> BuildPluginAlarmsSnapshot()
         => NormalizePluginAlarms(_pluginAlarms);
 
@@ -108,9 +123,10 @@ public partial class MainWindow
             && !double.IsNaN(popupTop)
             && !double.IsInfinity(popupTop))
         {
+            var clamped = ClampAlarmPopupPositionToVisibleArea(popupLeft, popupTop, popup.Width, popup.Height);
             popup.WindowStartupLocation = WindowStartupLocation.Manual;
-            popup.Left = popupLeft;
-            popup.Top = popupTop;
+            popup.Left = clamped.Left;
+            popup.Top = clamped.Top;
         }
         else
         {
@@ -118,6 +134,22 @@ public partial class MainWindow
         }
 
         var messageText = string.Join(Environment.NewLine, names);
+
+        void CenterPopupOnOwnerWindow()
+        {
+            var ownerLeft = Left;
+            var ownerTop = Top;
+            var ownerWidth = ActualWidth > 0 ? ActualWidth : Width;
+            var ownerHeight = ActualHeight > 0 ? ActualHeight : Height;
+
+            var centeredLeft = ownerLeft + Math.Max(0, (ownerWidth - popup.Width) / 2);
+            var centeredTop = ownerTop + Math.Max(0, (ownerHeight - popup.Height) / 2);
+            var clamped = ClampAlarmPopupPositionToVisibleArea(centeredLeft, centeredTop, popup.Width, popup.Height);
+
+            popup.WindowStartupLocation = WindowStartupLocation.Manual;
+            popup.Left = clamped.Left;
+            popup.Top = clamped.Top;
+        }
 
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -179,6 +211,13 @@ public partial class MainWindow
 
         popup.PreviewKeyDown += (_, e) =>
         {
+            if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control && e.Key == Key.M)
+            {
+                e.Handled = true;
+                CenterPopupOnOwnerWindow();
+                return;
+            }
+
             if (e.Key == Key.Escape)
             {
                 e.Handled = true;
@@ -190,17 +229,22 @@ public partial class MainWindow
 
         popup.Closed += (_, _) =>
         {
+            double left;
+            double top;
             if (popup.WindowState == WindowState.Normal)
             {
-                _alarmPopupLeft = popup.Left;
-                _alarmPopupTop = popup.Top;
+                left = popup.Left;
+                top = popup.Top;
             }
             else
             {
-                _alarmPopupLeft = popup.RestoreBounds.Left;
-                _alarmPopupTop = popup.RestoreBounds.Top;
+                left = popup.RestoreBounds.Left;
+                top = popup.RestoreBounds.Top;
             }
 
+            var clamped = ClampAlarmPopupPositionToVisibleArea(left, top, popup.Width, popup.Height);
+            _alarmPopupLeft = clamped.Left;
+            _alarmPopupTop = clamped.Top;
             SaveWindowSettings();
         };
 
