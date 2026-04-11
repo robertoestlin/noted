@@ -102,6 +102,7 @@ public partial class MainWindow : Window
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
     private const string BackupImagesFolderName = "images";
+    private const string DeletedImagesFolderName = "deleted";
     private static readonly Regex ImageLineMarkerRegex =
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
@@ -133,6 +134,7 @@ public partial class MainWindow : Window
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
     private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _referencedInlineImagesSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -447,6 +449,7 @@ public partial class MainWindow : Window
         RestoreActiveTabSelection();
         if (_docs.Count == 0)
             NewTab();
+        RefreshInlineImageReferenceSnapshot();
     }
 
     // --- Tab management ----------------------------------------------------------
@@ -569,6 +572,9 @@ public partial class MainWindow : Window
     private string GetBackupImagesFolderPath()
         => Path.Combine(_backupFolder, BackupImagesFolderName);
 
+    private string GetDeletedImagesFolderPath()
+        => Path.Combine(GetBackupImagesFolderPath(), DeletedImagesFolderName);
+
     private void EnsureBackupImagesFolderExists()
     {
         try
@@ -581,13 +587,69 @@ public partial class MainWindow : Window
         }
     }
 
+    private static HashSet<string> CollectReferencedInlineImageFiles(IEnumerable<string> texts)
+    {
+        var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var text in texts)
+        {
+            if (string.IsNullOrEmpty(text))
+                continue;
+
+            using var reader = new StringReader(text);
+            while (reader.ReadLine() is string line)
+            {
+                if (TryGetInlineImageMarker(line, out var marker))
+                    referenced.Add(marker.FileName);
+            }
+        }
+
+        return referenced;
+    }
+
+    private HashSet<string> GetReferencedInlineImageFilesFromDocs()
+        => CollectReferencedInlineImageFiles(_docs.Values.Select(doc => doc.CachedText));
+
+    private void RefreshInlineImageReferenceSnapshot()
+        => _referencedInlineImagesSnapshot = GetReferencedInlineImageFilesFromDocs();
+
+    private void MoveDeletedInlineImagesToArchive(HashSet<string> removedReferences)
+    {
+        if (removedReferences.Count == 0)
+            return;
+
+        var imagesFolder = GetBackupImagesFolderPath();
+        if (!Directory.Exists(imagesFolder))
+            return;
+
+        var deletedFolder = GetDeletedImagesFolderPath();
+        Directory.CreateDirectory(deletedFolder);
+
+        foreach (var fileName in removedReferences)
+        {
+            var filePath = Path.Combine(imagesFolder, fileName);
+            if (!File.Exists(filePath))
+                continue;
+
+            var destinationPath = EnsureUniqueImageFilePath(deletedFolder, fileName);
+            try
+            {
+                File.Move(filePath, destinationPath);
+                _inlineImageCache.Remove(fileName);
+            }
+            catch
+            {
+                // Best-effort cleanup; keep the file in place on failure.
+            }
+        }
+    }
+
     private static bool TryGetInlineImageMarker(string lineText, out InlineImageMarker marker)
     {
         marker = default;
         if (string.IsNullOrEmpty(lineText))
             return false;
 
-        var match = ImageLineMarkerRegex.Match(lineText);
+        var match = ImageLineMarkerRegex.Match(lineText.Trim());
         if (!match.Success)
             return false;
 
@@ -618,7 +680,10 @@ public partial class MainWindow : Window
 
         var imagePath = Path.Combine(GetBackupImagesFolderPath(), fileName);
         if (!File.Exists(imagePath))
-            return false;
+        {
+            if (!TryRestoreInlineImageFromDeleted(fileName))
+                return false;
+        }
 
         try
         {
@@ -639,11 +704,37 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool TryRestoreInlineImageFromDeleted(string fileName)
+    {
+        var imagePath = Path.Combine(GetBackupImagesFolderPath(), fileName);
+        if (File.Exists(imagePath))
+            return true;
+
+        var deletedPath = Path.Combine(GetDeletedImagesFolderPath(), fileName);
+        if (!File.Exists(deletedPath))
+            return false;
+
+        try
+        {
+            Directory.CreateDirectory(GetBackupImagesFolderPath());
+            File.Move(deletedPath, imagePath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private bool CanRenderInlineImageLine(InlineImageMarker marker)
     {
         if (_inlineImageCache.ContainsKey(marker.FileName))
             return true;
-        return File.Exists(Path.Combine(GetBackupImagesFolderPath(), marker.FileName));
+        var imagePath = Path.Combine(GetBackupImagesFolderPath(), marker.FileName);
+        if (File.Exists(imagePath))
+            return true;
+
+        return TryRestoreInlineImageFromDeleted(marker.FileName);
     }
 
     private UIElement? CreateInlineImageElement(TextEditor editor, int lineNumber, InlineImageMarker marker)
@@ -3108,6 +3199,12 @@ public partial class MainWindow : Window
             _lastSaveIncludedCloudCopy = false;
             foreach (var doc in _docs.Values)
                 doc.CachedText = doc.Editor.Text;
+            var referencedNow = GetReferencedInlineImageFilesFromDocs();
+            var removedReferences = _referencedInlineImagesSnapshot
+                .Except(referencedNow, StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            MoveDeletedInlineImagesToArchive(removedReferences);
+            _referencedInlineImagesSnapshot = referencedNow;
 
             var path = _backupBundleService.CreateBackupFilePath(_backupFolder, DateTime.Now);
             var sections = new List<BackupBundleService.BackupBundleSection>();
