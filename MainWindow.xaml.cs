@@ -90,6 +90,17 @@ public partial class MainWindow : Window
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private const string DefaultShortcutGoToTab = "Ctrl+P";
+    private const string DefaultShortcutFakeSave = "Ctrl+S";
+    private static readonly string[] FakeSaveStatusMessages =
+    [
+        "No need to buy me nice stuff. - Nothing was saved.",
+        "You don't have to grease me up like that. - Nothing was saved.",
+        "I would do anything for love... but I won't do that. - Nothing was saved.",
+        "You don't have to try that hard to impress me like that. - Nothing was saved.",
+        "I'm low maintenance, I promise. - Nothing was saved.",
+        "I'm not that hard to win over, you know. - Nothing was saved.",
+        "No need to go that far for me like that. - Nothing was saved."
+    ];
     private static readonly string[] FridayBackgroundImageUris =
     [
         "pack://application:,,,/Noted;component/logo/friday.png",
@@ -151,6 +162,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand FakeSaveCommand = new("Fake Save", nameof(FakeSaveCommand), typeof(MainWindow));
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
 
     private static IHighlightingDefinition CreateJsonSyntaxHighlighting()
@@ -427,6 +439,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
         CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
+        CommandBindings.Add(new CommandBinding(FakeSaveCommand, (_, _) => ExecuteFakeSaveShortcut()));
 
         MainTabControl.AllowDrop = true;
         MainTabControl.DragOver += MainTabControl_DragOver;
@@ -2026,6 +2039,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
+        AddShortcutBinding(DefaultShortcutFakeSave, FakeSaveCommand);
         UpdateMenuShortcutTexts();
     }
 
@@ -2071,6 +2085,15 @@ public partial class MainWindow : Window
         int caretOffset = Math.Min(doc.Editor.CaretOffset, updated.Length);
         doc.Editor.Text = updated;
         doc.Editor.CaretOffset = caretOffset;
+    }
+
+    private void ExecuteFakeSaveShortcut()
+    {
+        if (FakeSaveStatusMessages.Length == 0)
+            return;
+
+        var index = Random.Shared.Next(FakeSaveStatusMessages.Length);
+        StatusAutoSave.Text = FakeSaveStatusMessages[index];
     }
 
     private void ExecuteToggleHighlight()

@@ -326,6 +326,12 @@ public partial class MainWindow
         });
         shortkeysPanel.Children.Add(new TextBlock
         {
+            Text = "Ctrl+S does not save your work.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        shortkeysPanel.Children.Add(new TextBlock
+        {
             Text = "Ctrl+MouseWheel zooms the editor for this session (saved font size is unchanged).",
             Foreground = Brushes.DimGray
         });
@@ -559,9 +565,10 @@ public partial class MainWindow
             };
             if (!string.IsNullOrWhiteSpace(shortcutNewSecondary))
                 shortcutList.Add(shortcutNewSecondary);
+            shortcutList.Add(DefaultShortcutFakeSave);
             if (shortcutList.Count != shortcutList.Distinct(StringComparer.OrdinalIgnoreCase).Count())
             {
-                MessageBox.Show("Shortcut keys must be unique across actions.", "Invalid settings",
+                MessageBox.Show("Shortcut keys must be unique across actions (Ctrl+S is reserved and does not save your work).", "Invalid settings",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
