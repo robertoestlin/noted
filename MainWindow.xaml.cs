@@ -3498,6 +3498,7 @@ public partial class MainWindow : Window
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
     private void MenuTextSplitter_Click(object sender, RoutedEventArgs e) => ShowTextSplitterDialog();
     private void MenuTxtLookup_Click(object sender, RoutedEventArgs e) => ShowTxtLookupDialog();
+    private void MenuTimeConverter_Click(object sender, RoutedEventArgs e) => ShowTimeConverterDialog();
     private void MenuMongoObjectIdTimestampConverter_Click(object sender, RoutedEventArgs e) => ShowMongoObjectIdTimestampConverterDialog();
     private void MenuMongoDbApiGetToken_Click(object sender, RoutedEventArgs e) => ShowMongoDbApiGetTokenDialog();
     private void MenuMongoSrvLookup_Click(object sender, RoutedEventArgs e) => ShowMongoSrvLookupDialog();
