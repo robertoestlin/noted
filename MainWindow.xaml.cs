@@ -103,7 +103,7 @@ public partial class MainWindow : Window
     private const string MetadataPrefix = "^meta^";
     private const string BackupImagesFolderName = "images";
     private static readonly Regex ImageLineMarkerRegex =
-        new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
@@ -133,6 +133,13 @@ public partial class MainWindow : Window
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
     private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isInlineImageResizeActive;
+    private TextEditor? _inlineImageResizeEditor;
+    private int _inlineImageResizeLineNumber;
+    private string _inlineImageResizeFileName = string.Empty;
+    private double _inlineImageResizeStartX;
+    private int _inlineImageResizeStartScalePercent;
+    private int _inlineImageResizeCurrentScalePercent;
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
@@ -321,14 +328,22 @@ public partial class MainWindow : Window
         public required TabItem Tab { get; init; }
     }
 
+    private readonly record struct InlineImageMarker(string FileName, int ScalePercent)
+    {
+        public string ToMarkerText()
+            => ScalePercent == 100
+                ? $"^<{FileName}>"
+                : $"^<{FileName},{ScalePercent}>";
+    }
+
     private sealed class ImageLineElementGenerator : VisualLineElementGenerator
     {
-        private readonly Func<string, UIElement?> _elementFactory;
-        private readonly Func<string, bool> _canRenderImageLine;
+        private readonly Func<DocumentLine, InlineImageMarker, UIElement?> _elementFactory;
+        private readonly Func<InlineImageMarker, bool> _canRenderImageLine;
 
         public ImageLineElementGenerator(
-            Func<string, UIElement?> elementFactory,
-            Func<string, bool> canRenderImageLine)
+            Func<DocumentLine, InlineImageMarker, UIElement?> elementFactory,
+            Func<InlineImageMarker, bool> canRenderImageLine)
         {
             _elementFactory = elementFactory;
             _canRenderImageLine = canRenderImageLine;
@@ -347,11 +362,11 @@ public partial class MainWindow : Window
                 while (line != null)
                 {
                     var lineText = document.GetText(line.Offset, line.Length);
-                    if (TryGetImageMarkerFileName(lineText, out _)
+                    if (TryGetInlineImageMarker(lineText, out _)
                         && line.Offset >= startOffset)
                     {
-                        if (TryGetImageMarkerFileName(lineText, out var fileName)
-                            && _canRenderImageLine(fileName))
+                        if (TryGetInlineImageMarker(lineText, out var marker)
+                            && _canRenderImageLine(marker))
                             return line.Offset;
                     }
                     line = line.NextLine;
@@ -378,10 +393,10 @@ public partial class MainWindow : Window
                     return null;
 
                 var lineText = document.GetText(line.Offset, line.Length);
-                if (!TryGetImageMarkerFileName(lineText, out var fileName))
+                if (!TryGetInlineImageMarker(lineText, out var marker))
                     return null;
 
-                var element = _elementFactory(fileName);
+                var element = _elementFactory(line, marker);
                 if (element == null)
                     return null;
 
@@ -541,7 +556,9 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.Margin = new Thickness(8, 0, 0, 0);
         editor.Options.HighlightCurrentLine = true;
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
-        editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(CreateInlineImageElement, CanRenderInlineImageLine));
+        editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(
+            (line, marker) => CreateInlineImageElement(editor, line.LineNumber, marker),
+            CanRenderInlineImageLine));
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
@@ -563,9 +580,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool TryGetImageMarkerFileName(string lineText, out string fileName)
+    private static bool TryGetInlineImageMarker(string lineText, out InlineImageMarker marker)
     {
-        fileName = string.Empty;
+        marker = default;
         if (string.IsNullOrEmpty(lineText))
             return false;
 
@@ -573,8 +590,20 @@ public partial class MainWindow : Window
         if (!match.Success)
             return false;
 
-        fileName = match.Groups["file"].Value;
-        return fileName.Length > 0;
+        var fileName = match.Groups["file"].Value;
+        if (fileName.Length == 0)
+            return false;
+
+        var scaleGroup = match.Groups["scale"];
+        int scalePercent = 100;
+        if (scaleGroup.Success && !int.TryParse(scaleGroup.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out scalePercent))
+            return false;
+
+        if (scalePercent < 1 || scalePercent > 999)
+            return false;
+
+        marker = new InlineImageMarker(fileName, scalePercent);
+        return true;
     }
 
     private bool TryGetInlineImageSource(string fileName, out BitmapSource imageSource)
@@ -609,36 +638,188 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool CanRenderInlineImageLine(string fileName)
+    private bool CanRenderInlineImageLine(InlineImageMarker marker)
     {
-        if (_inlineImageCache.ContainsKey(fileName))
+        if (_inlineImageCache.ContainsKey(marker.FileName))
             return true;
-        return File.Exists(Path.Combine(GetBackupImagesFolderPath(), fileName));
+        return File.Exists(Path.Combine(GetBackupImagesFolderPath(), marker.FileName));
     }
 
-    private UIElement? CreateInlineImageElement(string fileName)
+    private UIElement? CreateInlineImageElement(TextEditor editor, int lineNumber, InlineImageMarker marker)
     {
-        if (!TryGetInlineImageSource(fileName, out var imageSource))
+        if (!TryGetInlineImageSource(marker.FileName, out var imageSource))
             return null;
+
+        var baseWidth = Math.Max(1.0, imageSource.Width);
+        var baseHeight = Math.Max(1.0, imageSource.Height);
+        int currentScalePercent = marker.ScalePercent;
+        if (_isInlineImageResizeActive
+            && ReferenceEquals(_inlineImageResizeEditor, editor)
+            && _inlineImageResizeLineNumber == lineNumber
+            && string.Equals(_inlineImageResizeFileName, marker.FileName, StringComparison.OrdinalIgnoreCase))
+        {
+            currentScalePercent = _inlineImageResizeCurrentScalePercent;
+        }
 
         var image = new Image
         {
             Source = imageSource,
             Stretch = Stretch.Uniform,
-            MaxHeight = 280,
-            MaxWidth = 900,
             Margin = new Thickness(2)
         };
 
-        return new Border
+        void ApplyScale(int scalePercent)
         {
-            Child = image,
+            image.Width = baseWidth * scalePercent / 100.0;
+            image.Height = baseHeight * scalePercent / 100.0;
+        }
+
+        ApplyScale(currentScalePercent);
+
+        var border = new Border
+        {
             Margin = new Thickness(2, 1, 2, 1),
             Padding = new Thickness(2),
             BorderThickness = new Thickness(1),
             BorderBrush = Brushes.LightGray,
-            CornerRadius = new CornerRadius(4)
+            CornerRadius = new CornerRadius(4),
+            Cursor = Cursors.Arrow,
+            ToolTip = "Drag lower-right corner to resize image"
         };
+
+        var containerGrid = new Grid();
+        containerGrid.Children.Add(image);
+
+        var resizeHandle = new Border
+        {
+            Width = 12,
+            Height = 12,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 2, 2),
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            Cursor = Cursors.SizeNWSE
+        };
+        containerGrid.Children.Add(resizeHandle);
+        border.Child = containerGrid;
+
+        void EndResizeSession(bool commit)
+        {
+            if (!_isInlineImageResizeActive)
+                return;
+
+            editor.PreviewMouseMove -= EditorOnPreviewMouseMove;
+            editor.PreviewMouseLeftButtonUp -= EditorOnPreviewMouseLeftButtonUp;
+            editor.LostMouseCapture -= EditorOnLostMouseCapture;
+            Mouse.Capture(null);
+
+            if (commit)
+                UpdateInlineImageMarkerScale(editor, _inlineImageResizeLineNumber, _inlineImageResizeFileName, _inlineImageResizeCurrentScalePercent);
+
+            _isInlineImageResizeActive = false;
+            _inlineImageResizeEditor = null;
+            _inlineImageResizeLineNumber = 0;
+            _inlineImageResizeFileName = string.Empty;
+            _inlineImageResizeStartX = 0;
+            _inlineImageResizeStartScalePercent = 100;
+            _inlineImageResizeCurrentScalePercent = 100;
+            editor.TextArea.TextView.Redraw();
+        }
+
+        void EditorOnPreviewMouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!_isInlineImageResizeActive
+                || !ReferenceEquals(_inlineImageResizeEditor, editor)
+                || e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            double currentX = e.GetPosition(editor).X;
+            double deltaX = currentX - _inlineImageResizeStartX;
+            int nextScalePercent = (int)Math.Round(_inlineImageResizeStartScalePercent + deltaX, MidpointRounding.AwayFromZero);
+            nextScalePercent = Math.Max(1, Math.Min(400, nextScalePercent));
+            if (nextScalePercent == _inlineImageResizeCurrentScalePercent)
+                return;
+
+            _inlineImageResizeCurrentScalePercent = nextScalePercent;
+            editor.TextArea.TextView.Redraw();
+            e.Handled = true;
+        }
+
+        void EditorOnPreviewMouseLeftButtonUp(object? sender, MouseButtonEventArgs e)
+        {
+            if (!_isInlineImageResizeActive || !ReferenceEquals(_inlineImageResizeEditor, editor))
+                return;
+
+            EndResizeSession(commit: true);
+            e.Handled = true;
+        }
+
+        void EditorOnLostMouseCapture(object? sender, MouseEventArgs e)
+        {
+            if (!_isInlineImageResizeActive || !ReferenceEquals(_inlineImageResizeEditor, editor))
+                return;
+
+            EndResizeSession(commit: true);
+        }
+
+        resizeHandle.MouseLeftButtonDown += (_, e) =>
+        {
+            if (_isInlineImageResizeActive)
+                EndResizeSession(commit: true);
+
+            _isInlineImageResizeActive = true;
+            _inlineImageResizeEditor = editor;
+            _inlineImageResizeLineNumber = lineNumber;
+            _inlineImageResizeFileName = marker.FileName;
+            _inlineImageResizeStartX = e.GetPosition(editor).X;
+            _inlineImageResizeStartScalePercent = currentScalePercent;
+            _inlineImageResizeCurrentScalePercent = currentScalePercent;
+
+            editor.PreviewMouseMove += EditorOnPreviewMouseMove;
+            editor.PreviewMouseLeftButtonUp += EditorOnPreviewMouseLeftButtonUp;
+            editor.LostMouseCapture += EditorOnLostMouseCapture;
+
+            Mouse.Capture(editor, CaptureMode.SubTree);
+            e.Handled = true;
+        };
+
+        return border;
+    }
+
+    private static int ClampScalePercent(int scalePercent)
+        => Math.Max(1, Math.Min(999, scalePercent));
+
+    private static string BuildInlineImageMarkerText(string fileName, int scalePercent)
+        => new InlineImageMarker(fileName, ClampScalePercent(scalePercent)).ToMarkerText();
+
+    private static void UpdateInlineImageMarkerScale(TextEditor editor, int lineNumber, string fileName, int scalePercent)
+    {
+        if (editor.Document == null)
+            return;
+
+        if (lineNumber < 1 || lineNumber > editor.Document.LineCount)
+            return;
+
+        var line = editor.Document.GetLineByNumber(lineNumber);
+        var currentText = editor.Document.GetText(line.Offset, line.Length);
+        if (!TryGetInlineImageMarker(currentText, out var currentMarker))
+            return;
+
+        if (!string.Equals(currentMarker.FileName, fileName, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var clampedScalePercent = ClampScalePercent(scalePercent);
+        if (currentMarker.ScalePercent == clampedScalePercent)
+            return;
+
+        var replacementText = BuildInlineImageMarkerText(fileName, clampedScalePercent);
+        editor.Document.Replace(line.Offset, line.Length, replacementText);
+        editor.TextArea.TextView.Redraw();
     }
 
     private static string BuildImageFileName(DateTime timestamp)
@@ -713,7 +894,7 @@ public partial class MainWindow : Window
                 encoder.Save(stream);
 
             _inlineImageCache.Remove(imageFileName);
-            InsertImageMarkerLine(doc.Editor, $"^<{imageFileName}>");
+            InsertImageMarkerLine(doc.Editor, BuildInlineImageMarkerText(imageFileName, 100));
             doc.Editor.TextArea.TextView.Redraw();
             return true;
         }
