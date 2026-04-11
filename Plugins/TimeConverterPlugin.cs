@@ -227,11 +227,17 @@ public partial class MainWindow
                 var winterBFromDate = winterStartLocal.Date;
                 var winterBToDate = new DateTime(year, 12, 31);
 
-                sb.AppendLine($"Summer time (CEST):");
+                sb.AppendLine($"Summer time starts on: {summerStartLocal:yyyy-MM-dd} (Sweden local)");
+                sb.AppendLine($"Winter time starts on: {winterStartLocal:yyyy-MM-dd} (Sweden local)");
+                sb.AppendLine("Rule (EU/Sweden): last Sunday in March -> summer time, last Sunday in October -> winter time.");
+                sb.AppendLine("So the rule is the same each year, but the calendar date changes year to year.");
+                sb.AppendLine();
+
+                sb.AppendLine("Summer time (CEST - Central European Summer Time):");
                 sb.AppendLine($"  from {summerFromDate:yyyy-MM-dd} to {summerToDate:yyyy-MM-dd} (Sweden local dates)");
                 sb.AppendLine($"  starts at UTC: {summerStartUtc:yyyy-MM-dd HH:mm}Z");
                 sb.AppendLine();
-                sb.AppendLine("Winter time (CET):");
+                sb.AppendLine("Winter time (CET - Central European Time):");
                 sb.AppendLine($"  from {winterAFromDate:yyyy-MM-dd} to {winterAToDate:yyyy-MM-dd}");
                 sb.AppendLine($"  and  {winterBFromDate:yyyy-MM-dd} to {winterBToDate:yyyy-MM-dd}");
                 sb.AppendLine($"  starts at UTC: {winterStartUtc:yyyy-MM-dd HH:mm}Z");
@@ -258,10 +264,10 @@ public partial class MainWindow
         var dlg = new Window
         {
             Title = "Time Converter",
-            Width = 940,
-            Height = 700,
-            MinWidth = 820,
-            MinHeight = 620,
+            Width = 1140,
+            Height = 900,
+            MinWidth = 1000,
+            MinHeight = 780,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -326,8 +332,8 @@ public partial class MainWindow
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MinHeight = 210,
-            Height = 230,
+            MinHeight = 330,
+            Height = 360,
             Margin = new Thickness(0, 0, 0, 8)
         };
 
