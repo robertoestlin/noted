@@ -83,6 +83,11 @@ public partial class MainWindow
             PluginAlarmsEnabled = _pluginAlarmsEnabled,
             AlarmPopupLeft = _alarmPopupLeft,
             AlarmPopupTop = _alarmPopupTop,
+            ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
+            ProjectLineCounterTypes = BuildProjectLineCounterTypesSnapshot(),
+            ProjectLineCounterAutoDetectedFileTypes = BuildProjectLineCounterAutoDetectedFileTypesSnapshot(),
+            ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot(),
+            ProjectLineCounterIgnoredFolders = BuildProjectLineCounterIgnoredFoldersSnapshot(),
             TabCleanupStaleDays = _tabCleanupStaleDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
@@ -136,6 +141,11 @@ public partial class MainWindow
         _pluginAlarmsEnabled = true;
         _alarmPopupLeft = null;
         _alarmPopupTop = null;
+        _projectLineCounterProjects = [];
+        _projectLineCounterTypes = [];
+        _projectLineCounterAutoDetectedFileTypes = [];
+        _projectLineCounterIgnoredFileTypes = [];
+        _projectLineCounterIgnoredFolders = [];
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         ResetQuickMessageOverlaySettings();
     }
@@ -190,6 +200,12 @@ public partial class MainWindow
         LoadTimeReportSettings(state.TimeReports);
         ApplyPluginAlarmSettings(state.PluginAlarms);
         _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
+        ApplyProjectLineCounterSettings(
+            state.ProjectLineCounterProjects,
+            state.ProjectLineCounterTypes,
+            state.ProjectLineCounterAutoDetectedFileTypes,
+            state.ProjectLineCounterIgnoredFileTypes,
+            state.ProjectLineCounterIgnoredFolders);
         if (state.AlarmPopupLeft is double popupLeft
             && !double.IsNaN(popupLeft)
             && !double.IsInfinity(popupLeft))

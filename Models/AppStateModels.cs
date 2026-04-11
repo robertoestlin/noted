@@ -61,6 +61,19 @@ public sealed class PluginAlarmTime
     public int Minute { get; set; }
 }
 
+public sealed class ProjectLineCounterProject
+{
+    public string Name { get; set; } = string.Empty;
+    public string FolderPath { get; set; } = string.Empty;
+    public string TypeName { get; set; } = string.Empty;
+}
+
+public sealed class ProjectLineCounterType
+{
+    public string Name { get; set; } = string.Empty;
+    public List<string>? FileTypes { get; set; }
+}
+
 public sealed class ClosedTabEntry
 {
     public string Header { get; set; } = string.Empty;
@@ -107,6 +120,11 @@ public sealed class WindowSettings
     public bool PluginAlarmsEnabled { get; set; } = true;
     public double? AlarmPopupLeft { get; set; }
     public double? AlarmPopupTop { get; set; }
+    public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
+    public List<ProjectLineCounterType>? ProjectLineCounterTypes { get; set; }
+    public List<string>? ProjectLineCounterAutoDetectedFileTypes { get; set; }
+    public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
+    public List<string>? ProjectLineCounterIgnoredFolders { get; set; }
     public int TabCleanupStaleDays { get; set; } = 30;
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }

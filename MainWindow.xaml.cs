@@ -59,6 +59,11 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, TimeReportMonthState> _timeReports = new(StringComparer.OrdinalIgnoreCase);
     private List<PluginAlarmSettings> _pluginAlarms = [];
     private bool _pluginAlarmsEnabled = true;
+    private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
+    private List<ProjectLineCounterType> _projectLineCounterTypes = [];
+    private List<string> _projectLineCounterAutoDetectedFileTypes = [];
+    private List<string> _projectLineCounterIgnoredFileTypes = [];
+    private List<string> _projectLineCounterIgnoredFolders = [];
     private readonly HashSet<string> _triggeredPluginAlarmKeysForMinute = new(StringComparer.OrdinalIgnoreCase);
     private string _triggeredPluginAlarmMinuteKey = string.Empty;
     private double? _alarmPopupLeft;
@@ -3502,6 +3507,7 @@ public partial class MainWindow : Window
     private void MenuMongoObjectIdTimestampConverter_Click(object sender, RoutedEventArgs e) => ShowMongoObjectIdTimestampConverterDialog();
     private void MenuMongoDbApiGetToken_Click(object sender, RoutedEventArgs e) => ShowMongoDbApiGetTokenDialog();
     private void MenuMongoSrvLookup_Click(object sender, RoutedEventArgs e) => ShowMongoSrvLookupDialog();
+    private void MenuProjectLineCounter_Click(object sender, RoutedEventArgs e) => ShowProjectLineCounterDialog();
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
