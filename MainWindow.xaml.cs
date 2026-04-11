@@ -926,12 +926,15 @@ public partial class MainWindow : Window
         clearLineOwnerItem.Click += (_, _) => ClearSelectedLineAssignments(editor);
         var resetImageSizeItem = new MenuItem { Header = "Reset Image Size to Original" };
         resetImageSizeItem.Click += (_, _) => ResetInlineImageSizeToOriginal(editor);
+        var openImageFolderItem = new MenuItem { Header = "Show Image in Folder" };
+        openImageFolderItem.Click += (_, _) => ShowInlineImageInFolder(editor);
 
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(resetImageSizeItem);
+        menu.Items.Add(openImageFolderItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(assignLineOwnerItem);
         menu.Items.Add(clearLineOwnerItem);
@@ -948,6 +951,7 @@ public partial class MainWindow : Window
             assignLineOwnerItem.IsEnabled = canAssign;
             clearLineOwnerItem.IsEnabled = doc != null;
             resetImageSizeItem.IsEnabled = CanResetInlineImageSizeAtCaret(editor);
+            openImageFolderItem.IsEnabled = CanShowInlineImageInFolderAtCaret(editor);
         };
 
         return menu;
@@ -965,30 +969,65 @@ public partial class MainWindow : Window
 
     private bool CanResetInlineImageSizeAtCaret(TextEditor editor)
     {
-        if (editor.Document == null || editor.Document.LineCount == 0)
+        if (!TryGetInlineImageMarkerAtCaret(editor, out _, out var marker))
             return false;
-
-        int lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
-        var line = editor.Document.GetLineByNumber(lineNumber);
-        var lineText = editor.Document.GetText(line.Offset, line.Length);
-        if (!TryGetInlineImageMarker(lineText, out var marker))
-            return false;
-
         return marker.ScalePercent != 100;
     }
 
     private void ResetInlineImageSizeToOriginal(TextEditor editor)
     {
-        if (editor.Document == null || editor.Document.LineCount == 0)
-            return;
-
-        int lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
-        var line = editor.Document.GetLineByNumber(lineNumber);
-        var lineText = editor.Document.GetText(line.Offset, line.Length);
-        if (!TryGetInlineImageMarker(lineText, out var marker))
+        if (!TryGetInlineImageMarkerAtCaret(editor, out var lineNumber, out var marker))
             return;
 
         UpdateInlineImageMarkerScale(editor, lineNumber, marker.FileName, 100);
+    }
+
+    private bool CanShowInlineImageInFolderAtCaret(TextEditor editor)
+    {
+        if (!TryGetInlineImageMarkerAtCaret(editor, out _, out var marker))
+            return false;
+
+        var imagePath = Path.Combine(GetBackupImagesFolderPath(), marker.FileName);
+        return File.Exists(imagePath);
+    }
+
+    private void ShowInlineImageInFolder(TextEditor editor)
+    {
+        if (!TryGetInlineImageMarkerAtCaret(editor, out _, out var marker))
+            return;
+
+        var imagePath = Path.Combine(GetBackupImagesFolderPath(), marker.FileName);
+        if (!File.Exists(imagePath))
+            return;
+
+        try
+        {
+            string fullPath = Path.GetFullPath(imagePath).Replace('/', '\\');
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select, \"{fullPath}\"",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not open image in folder:\n{ex.Message}", "Open image folder",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static bool TryGetInlineImageMarkerAtCaret(TextEditor editor, out int lineNumber, out InlineImageMarker marker)
+    {
+        lineNumber = 0;
+        marker = default;
+        if (editor.Document == null || editor.Document.LineCount == 0)
+            return false;
+
+        lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
+        var line = editor.Document.GetLineByNumber(lineNumber);
+        var lineText = editor.Document.GetText(line.Offset, line.Length);
+        return TryGetInlineImageMarker(lineText, out marker);
     }
 
     private void FormatSelectedJson(TextEditor editor)
