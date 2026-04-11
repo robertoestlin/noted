@@ -73,6 +73,9 @@
                         <MenuItem Header="_TXT DNS Lookup" Click="MenuTxtLookup_Click"/>
                     </MenuItem>
                     <MenuItem Header="_Password Generator" Click="MenuPasswordGenerator_Click"/>
+                    <MenuItem Header="_Text">
+                        <MenuItem Header="Text _Splitter" Click="MenuTextSplitter_Click"/>
+                    </MenuItem>
                     <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
                 </MenuItem>
             </Menu>
