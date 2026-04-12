@@ -145,7 +145,6 @@ public sealed class WindowSettings
     public List<string>? ProjectLineCounterAutoDetectedFileTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFolders { get; set; }
-    public List<SearchFilesHistoryEntry>? SearchFilesHistory { get; set; }
     public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
     public List<string>? QuickMessagePresets { get; set; }

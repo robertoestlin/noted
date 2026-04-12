@@ -40,6 +40,7 @@ public partial class MainWindow
                 DefaultBackupFolder(),
                 SettingsFileName,
                 opts);
+            SaveSearchFilesHistory(opts);
         }
         catch { /* non-critical */ }
     }
@@ -89,7 +90,6 @@ public partial class MainWindow
             ProjectLineCounterAutoDetectedFileTypes = BuildProjectLineCounterAutoDetectedFileTypesSnapshot(),
             ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot(),
             ProjectLineCounterIgnoredFolders = BuildProjectLineCounterIgnoredFoldersSnapshot(),
-            SearchFilesHistory = BuildSearchFilesHistorySnapshot(),
             SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
@@ -112,12 +112,28 @@ public partial class MainWindow
 
             ApplyBootstrapSettings(loaded.BootstrapBackupFolder, loaded.BootstrapCloudBackupFolder, loaded.BootstrapSettings);
             ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
+            LoadSearchFilesHistory();
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
             ApplyFridayFeelingToOpenEditors();
         }
         catch { /* ignore corrupt settings */ }
+    }
+
+    private void SaveSearchFilesHistory(JsonSerializerOptions options)
+    {
+        var historyPath = Path.Combine(_backupFolder, SearchFilesHistoryFileName);
+        _windowSettingsStore.Save(historyPath, BuildSearchFilesHistorySnapshot(), options);
+    }
+
+    private void LoadSearchFilesHistory()
+    {
+        var historyPath = Path.Combine(_backupFolder, SearchFilesHistoryFileName);
+        var history = _windowSettingsStore.Load<List<SearchFilesHistoryEntry>>(historyPath);
+        ApplySearchFilesHistorySettings(history, _searchFilesHistoryLimit);
+        if (history == null)
+            SaveSearchFilesHistory(new JsonSerializerOptions { WriteIndented = true });
     }
 
     private void ResetSettingsToDefaults()
@@ -214,7 +230,7 @@ public partial class MainWindow
             state.ProjectLineCounterAutoDetectedFileTypes,
             state.ProjectLineCounterIgnoredFileTypes,
             state.ProjectLineCounterIgnoredFolders);
-        ApplySearchFilesHistorySettings(state.SearchFilesHistory, state.SearchFilesHistoryLimit);
+        _searchFilesHistoryLimit = NormalizeSearchFilesHistoryLimit(state.SearchFilesHistoryLimit);
         if (state.AlarmPopupLeft is double popupLeft
             && !double.IsNaN(popupLeft)
             && !double.IsInfinity(popupLeft))
@@ -284,6 +300,9 @@ public partial class MainWindow
 
     private void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, ClosedTabsFileName);
+
+    private void CopySearchFilesHistoryFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, SearchFilesHistoryFileName);
 
     private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {
