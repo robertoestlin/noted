@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
@@ -46,6 +47,81 @@ public partial class MainWindow
             s += new string('=', 4 - mod);
 
         return Convert.FromBase64String(s);
+    }
+
+    private static string Base64UrlEncode(ReadOnlySpan<byte> bytes)
+    {
+        return Convert.ToBase64String(bytes.ToArray())
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    private static bool TryGetJwtHeaderAlg(string headerJson, out string alg)
+    {
+        alg = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(headerJson);
+            if (!doc.RootElement.TryGetProperty("alg", out var algElement))
+                return false;
+            if (algElement.ValueKind != JsonValueKind.String)
+                return false;
+
+            alg = (algElement.GetString() ?? string.Empty).Trim();
+            return alg.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryVerifyJwtSignatureHmac(
+        string alg,
+        string signingInput,
+        string signatureSegment,
+        string sharedSecret,
+        out bool isValid,
+        out string error)
+    {
+        isValid = false;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(sharedSecret))
+        {
+            error = "Enter shared secret to verify HMAC signature.";
+            return false;
+        }
+
+        byte[] computedHash;
+        var payloadBytes = Encoding.UTF8.GetBytes(signingInput);
+        var keyBytes = Encoding.UTF8.GetBytes(sharedSecret);
+        switch (alg.ToUpperInvariant())
+        {
+            case "HS256":
+                using (var hmac = new HMACSHA256(keyBytes))
+                    computedHash = hmac.ComputeHash(payloadBytes);
+                break;
+            case "HS384":
+                using (var hmac = new HMACSHA384(keyBytes))
+                    computedHash = hmac.ComputeHash(payloadBytes);
+                break;
+            case "HS512":
+                using (var hmac = new HMACSHA512(keyBytes))
+                    computedHash = hmac.ComputeHash(payloadBytes);
+                break;
+            default:
+                error = $"Algorithm '{alg}' is not supported yet for verification. Currently supported: HS256, HS384, HS512.";
+                return false;
+        }
+
+        var computedSegment = Base64UrlEncode(computedHash);
+        var incomingSegment = (signatureSegment ?? string.Empty).Trim();
+        var computedAscii = Encoding.ASCII.GetBytes(computedSegment);
+        var incomingAscii = Encoding.ASCII.GetBytes(incomingSegment);
+        isValid = computedAscii.Length == incomingAscii.Length
+            && CryptographicOperations.FixedTimeEquals(computedAscii, incomingAscii);
+        return true;
     }
 
     private static string TryPrettyPrintJson(string utf8Text)
@@ -408,9 +484,79 @@ public partial class MainWindow
             MinHeight = 56,
             Margin = new Thickness(0, 0, 0, 6)
         };
+        var lblVerify = new TextBlock
+        {
+            Text = "JWT Signature Verification",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 6, 0, 4)
+        };
+        var verifyGrid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+        verifyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(170) });
+        verifyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        verifyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var lblAlg = new TextBlock
+        {
+            Text = "Algorithm",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 8)
+        };
+        Grid.SetRow(lblAlg, 0);
+        Grid.SetColumn(lblAlg, 0);
+        verifyGrid.Children.Add(lblAlg);
+        var txtAlg = new TextBox
+        {
+            IsReadOnly = true,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        Grid.SetRow(txtAlg, 0);
+        Grid.SetColumn(txtAlg, 1);
+        Grid.SetColumnSpan(txtAlg, 2);
+        verifyGrid.Children.Add(txtAlg);
+
+        var lblSecret = new TextBlock
+        {
+            Text = "Shared secret (HMAC)",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 8)
+        };
+        Grid.SetRow(lblSecret, 1);
+        Grid.SetColumn(lblSecret, 0);
+        verifyGrid.Children.Add(lblSecret);
+        var txtSharedSecret = new TextBox
+        {
+            Margin = new Thickness(0, 0, 8, 8),
+            ToolTip = "Used for HS256/HS384/HS512 verification."
+        };
+        Grid.SetRow(txtSharedSecret, 1);
+        Grid.SetColumn(txtSharedSecret, 1);
+        verifyGrid.Children.Add(txtSharedSecret);
+        var btnVerify = new Button
+        {
+            Content = "Verify Signature",
+            MinWidth = 130,
+            Padding = new Thickness(12, 4, 12, 4),
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        Grid.SetRow(btnVerify, 1);
+        Grid.SetColumn(btnVerify, 2);
+        verifyGrid.Children.Add(btnVerify);
+
+        var txtVerifyResult = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap
+        };
+        Grid.SetRow(txtVerifyResult, 2);
+        Grid.SetColumn(txtVerifyResult, 1);
+        Grid.SetColumnSpan(txtVerifyResult, 2);
+        verifyGrid.Children.Add(txtVerifyResult);
         var lblNote = new TextBlock
         {
-            Text = "This tool only decodes segments. It does not verify the signature or check expiry.",
+            Text = "This tool decodes segments. Signature verification currently supports HS256/HS384/HS512.",
             Foreground = Brushes.DimGray,
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
@@ -448,6 +594,61 @@ public partial class MainWindow
         jwtDocLine.Inlines.Add(linkIntro);
 
         var mainStack = new StackPanel();
+        string[]? currentJwtParts = null;
+        string currentJwtAlg = string.Empty;
+
+        void SetVerifyResult(string message, Brush? brush = null)
+        {
+            txtVerifyResult.Text = message;
+            txtVerifyResult.Foreground = brush ?? Brushes.DimGray;
+        }
+
+        void VerifyCurrentJwt()
+        {
+            if (currentJwtParts == null || currentJwtParts.Length < 3)
+            {
+                SetVerifyResult("Decode a JWT with a signature segment first.", Brushes.IndianRed);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentJwtAlg))
+            {
+                SetVerifyResult("Header does not contain a valid 'alg' value.", Brushes.IndianRed);
+                return;
+            }
+
+            if (string.Equals(currentJwtAlg, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                var hasSignature = !string.IsNullOrWhiteSpace(currentJwtParts[2]);
+                if (hasSignature)
+                {
+                    SetVerifyResult("alg=none should not include a signature segment.", Brushes.IndianRed);
+                    return;
+                }
+
+                SetVerifyResult("alg=none token has no signature segment (valid for 'none').", Brushes.ForestGreen);
+                return;
+            }
+
+            var signingInput = $"{currentJwtParts[0]}.{currentJwtParts[1]}";
+            if (!TryVerifyJwtSignatureHmac(
+                    currentJwtAlg,
+                    signingInput,
+                    currentJwtParts[2],
+                    txtSharedSecret.Text ?? string.Empty,
+                    out var isValid,
+                    out var verifyError))
+            {
+                SetVerifyResult(verifyError, Brushes.IndianRed);
+                return;
+            }
+
+            if (isValid)
+                SetVerifyResult("Signature is valid. Token payload/header has not been tampered with.", Brushes.ForestGreen);
+            else
+                SetVerifyResult("Signature is NOT valid. Token may be tampered with or secret is wrong.", Brushes.IndianRed);
+        }
+
         mainStack.Children.Add(lblStructure);
         mainStack.Children.Add(lblIn);
         mainStack.Children.Add(txtJwt);
@@ -455,6 +656,8 @@ public partial class MainWindow
         mainStack.Children.Add(splitGrid);
         mainStack.Children.Add(lblSig);
         mainStack.Children.Add(txtSignature);
+        mainStack.Children.Add(lblVerify);
+        mainStack.Children.Add(verifyGrid);
         mainStack.Children.Add(lblNote);
         mainStack.Children.Add(jwtDocLine);
 
@@ -467,6 +670,10 @@ public partial class MainWindow
             txtHeader.Document = new FlowDocument();
             txtPayload.Document = new FlowDocument();
             txtSignature.Text = string.Empty;
+            txtAlg.Text = string.Empty;
+            SetVerifyResult(string.Empty);
+            currentJwtParts = null;
+            currentJwtAlg = string.Empty;
 
             var raw = (txtJwt.Text ?? string.Empty).Trim();
             if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
@@ -496,6 +703,17 @@ public partial class MainWindow
                 txtSignature.Text = parts.Length >= 3
                     ? parts[2]
                     : "(no signature segment)";
+                currentJwtParts = parts;
+
+                if (TryGetJwtHeaderAlg(headerJson, out var alg))
+                {
+                    currentJwtAlg = alg;
+                    txtAlg.Text = alg;
+                }
+                else
+                {
+                    txtAlg.Text = "(missing)";
+                }
 
                 SetStatus(parts.Length >= 3
                     ? "Decoded header and payload. Signature shown as raw Base64url (not verified)."
@@ -512,6 +730,7 @@ public partial class MainWindow
         }
 
         btnDecode.Click += (_, _) => DecodeJwt();
+        btnVerify.Click += (_, _) => VerifyCurrentJwt();
 
         btnPasteSample.Click += (_, _) =>
         {
