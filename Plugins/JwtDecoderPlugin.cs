@@ -77,51 +77,98 @@ public partial class MainWindow
         }
     }
 
-    private static bool TryVerifyJwtSignatureHmac(
+    private static bool TryVerifyJwtSignature(
         string alg,
         string signingInput,
         string signatureSegment,
         string sharedSecret,
+        string ecdsaPublicKeyPem,
         out bool isValid,
         out string error)
     {
         isValid = false;
         error = string.Empty;
-        if (string.IsNullOrWhiteSpace(sharedSecret))
-        {
-            error = "Enter shared secret to verify HMAC signature.";
-            return false;
-        }
-
-        byte[] computedHash;
         var payloadBytes = Encoding.UTF8.GetBytes(signingInput);
-        var keyBytes = Encoding.UTF8.GetBytes(sharedSecret);
         switch (alg.ToUpperInvariant())
         {
             case "HS256":
-                using (var hmac = new HMACSHA256(keyBytes))
-                    computedHash = hmac.ComputeHash(payloadBytes);
-                break;
             case "HS384":
-                using (var hmac = new HMACSHA384(keyBytes))
-                    computedHash = hmac.ComputeHash(payloadBytes);
-                break;
             case "HS512":
-                using (var hmac = new HMACSHA512(keyBytes))
-                    computedHash = hmac.ComputeHash(payloadBytes);
-                break;
+            {
+                if (string.IsNullOrWhiteSpace(sharedSecret))
+                {
+                    error = "Enter shared secret to verify HMAC signature.";
+                    return false;
+                }
+
+                var keyBytes = Encoding.UTF8.GetBytes(sharedSecret);
+                byte[] computedHash;
+                switch (alg.ToUpperInvariant())
+                {
+                    case "HS256":
+                        using (var hmac = new HMACSHA256(keyBytes))
+                            computedHash = hmac.ComputeHash(payloadBytes);
+                        break;
+                    case "HS384":
+                        using (var hmac = new HMACSHA384(keyBytes))
+                            computedHash = hmac.ComputeHash(payloadBytes);
+                        break;
+                    default:
+                        using (var hmac = new HMACSHA512(keyBytes))
+                            computedHash = hmac.ComputeHash(payloadBytes);
+                        break;
+                }
+
+                var computedSegment = Base64UrlEncode(computedHash);
+                var incomingSegment = (signatureSegment ?? string.Empty).Trim();
+                var computedAscii = Encoding.ASCII.GetBytes(computedSegment);
+                var incomingAscii = Encoding.ASCII.GetBytes(incomingSegment);
+                isValid = computedAscii.Length == incomingAscii.Length
+                    && CryptographicOperations.FixedTimeEquals(computedAscii, incomingAscii);
+                return true;
+            }
+
+            case "ES512":
+            {
+                if (string.IsNullOrWhiteSpace(ecdsaPublicKeyPem))
+                {
+                    error = "Enter an ECDSA public key (PEM) to verify ES512 signature.";
+                    return false;
+                }
+
+                byte[] signatureBytes;
+                try
+                {
+                    signatureBytes = Base64UrlDecodeBytes(signatureSegment ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    error = $"Invalid JWT signature encoding: {ex.Message}";
+                    return false;
+                }
+
+                try
+                {
+                    using var ecdsa = ECDsa.Create();
+                    ecdsa.ImportFromPem(ecdsaPublicKeyPem);
+                    isValid = ecdsa.VerifyData(
+                        payloadBytes,
+                        signatureBytes,
+                        HashAlgorithmName.SHA512,
+                        DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    error = $"ES512 verification failed: {ex.Message}";
+                    return false;
+                }
+            }
+
             default:
-                error = $"Algorithm '{alg}' is not supported yet for verification. Currently supported: HS256, HS384, HS512.";
+                error = $"Algorithm '{alg}' is not supported yet for verification. Currently supported: HS256, HS384, HS512, ES512.";
                 return false;
         }
-
-        var computedSegment = Base64UrlEncode(computedHash);
-        var incomingSegment = (signatureSegment ?? string.Empty).Trim();
-        var computedAscii = Encoding.ASCII.GetBytes(computedSegment);
-        var incomingAscii = Encoding.ASCII.GetBytes(incomingSegment);
-        isValid = computedAscii.Length == incomingAscii.Length
-            && CryptographicOperations.FixedTimeEquals(computedAscii, incomingAscii);
-        return true;
     }
 
     private static string TryPrettyPrintJson(string utf8Text)
@@ -339,9 +386,9 @@ public partial class MainWindow
         {
             Title = "JWT Decoder",
             Width = 920,
-            Height = 720,
+            Height = 900,
             MinWidth = 560,
-            MinHeight = 400,
+            MinHeight = 620,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -497,6 +544,7 @@ public partial class MainWindow
         verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        verifyGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var lblAlg = new TextBlock
         {
@@ -519,7 +567,7 @@ public partial class MainWindow
 
         var lblSecret = new TextBlock
         {
-            Text = "Shared secret (HMAC)",
+            Text = "Shared secret (HS*)",
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 8)
         };
@@ -545,18 +593,43 @@ public partial class MainWindow
         Grid.SetColumn(btnVerify, 2);
         verifyGrid.Children.Add(btnVerify);
 
+        var lblEcdsaPublicKey = new TextBlock
+        {
+            Text = "ECDSA public key (PEM, ES512)",
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 0, 8, 8)
+        };
+        Grid.SetRow(lblEcdsaPublicKey, 2);
+        Grid.SetColumn(lblEcdsaPublicKey, 0);
+        verifyGrid.Children.Add(lblEcdsaPublicKey);
+        var txtEcdsaPublicKeyPem = new TextBox
+        {
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            MinHeight = 76,
+            Margin = new Thickness(0, 0, 0, 8),
+            ToolTip = "Paste PEM key, e.g. -----BEGIN PUBLIC KEY----- ... -----END PUBLIC KEY-----"
+        };
+        Grid.SetRow(txtEcdsaPublicKeyPem, 2);
+        Grid.SetColumn(txtEcdsaPublicKeyPem, 1);
+        Grid.SetColumnSpan(txtEcdsaPublicKeyPem, 2);
+        verifyGrid.Children.Add(txtEcdsaPublicKeyPem);
+
         var txtVerifyResult = new TextBlock
         {
             Foreground = Brushes.DimGray,
             TextWrapping = TextWrapping.Wrap
         };
-        Grid.SetRow(txtVerifyResult, 2);
+        Grid.SetRow(txtVerifyResult, 3);
         Grid.SetColumn(txtVerifyResult, 1);
         Grid.SetColumnSpan(txtVerifyResult, 2);
         verifyGrid.Children.Add(txtVerifyResult);
         var lblNote = new TextBlock
         {
-            Text = "This tool decodes segments. Signature verification currently supports HS256/HS384/HS512.",
+            Text = "This tool decodes segments. Signature verification currently supports HS256/HS384/HS512 and ES512.",
             Foreground = Brushes.DimGray,
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
@@ -631,11 +704,12 @@ public partial class MainWindow
             }
 
             var signingInput = $"{currentJwtParts[0]}.{currentJwtParts[1]}";
-            if (!TryVerifyJwtSignatureHmac(
+            if (!TryVerifyJwtSignature(
                     currentJwtAlg,
                     signingInput,
                     currentJwtParts[2],
                     txtSharedSecret.Text ?? string.Empty,
+                    txtEcdsaPublicKeyPem.Text ?? string.Empty,
                     out var isValid,
                     out var verifyError))
             {
@@ -646,7 +720,7 @@ public partial class MainWindow
             if (isValid)
                 SetVerifyResult("Signature is valid. Token payload/header has not been tampered with.", Brushes.ForestGreen);
             else
-                SetVerifyResult("Signature is NOT valid. Token may be tampered with or secret is wrong.", Brushes.IndianRed);
+                SetVerifyResult("Signature is NOT valid. Token may be tampered with or verification key is wrong.", Brushes.IndianRed);
         }
 
         mainStack.Children.Add(lblStructure);
