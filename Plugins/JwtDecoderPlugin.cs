@@ -16,6 +16,22 @@ public partial class MainWindow
         "typ: Token type. For JWTs this is typically \"JWT\".";
     private const string JwtHeaderAlgTooltip =
         "alg: Signing algorithm used for the JWT signature, for example HS256, RS256, or ES256.";
+    private const string JwtHeaderKidTooltip =
+        "kid: Key ID. Helps identify which key should be used to verify the JWT signature.";
+    private const string JwtClaimIssTooltip =
+        "iss: Issuer. Identifies who issued the token.";
+    private const string JwtClaimAudTooltip =
+        "aud: Audience. Identifies who or what the token is intended for.";
+    private const string JwtClaimSubTooltip =
+        "sub: Subject. Identifies the principal (often a user or service account) the token refers to.";
+    private const string JwtClaimIatTooltip =
+        "iat: Issued At. Unix timestamp for when the token was issued.";
+    private const string JwtClaimNbfTooltip =
+        "nbf: Not Before. Unix timestamp before which the token must not be accepted.";
+    private const string JwtClaimExpTooltip =
+        "exp: Expiration Time. Unix timestamp after which the token must not be accepted.";
+    private const string JwtClaimJtiTooltip =
+        "jti: JWT ID. Unique identifier for a specific token instance.";
 
     private static byte[] Base64UrlDecodeBytes(string segment)
     {
@@ -53,7 +69,19 @@ public partial class MainWindow
     private static readonly Dictionary<string, string> JwtHeaderFieldTooltips = new(StringComparer.Ordinal)
     {
         ["\"typ\""] = JwtHeaderTypTooltip,
-        ["\"alg\""] = JwtHeaderAlgTooltip
+        ["\"alg\""] = JwtHeaderAlgTooltip,
+        ["\"kid\""] = JwtHeaderKidTooltip
+    };
+
+    private static readonly Dictionary<string, string> JwtPayloadFieldTooltips = new(StringComparer.Ordinal)
+    {
+        ["\"iss\""] = JwtClaimIssTooltip,
+        ["\"aud\""] = JwtClaimAudTooltip,
+        ["\"sub\""] = JwtClaimSubTooltip,
+        ["\"iat\""] = JwtClaimIatTooltip,
+        ["\"nbf\""] = JwtClaimNbfTooltip,
+        ["\"exp\""] = JwtClaimExpTooltip,
+        ["\"jti\""] = JwtClaimJtiTooltip
     };
 
     private ToolTip CreateJwtHeaderTooltip(string text)
@@ -92,14 +120,14 @@ public partial class MainWindow
         };
     }
 
-    private void AppendLineWithJwtHeaderTooltips(Paragraph paragraph, string line)
+    private void AppendLineWithJwtTooltips(Paragraph paragraph, string line, IReadOnlyDictionary<string, string> tooltipMap)
     {
         var cursor = 0;
         while (cursor < line.Length)
         {
             var nearestIndex = -1;
             var nearestToken = string.Empty;
-            foreach (var token in JwtHeaderFieldTooltips.Keys)
+            foreach (var token in tooltipMap.Keys)
             {
                 var idx = line.IndexOf(token, cursor, StringComparison.Ordinal);
                 if (idx < 0)
@@ -126,7 +154,7 @@ public partial class MainWindow
                 FontFamily = new FontFamily("Consolas, Courier New"),
                 Foreground = Brushes.DarkBlue
             };
-            ToolTipService.SetToolTip(hoverTokenText, CreateJwtHeaderTooltip(JwtHeaderFieldTooltips[nearestToken]));
+            ToolTipService.SetToolTip(hoverTokenText, CreateJwtHeaderTooltip(tooltipMap[nearestToken]));
             ToolTipService.SetInitialShowDelay(hoverTokenText, 0);
             ToolTipService.SetBetweenShowDelay(hoverTokenText, 0);
             ToolTipService.SetShowDuration(hoverTokenText, 30000);
@@ -135,9 +163,9 @@ public partial class MainWindow
         }
     }
 
-    private FlowDocument BuildHeaderDocumentWithTooltips(string headerJson)
+    private FlowDocument BuildDocumentWithTooltips(string jsonText, IReadOnlyDictionary<string, string> tooltipMap)
     {
-        var pretty = TryPrettyPrintJson(headerJson).Replace("\r\n", "\n", StringComparison.Ordinal);
+        var pretty = TryPrettyPrintJson(jsonText).Replace("\r\n", "\n", StringComparison.Ordinal);
         var document = new FlowDocument
         {
             FontFamily = new FontFamily("Consolas, Courier New"),
@@ -147,7 +175,7 @@ public partial class MainWindow
         var lines = pretty.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            AppendLineWithJwtHeaderTooltips(paragraph, lines[i]);
+            AppendLineWithJwtTooltips(paragraph, lines[i], tooltipMap);
             if (i < lines.Length - 1)
                 paragraph.Inlines.Add(new LineBreak());
         }
@@ -201,17 +229,6 @@ public partial class MainWindow
             status.Text = message;
             status.Foreground = brush ?? Brushes.DimGray;
         }
-
-        static TextBox CreateOutputBox() => new()
-        {
-            AcceptsReturn = true,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = new FontFamily("Consolas, Courier New"),
-            IsReadOnly = true,
-            MinHeight = 140
-        };
 
         static RichTextBox CreateHeaderOutputBox() => new()
         {
@@ -298,7 +315,7 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 4)
         });
-        var txtPayload = CreateOutputBox();
+        var txtPayload = CreateHeaderOutputBox();
         payloadCol.Children.Add(txtPayload);
         Grid.SetColumn(payloadCol, 2);
         splitGrid.Children.Add(payloadCol);
@@ -375,7 +392,7 @@ public partial class MainWindow
         void DecodeJwt()
         {
             txtHeader.Document = new FlowDocument();
-            txtPayload.Text = string.Empty;
+            txtPayload.Document = new FlowDocument();
             txtSignature.Text = string.Empty;
 
             var raw = (txtJwt.Text ?? string.Empty).Trim();
@@ -400,8 +417,8 @@ public partial class MainWindow
                 var headerJson = Encoding.UTF8.GetString(Base64UrlDecodeBytes(parts[0]));
                 var payloadJson = Encoding.UTF8.GetString(Base64UrlDecodeBytes(parts[1]));
 
-                txtHeader.Document = BuildHeaderDocumentWithTooltips(headerJson);
-                txtPayload.Text = TryPrettyPrintJson(payloadJson);
+                txtHeader.Document = BuildDocumentWithTooltips(headerJson, JwtHeaderFieldTooltips);
+                txtPayload.Document = BuildDocumentWithTooltips(payloadJson, JwtPayloadFieldTooltips);
 
                 txtSignature.Text = parts.Length >= 3
                     ? parts[2]
