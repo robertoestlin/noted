@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -11,6 +12,11 @@ namespace Noted;
 
 public partial class MainWindow
 {
+    private const string JwtHeaderTypTooltip =
+        "typ: Token type. For JWTs this is typically \"JWT\".";
+    private const string JwtHeaderAlgTooltip =
+        "alg: Signing algorithm used for the JWT signature, for example HS256, RS256, or ES256.";
+
     private static byte[] Base64UrlDecodeBytes(string segment)
     {
         var s = segment.Trim().Replace('-', '+').Replace('_', '/');
@@ -43,6 +49,112 @@ public partial class MainWindow
 
     private const string JwtSampleMongoDbAtlas =
         "eyJhbGciOiJFUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6Im1yay01ZzFkZDU1Y2MwZDc1YzdhYTAxZzhkMjkxMDgxY2czYyJ9.eyJpc3MiOiJodHRwczovL2Nsb3VkLm1vbmdvZGIuY29tIiwiYXVkIjoiYXBpOi8vYWRtaW4iLCJzdWIiOiJtZGJfc2FfaWRfNzBlNGY5MmU5NGQ4OGRmZzk1MTM5NjU1IiwiaWF0IjoxNzc1NTAwMjMxLCJuYmYiOjE3NzU1MDAyMzEsImV4cCI6MTc3NTUwMzgzMSwianRpIjoiMjNiNDI4MjctNjRmZS01OTQwLTkyZ2UtNzVlOTFmMmY0YmUxIiwiYWN0b3JJZCI6Im1kYl9zYV9pZF83MGU0ZjkyZTk0ZDg4ZGZmOTUxMzk2NTUiLCJzZXNzaW9uU3ViIjoibWRiX3NhX2lkXzcwZTRmOTJlOTRkODhkZmY5NTEzOTY1NSIsInNlc3Npb25JZCI6IjEyM2M4OWQ5LTA0OTMtNTE1Ny1jNGMzLWc3NmYyZTQxOTU1ZCIsImNpZCI6Im1kYl9zYV9pZF83MGU0ZjkyZTk0ZDg4ZGZmOTUxMzk2NTUifQ.ANFfhFi0c7tpCF3OZfxhUWTUtXlERO0eDFToZKhQZZa5KWdKQ-ccjfntOP3EdVoapUfLs-t7ryQbJqIo7lK4bFf6ARkJwRhxHdhAGo--yPGKzi3j-hDgiq8tHvPotDOAsF51ZxM9uIbqmG04KbyrKg5MMFFoTTbl5wwp9G_6-EI_t_Pm";
+
+    private static readonly Dictionary<string, string> JwtHeaderFieldTooltips = new(StringComparer.Ordinal)
+    {
+        ["\"typ\""] = JwtHeaderTypTooltip,
+        ["\"alg\""] = JwtHeaderAlgTooltip
+    };
+
+    private ToolTip CreateJwtHeaderTooltip(string text)
+    {
+        var baseBlue = _selectedLineColor;
+        var borderBlue = Color.FromRgb(
+            (byte)Math.Max(0, baseBlue.R - 20),
+            (byte)Math.Max(0, baseBlue.G - 20),
+            (byte)Math.Max(0, baseBlue.B - 20));
+        var tooltipText = new TextBlock
+        {
+            Text = text,
+            Foreground = Brushes.Black,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 420
+        };
+
+        var tooltipBorder = new Border
+        {
+            Background = new SolidColorBrush(baseBlue),
+            BorderBrush = new SolidColorBrush(borderBlue),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(10, 8, 10, 8),
+            Child = tooltipText
+        };
+
+        return new ToolTip
+        {
+            Content = tooltipBorder,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            HasDropShadow = false,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Mouse
+        };
+    }
+
+    private void AppendLineWithJwtHeaderTooltips(Paragraph paragraph, string line)
+    {
+        var cursor = 0;
+        while (cursor < line.Length)
+        {
+            var nearestIndex = -1;
+            var nearestToken = string.Empty;
+            foreach (var token in JwtHeaderFieldTooltips.Keys)
+            {
+                var idx = line.IndexOf(token, cursor, StringComparison.Ordinal);
+                if (idx < 0)
+                    continue;
+                if (nearestIndex < 0 || idx < nearestIndex)
+                {
+                    nearestIndex = idx;
+                    nearestToken = token;
+                }
+            }
+
+            if (nearestIndex < 0)
+            {
+                paragraph.Inlines.Add(new Run(line[cursor..]));
+                break;
+            }
+
+            if (nearestIndex > cursor)
+                paragraph.Inlines.Add(new Run(line[cursor..nearestIndex]));
+
+            var hoverTokenText = new TextBlock
+            {
+                Text = nearestToken,
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                Foreground = Brushes.DarkBlue
+            };
+            ToolTipService.SetToolTip(hoverTokenText, CreateJwtHeaderTooltip(JwtHeaderFieldTooltips[nearestToken]));
+            ToolTipService.SetInitialShowDelay(hoverTokenText, 0);
+            ToolTipService.SetBetweenShowDelay(hoverTokenText, 0);
+            ToolTipService.SetShowDuration(hoverTokenText, 30000);
+            paragraph.Inlines.Add(new InlineUIContainer(hoverTokenText));
+            cursor = nearestIndex + nearestToken.Length;
+        }
+    }
+
+    private FlowDocument BuildHeaderDocumentWithTooltips(string headerJson)
+    {
+        var pretty = TryPrettyPrintJson(headerJson).Replace("\r\n", "\n", StringComparison.Ordinal);
+        var document = new FlowDocument
+        {
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            PagePadding = new Thickness(0)
+        };
+        var paragraph = new Paragraph { Margin = new Thickness(0) };
+        var lines = pretty.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            AppendLineWithJwtHeaderTooltips(paragraph, lines[i]);
+            if (i < lines.Length - 1)
+                paragraph.Inlines.Add(new LineBreak());
+        }
+
+        document.Blocks.Add(paragraph);
+        return document;
+    }
 
     private void ShowJwtDecoderDialog()
     {
@@ -98,6 +210,16 @@ public partial class MainWindow
             TextWrapping = TextWrapping.NoWrap,
             FontFamily = new FontFamily("Consolas, Courier New"),
             IsReadOnly = true,
+            MinHeight = 140
+        };
+
+        static RichTextBox CreateHeaderOutputBox() => new()
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            IsReadOnly = true,
+            IsDocumentEnabled = true,
             MinHeight = 140
         };
 
@@ -160,7 +282,7 @@ public partial class MainWindow
             FontWeight = FontWeights.SemiBold,
             Margin = new Thickness(0, 0, 0, 4)
         });
-        var txtHeader = CreateOutputBox();
+        var txtHeader = CreateHeaderOutputBox();
         headerCol.Children.Add(txtHeader);
         Grid.SetColumn(headerCol, 0);
         splitGrid.Children.Add(headerCol);
@@ -252,7 +374,7 @@ public partial class MainWindow
 
         void DecodeJwt()
         {
-            txtHeader.Text = string.Empty;
+            txtHeader.Document = new FlowDocument();
             txtPayload.Text = string.Empty;
             txtSignature.Text = string.Empty;
 
@@ -278,7 +400,7 @@ public partial class MainWindow
                 var headerJson = Encoding.UTF8.GetString(Base64UrlDecodeBytes(parts[0]));
                 var payloadJson = Encoding.UTF8.GetString(Base64UrlDecodeBytes(parts[1]));
 
-                txtHeader.Text = TryPrettyPrintJson(headerJson);
+                txtHeader.Document = BuildHeaderDocumentWithTooltips(headerJson);
                 txtPayload.Text = TryPrettyPrintJson(payloadJson);
 
                 txtSignature.Text = parts.Length >= 3
