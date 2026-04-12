@@ -40,6 +40,7 @@ public partial class MainWindow
                 DefaultBackupFolder(),
                 SettingsFileName,
                 opts);
+            SaveTimeReports(opts);
             SaveSearchFilesHistory(opts);
         }
         catch { /* non-critical */ }
@@ -80,7 +81,6 @@ public partial class MainWindow
             UptimeHeartbeatSeconds = _uptimeHeartbeatSeconds,
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
-            TimeReports = BuildTimeReportSettings(),
             PluginAlarms = BuildPluginAlarmsSnapshot(),
             PluginAlarmsEnabled = _pluginAlarmsEnabled,
             AlarmPopupLeft = _alarmPopupLeft,
@@ -112,6 +112,7 @@ public partial class MainWindow
 
             ApplyBootstrapSettings(loaded.BootstrapBackupFolder, loaded.BootstrapCloudBackupFolder, loaded.BootstrapSettings);
             ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
+            LoadTimeReports();
             LoadSearchFilesHistory();
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
@@ -127,6 +128,12 @@ public partial class MainWindow
         _windowSettingsStore.Save(historyPath, BuildSearchFilesHistorySnapshot(), options);
     }
 
+    private void SaveTimeReports(JsonSerializerOptions options)
+    {
+        var timeReportsPath = Path.Combine(_backupFolder, TimeReportsFileName);
+        _windowSettingsStore.Save(timeReportsPath, BuildTimeReportSettings(), options);
+    }
+
     private void LoadSearchFilesHistory()
     {
         var historyPath = Path.Combine(_backupFolder, SearchFilesHistoryFileName);
@@ -134,6 +141,15 @@ public partial class MainWindow
         ApplySearchFilesHistorySettings(history, _searchFilesHistoryLimit);
         if (history == null)
             SaveSearchFilesHistory(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private void LoadTimeReports()
+    {
+        var timeReportsPath = Path.Combine(_backupFolder, TimeReportsFileName);
+        var records = _windowSettingsStore.Load<List<TimeReportMonthRecord>>(timeReportsPath);
+        LoadTimeReportSettings(records);
+        if (records == null)
+            SaveTimeReports(new JsonSerializerOptions { WriteIndented = true });
     }
 
     private void ResetSettingsToDefaults()
@@ -221,7 +237,6 @@ public partial class MainWindow
         if (loadedUsers.Count == 0)
             loadedUsers = BuildUsersFromLegacyNames(state.Users);
         _users = loadedUsers;
-        LoadTimeReportSettings(state.TimeReports);
         ApplyPluginAlarmSettings(state.PluginAlarms);
         _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
         ApplyProjectLineCounterSettings(
@@ -303,6 +318,9 @@ public partial class MainWindow
 
     private void CopySearchFilesHistoryFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, SearchFilesHistoryFileName);
+
+    private void CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, TimeReportsFileName);
 
     private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {

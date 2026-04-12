@@ -135,7 +135,6 @@ public sealed class WindowSettings
     public bool FridayFeelingEnabled { get; set; } = true;
     public List<string>? Users { get; set; }
     public List<UserProfile>? UserProfiles { get; set; }
-    public List<TimeReportMonthRecord>? TimeReports { get; set; }
     public List<PluginAlarmSettings>? PluginAlarms { get; set; }
     public bool PluginAlarmsEnabled { get; set; } = true;
     public double? AlarmPopupLeft { get; set; }

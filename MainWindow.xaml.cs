@@ -74,6 +74,7 @@ public partial class MainWindow : Window
     private const string SettingsFileName = "settings.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
+    private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string UptimeHeartbeatFileName = "uptime-heartbeat.log";
     private const int MaxClosedTabs = 10;
 
