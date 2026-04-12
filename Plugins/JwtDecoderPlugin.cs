@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -25,11 +27,11 @@ public partial class MainWindow
     private const string JwtClaimSubTooltip =
         "sub: Subject. Identifies the principal (often a user or service account) the token refers to.";
     private const string JwtClaimIatTooltip =
-        "iat: Issued At. Unix timestamp for when the token was issued.";
+        "iat: Issued At. Time when the token was issued, expressed as seconds since Linux epoch (1970-01-01 00:00:00 UTC). Fractional seconds are allowed.";
     private const string JwtClaimNbfTooltip =
-        "nbf: Not Before. Unix timestamp before which the token must not be accepted.";
+        "nbf: Not Before. Earliest time the token is valid, expressed as seconds since Linux epoch (1970-01-01 00:00:00 UTC). Fractional seconds are allowed.";
     private const string JwtClaimExpTooltip =
-        "exp: Expiration Time. Unix timestamp after which the token must not be accepted.";
+        "exp: Expiration Time. Time after which the token must not be accepted, expressed as seconds since Linux epoch (1970-01-01 00:00:00 UTC). Fractional seconds are allowed.";
     private const string JwtClaimJtiTooltip =
         "jti: JWT ID. Unique identifier for a specific token instance.";
 
@@ -84,6 +86,10 @@ public partial class MainWindow
         ["\"jti\""] = JwtClaimJtiTooltip
     };
 
+    private static readonly Regex JwtNumericDateLineRegex = new(
+        "\"(?<claim>iat|nbf|exp)\"\\s*:\\s*(?<value>-?\\d+(?:\\.\\d+)?)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private ToolTip CreateJwtHeaderTooltip(string text)
     {
         var baseBlue = _selectedLineColor;
@@ -120,9 +126,44 @@ public partial class MainWindow
         };
     }
 
-    private void AppendLineWithJwtTooltips(Paragraph paragraph, string line, IReadOnlyDictionary<string, string> tooltipMap)
+    private static bool TryBuildNumericDateTooltipFromLine(string line, out int tokenStart, out int tokenLength, out string tooltip)
+    {
+        tokenStart = -1;
+        tokenLength = 0;
+        tooltip = string.Empty;
+
+        var match = JwtNumericDateLineRegex.Match(line);
+        if (!match.Success)
+            return false;
+
+        var numericPart = match.Groups["value"];
+        if (!double.TryParse(numericPart.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var unixSeconds))
+            return false;
+
+        var utcTime = DateTimeOffset.UnixEpoch.AddSeconds(unixSeconds);
+        var localTime = utcTime.ToLocalTime();
+        tooltip =
+            $"Unix time: {numericPart.Value}\n"
+            + "Linux epoch: 1970-01-01 00:00:00 UTC\n"
+            + $"UTC: {utcTime:yyyy-MM-dd HH:mm:ss.fff zzz}\n"
+            + $"Local: {localTime:yyyy-MM-dd HH:mm:ss.fff zzz}";
+        tokenStart = numericPart.Index;
+        tokenLength = numericPart.Length;
+        return true;
+    }
+
+    private void AppendLineWithJwtTooltips(
+        Paragraph paragraph,
+        string line,
+        IReadOnlyDictionary<string, string> tooltipMap,
+        bool includeNumericDateValueTooltips)
     {
         var cursor = 0;
+        var numericDateStart = -1;
+        var numericDateLength = 0;
+        var numericDateTooltip = string.Empty;
+        var hasNumericDateValue = includeNumericDateValueTooltips
+            && TryBuildNumericDateTooltipFromLine(line, out numericDateStart, out numericDateLength, out numericDateTooltip);
         while (cursor < line.Length)
         {
             var nearestIndex = -1;
@@ -139,6 +180,17 @@ public partial class MainWindow
                 }
             }
 
+            var numericDateIsNext = false;
+            if (hasNumericDateValue && numericDateStart >= cursor)
+            {
+                if (nearestIndex < 0 || numericDateStart < nearestIndex)
+                {
+                    nearestIndex = numericDateStart;
+                    nearestToken = string.Empty;
+                    numericDateIsNext = true;
+                }
+            }
+
             if (nearestIndex < 0)
             {
                 paragraph.Inlines.Add(new Run(line[cursor..]));
@@ -147,6 +199,24 @@ public partial class MainWindow
 
             if (nearestIndex > cursor)
                 paragraph.Inlines.Add(new Run(line[cursor..nearestIndex]));
+
+            if (numericDateIsNext)
+            {
+                var dateValueText = line.Substring(numericDateStart, numericDateLength);
+                var hoverDateText = new TextBlock
+                {
+                    Text = dateValueText,
+                    FontFamily = new FontFamily("Consolas, Courier New"),
+                    Foreground = Brushes.DarkGreen
+                };
+                ToolTipService.SetToolTip(hoverDateText, CreateJwtHeaderTooltip(numericDateTooltip));
+                ToolTipService.SetInitialShowDelay(hoverDateText, 0);
+                ToolTipService.SetBetweenShowDelay(hoverDateText, 0);
+                ToolTipService.SetShowDuration(hoverDateText, 30000);
+                paragraph.Inlines.Add(new InlineUIContainer(hoverDateText));
+                cursor = numericDateStart + numericDateLength;
+                continue;
+            }
 
             var hoverTokenText = new TextBlock
             {
@@ -163,7 +233,10 @@ public partial class MainWindow
         }
     }
 
-    private FlowDocument BuildDocumentWithTooltips(string jsonText, IReadOnlyDictionary<string, string> tooltipMap)
+    private FlowDocument BuildDocumentWithTooltips(
+        string jsonText,
+        IReadOnlyDictionary<string, string> tooltipMap,
+        bool includeNumericDateValueTooltips = false)
     {
         var pretty = TryPrettyPrintJson(jsonText).Replace("\r\n", "\n", StringComparison.Ordinal);
         var document = new FlowDocument
@@ -175,7 +248,7 @@ public partial class MainWindow
         var lines = pretty.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            AppendLineWithJwtTooltips(paragraph, lines[i], tooltipMap);
+            AppendLineWithJwtTooltips(paragraph, lines[i], tooltipMap, includeNumericDateValueTooltips);
             if (i < lines.Length - 1)
                 paragraph.Inlines.Add(new LineBreak());
         }
@@ -418,7 +491,7 @@ public partial class MainWindow
                 var payloadJson = Encoding.UTF8.GetString(Base64UrlDecodeBytes(parts[1]));
 
                 txtHeader.Document = BuildDocumentWithTooltips(headerJson, JwtHeaderFieldTooltips);
-                txtPayload.Document = BuildDocumentWithTooltips(payloadJson, JwtPayloadFieldTooltips);
+                txtPayload.Document = BuildDocumentWithTooltips(payloadJson, JwtPayloadFieldTooltips, includeNumericDateValueTooltips: true);
 
                 txtSignature.Text = parts.Length >= 3
                     ? parts[2]
