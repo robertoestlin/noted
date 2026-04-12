@@ -74,6 +74,25 @@ public sealed class ProjectLineCounterType
     public List<string>? FileTypes { get; set; }
 }
 
+public sealed class SearchFilesHistoryMatch
+{
+    public string RelativePath { get; set; } = string.Empty;
+    public int LineNumber { get; set; }
+    public string LinePreview { get; set; } = string.Empty;
+}
+
+public sealed class SearchFilesHistoryEntry
+{
+    public DateTime CreatedUtc { get; set; }
+    public string FolderPath { get; set; } = string.Empty;
+    public string SearchText { get; set; } = string.Empty;
+    public string SearchInFiles { get; set; } = string.Empty;
+    public int MatchCount { get; set; }
+    public int MatchedFileCount { get; set; }
+    public bool IsResultTruncated { get; set; }
+    public List<SearchFilesHistoryMatch>? Matches { get; set; }
+}
+
 public sealed class ClosedTabEntry
 {
     public string Header { get; set; } = string.Empty;
@@ -125,6 +144,8 @@ public sealed class WindowSettings
     public List<string>? ProjectLineCounterAutoDetectedFileTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFolders { get; set; }
+    public List<SearchFilesHistoryEntry>? SearchFilesHistory { get; set; }
+    public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }

@@ -88,6 +88,8 @@ public partial class MainWindow
             ProjectLineCounterAutoDetectedFileTypes = BuildProjectLineCounterAutoDetectedFileTypesSnapshot(),
             ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot(),
             ProjectLineCounterIgnoredFolders = BuildProjectLineCounterIgnoredFoldersSnapshot(),
+            SearchFilesHistory = BuildSearchFilesHistorySnapshot(),
+            SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
@@ -146,6 +148,8 @@ public partial class MainWindow
         _projectLineCounterAutoDetectedFileTypes = [];
         _projectLineCounterIgnoredFileTypes = [];
         _projectLineCounterIgnoredFolders = [];
+        _searchFilesHistory = [];
+        _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         ResetQuickMessageOverlaySettings();
     }
@@ -206,6 +210,7 @@ public partial class MainWindow
             state.ProjectLineCounterAutoDetectedFileTypes,
             state.ProjectLineCounterIgnoredFileTypes,
             state.ProjectLineCounterIgnoredFolders);
+        ApplySearchFilesHistorySettings(state.SearchFilesHistory, state.SearchFilesHistoryLimit);
         if (state.AlarmPopupLeft is double popupLeft
             && !double.IsNaN(popupLeft)
             && !double.IsInfinity(popupLeft))

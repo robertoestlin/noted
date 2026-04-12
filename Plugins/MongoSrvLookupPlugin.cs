@@ -299,14 +299,64 @@ public partial class MainWindow
         btnLookup.Click += async (_, _) => await RunLookupAsync().ConfigureAwait(true);
         btnInfo.Click += (_, _) =>
         {
-            MessageBox.Show(
-                "Examples:\n"
-                + "- mongodb+srv://a:pwd@cluster1-pl-0.odjn3h.mongodb.net\n"
-                + "- cluster1-pl-0.odjn3h.mongodb.net\n\n"
-                + "If you paste a connection string with a password, the password is automatically redacted to PWD_REDACTED.",
-                "MongoDB SRV Lookup - Examples",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            var scheme = "mongodb+srv";
+            var schemeSeparator = "://";
+            var sampleUser = "sampleuser";
+            var samplePass = "samplepass";
+            var host = "cluster1-pl-0.abcd1e.mongodb.net";
+            var sampleConnectionString = $"{scheme}{schemeSeparator}{sampleUser}:{samplePass}@{host}";
+            var examplesWindow = new Window
+            {
+                Title = "MongoDB SRV Lookup - Examples",
+                Width = 680,
+                Height = 230,
+                MinWidth = 640,
+                MinHeight = 210,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = dlg,
+                ResizeMode = ResizeMode.NoResize
+            };
+
+            var examplesRoot = new DockPanel { Margin = new Thickness(12) };
+            examplesWindow.Content = examplesRoot;
+
+            var btnExamplesOk = new Button
+            {
+                Content = "OK",
+                Width = 90,
+                IsDefault = true,
+                IsCancel = true
+            };
+            var examplesFooter = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 12, 0, 0)
+            };
+            examplesFooter.Children.Add(btnExamplesOk);
+            DockPanel.SetDock(examplesFooter, Dock.Bottom);
+            examplesRoot.Children.Add(examplesFooter);
+
+            var examplesText = new TextBox
+            {
+                IsReadOnly = true,
+                TextWrapping = TextWrapping.Wrap,
+                AcceptsReturn = true,
+                BorderThickness = new Thickness(0),
+                Background = Brushes.Transparent,
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Text =
+                    "Examples:\n"
+                    + $"-{sampleConnectionString}\n"
+                    + $"-{host}\n\n"
+                    + "If you paste a connection string with a password, the password is automatically redacted to PWD_REDACTED."
+            };
+            examplesRoot.Children.Add(examplesText);
+
+            btnExamplesOk.Click += (_, _) => examplesWindow.Close();
+            examplesWindow.ShowDialog();
         };
         DataObject.AddPastingHandler(txtInput, (_, _) => lookupOnNextTextChange = true);
         txtInput.TextChanged += async (_, _) =>
