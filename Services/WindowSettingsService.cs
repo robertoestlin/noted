@@ -93,6 +93,19 @@ public sealed class WindowSettingsService
         return false;
     }
 
+    public bool TryGetValidUptimeHeartbeatSeconds(int? uptimeHeartbeatSeconds, out int value)
+    {
+        if (uptimeHeartbeatSeconds is >= 60 and <= 3600
+            && 3600 % uptimeHeartbeatSeconds.Value == 0)
+        {
+            value = uptimeHeartbeatSeconds.Value;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
     public bool TryGetNormalizedUtc(DateTime? input, out DateTime utc)
     {
         if (input is DateTime value && value > DateTime.MinValue)

@@ -134,6 +134,9 @@ public partial class MainWindow
         backupPanel.Children.Add(new TextBlock { Text = "Auto-save interval (seconds):" });
         var txtAutoSave = new TextBox { Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(), Margin = new Thickness(0, 4, 0, 10) };
         backupPanel.Children.Add(txtAutoSave);
+        backupPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval (seconds):" });
+        var txtUptimeHeartbeat = new TextBox { Text = _uptimeHeartbeatSeconds.ToString(), Margin = new Thickness(0, 4, 0, 10) };
+        backupPanel.Children.Add(txtUptimeHeartbeat);
         backupPanel.Children.Add(new TextBlock { Text = "Initial lines per new tab:" });
         var txtLines = new TextBox { Text = _initialLines.ToString(), Margin = new Thickness(0, 4, 0, 0) };
         backupPanel.Children.Add(txtLines);
@@ -574,6 +577,9 @@ public partial class MainWindow
             }
 
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
+                && int.TryParse(txtUptimeHeartbeat.Text, out int uptimeHeartbeatSeconds)
+                && uptimeHeartbeatSeconds >= 60 && uptimeHeartbeatSeconds <= 3600
+                && 3600 % uptimeHeartbeatSeconds == 0
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
                 && !string.IsNullOrWhiteSpace(cmbFont.Text)
@@ -603,6 +609,8 @@ public partial class MainWindow
                 _cloudSaveIntervalMinutes = cloudMinutes;
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
+                _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
+                StartBackupHeartbeatTimer();
                 _initialLines = lines;
                 _fontFamily = cmbFont.Text.Trim();
                 _fontSize = fsize;
@@ -643,7 +651,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show("Auto-save must be >= 5 seconds.\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
+                MessageBox.Show("Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

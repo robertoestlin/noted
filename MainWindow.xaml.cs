@@ -48,6 +48,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private readonly DispatcherTimer _pluginAlarmTimer;
+    private readonly DispatcherTimer _backupHeartbeatTimer;
+    private DateTimeOffset _nextBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private Point _tabDragStartPoint;
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
@@ -71,6 +73,7 @@ public partial class MainWindow : Window
 
     private const string SettingsFileName = "settings.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
+    private const string UptimeHeartbeatFileName = "uptime-heartbeat.log";
     private const int MaxClosedTabs = 10;
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
@@ -87,6 +90,7 @@ public partial class MainWindow : Window
     private static readonly Regex NotedBackupFileNameRegex =
         new(@"^noted_\d{8}_\d{6}\.txt$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private const int DefaultAutoSaveSeconds = 30;
+    private const int DefaultUptimeHeartbeatSeconds = 300;
     private const int DefaultInitialLines = 50;
     private const int DefaultTabCleanupStaleDays = 30;
     private const string DefaultFontFamily = "Consolas, Courier New";
@@ -131,6 +135,7 @@ public partial class MainWindow : Window
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private int _initialLines = DefaultInitialLines;
+    private int _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
@@ -463,10 +468,13 @@ public partial class MainWindow : Window
         _autoSaveTimer.Start();
         _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
+        _backupHeartbeatTimer = new DispatcherTimer();
+        _backupHeartbeatTimer.Tick += (_, _) => HandleBackupHeartbeatTick();
 
         // Restore window position/size, then session
         LoadWindowSettings();
         _pluginAlarmTimer.Start();
+        StartBackupHeartbeatTimer();
         ApplyShortcutBindings();
         EnsureSettingsFileExists();
         EnsureBackupImagesFolderExists();
@@ -3361,6 +3369,60 @@ public partial class MainWindow : Window
             SaveWindowSettings();
     }
 
+    private void StartBackupHeartbeatTimer()
+    {
+        _backupHeartbeatTimer.Stop();
+        ScheduleNextBackupHeartbeatTick();
+    }
+
+    private DateTimeOffset GetNextBackupHeartbeatAtLocal(DateTimeOffset nowLocal)
+    {
+        var now = nowLocal.LocalDateTime;
+        var hourStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Local);
+        var elapsedSeconds = (now - hourStart).TotalSeconds;
+        var slotsPassed = (int)Math.Floor(elapsedSeconds / _uptimeHeartbeatSeconds);
+        var nextLocal = hourStart.AddSeconds((slotsPassed + 1) * _uptimeHeartbeatSeconds);
+        return new DateTimeOffset(nextLocal);
+    }
+
+    private void ScheduleNextBackupHeartbeatTick()
+    {
+        _nextBackupHeartbeatAtLocal = GetNextBackupHeartbeatAtLocal(DateTimeOffset.Now);
+        var wait = _nextBackupHeartbeatAtLocal - DateTimeOffset.Now;
+        if (wait <= TimeSpan.Zero)
+            wait = TimeSpan.FromMilliseconds(200);
+
+        _backupHeartbeatTimer.Interval = wait;
+        _backupHeartbeatTimer.Start();
+    }
+
+    private void HandleBackupHeartbeatTick()
+    {
+        try
+        {
+            AppendBackupHeartbeatTimestamp(_nextBackupHeartbeatAtLocal);
+        }
+        catch
+        {
+            // Best-effort activity marker; ignore failures.
+        }
+        finally
+        {
+            ScheduleNextBackupHeartbeatTick();
+        }
+    }
+
+    private void AppendBackupHeartbeatTimestamp(DateTimeOffset timestampLocal)
+    {
+        if (string.IsNullOrWhiteSpace(_backupFolder))
+            return;
+
+        Directory.CreateDirectory(_backupFolder);
+        var path = Path.Combine(_backupFolder, UptimeHeartbeatFileName);
+        var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
+        File.AppendAllText(path, $"{timestamp}{Environment.NewLine}");
+    }
+
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
     private void PruneBackups()
         => _backupService.PruneBackups(_backupFolder, NotedBackupFileNameRegex, MaxBackups);
@@ -3595,6 +3657,7 @@ public partial class MainWindow : Window
     {
         _autoSaveTimer.Stop();
         _pluginAlarmTimer.Stop();
+        _backupHeartbeatTimer.Stop();
         SaveWindowSettings();
         if (!_sessionSaved)
             SaveSession(updateStatus: false);

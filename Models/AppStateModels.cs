@@ -109,6 +109,7 @@ public sealed class WindowSettings
     public double Height { get; set; } = 700;
     public bool Maximized { get; set; }
     public int AutoSaveSeconds { get; set; } = 30;
+    public int UptimeHeartbeatSeconds { get; set; } = 300;
     public int InitialLines { get; set; } = 50;
     public string FontFamily { get; set; } = "Consolas, Courier New";
     public double FontSize { get; set; } = 13;

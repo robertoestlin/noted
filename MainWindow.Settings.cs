@@ -76,6 +76,7 @@ public partial class MainWindow
             LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
             ActiveTabIndex = MainTabControl.SelectedIndex,
             FridayFeelingEnabled = _isFridayFeelingEnabled,
+            UptimeHeartbeatSeconds = _uptimeHeartbeatSeconds,
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
             TimeReports = BuildTimeReportSettings(),
@@ -135,6 +136,7 @@ public partial class MainWindow
         _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _shortcutGoToTab = DefaultShortcutGoToTab;
+        _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _isFridayFeelingEnabled = true;
         _isFredagspartySessionEnabled = false;
         _users = [];
@@ -191,6 +193,8 @@ public partial class MainWindow
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSaveMinutes, out var cloudMinutes))
             _cloudSaveIntervalMinutes = cloudMinutes;
+        if (_windowSettingsService.TryGetValidUptimeHeartbeatSeconds(state.UptimeHeartbeatSeconds, out var uptimeHeartbeatSeconds))
+            _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
         if (_windowSettingsService.TryGetNormalizedUtc(state.LastCloudCopyUtc, out var cloudCopyUtc))
             _lastCloudSaveUtc = cloudCopyUtc;
         if (state.ActiveTabIndex >= 0)
