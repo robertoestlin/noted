@@ -1,0 +1,47 @@
+<Window x:Class="Noted.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="About Noted"
+        Width="460"
+        Height="380"
+        MinWidth="420"
+        MinHeight="300"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        Icon="logo/logo.png">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14">
+            <Border Width="56" Height="56" CornerRadius="8" Background="#EEF4FF" Padding="8">
+                <Image Source="logo/logo.png" Stretch="Uniform"/>
+            </Border>
+            <StackPanel Margin="12,4,0,0">
+                <TextBlock Text="Noted" FontSize="24" FontWeight="Bold"/>
+                <TextBlock Text="Your short-term text workspace." Foreground="#555" Margin="0,4,0,0"/>
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderBrush="#DDDDDD" BorderThickness="1" CornerRadius="8" Padding="12" Background="#FAFAFA">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock TextWrapping="Wrap" FontSize="13" LineHeight="20">
+Noted is a lightweight tab-based text editor for anything you want to keep for up to about three months.
+
+It is designed for short- to medium-term information such as tasks, ideas, meeting notes, project context, reference snippets, and todos.
+
+The app auto-saves all open tabs, so your working notes are preserved without manual save steps.
+
+Noted focuses on fast capture and retrieval of active notes, not long-term archival or heavy document management.
+                </TextBlock>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Close" Width="92" IsDefault="True" Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

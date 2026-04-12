@@ -3495,6 +3495,8 @@ public partial class MainWindow : Window
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
+    private void MenuAboutInfo_Click(object sender, RoutedEventArgs e)
+        => new AboutWindow { Owner = this }.ShowDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
     private void MenuBase64_Click(object sender, RoutedEventArgs e) => ShowBase64Dialog();
     private void MenuQuickMessageOverlay_Click(object sender, RoutedEventArgs e) => ShowQuickMessageOverlayDialog();

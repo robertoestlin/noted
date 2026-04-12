@@ -87,6 +87,9 @@
                     <MenuItem Header="Time _Converter" Click="MenuTimeConverter_Click"/>
                     <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
                 </MenuItem>
+                <MenuItem Header="_About">
+                    <MenuItem Header="_Info" Click="MenuAboutInfo_Click"/>
+                </MenuItem>
             </Menu>
             </DockPanel>
 
