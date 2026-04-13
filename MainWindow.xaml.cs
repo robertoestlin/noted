@@ -1138,6 +1138,16 @@ public partial class MainWindow : Window
         if (!position.HasValue)
             return;
 
+        // Preserve existing selection when right-click occurs inside it.
+        if (editor.Document != null && editor.SelectionLength > 0)
+        {
+            int clickedOffset = editor.Document.GetOffset(position.Value.Location);
+            int selectionStart = editor.SelectionStart;
+            int selectionEnd = selectionStart + editor.SelectionLength;
+            if (clickedOffset >= selectionStart && clickedOffset < selectionEnd)
+                return;
+        }
+
         editor.TextArea.Caret.Location = position.Value.Location;
         editor.Select(editor.CaretOffset, 0);
     }
