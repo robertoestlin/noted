@@ -171,7 +171,7 @@ public partial class MainWindow
     private static List<ProjectLineCounterType> BuildDefaultProjectLineCounterTypes()
         =>
         [
-            new ProjectLineCounterType { Name = "C#", FileTypes = [".cs", ".csproj", ".sln", ".xaml", ".xml", ".json", ".config", ".sh"] },
+            new ProjectLineCounterType { Name = "C#", FileTypes = [".cs", ".csproj", ".sln", ".xaml", ".xml", ".json", ".yaml", ".yml", ".config", ".sh"] },
             new ProjectLineCounterType { Name = "Web", FileTypes = [".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".scss", ".json"] }
         ];
 
@@ -204,7 +204,7 @@ public partial class MainWindow
         if (csharpType != null)
         {
             csharpType.FileTypes ??= [];
-            foreach (var required in new[] { ".config", ".sh" })
+            foreach (var required in new[] { ".config", ".sh", ".yaml", ".yml" })
             {
                 if (!csharpType.FileTypes.Contains(required, StringComparer.OrdinalIgnoreCase))
                     csharpType.FileTypes.Add(required);
