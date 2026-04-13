@@ -1718,6 +1718,16 @@ public partial class MainWindow : Window
 
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (Keyboard.Modifiers == ModifierKeys.Alt
+            && (key == Key.Up || key == Key.Down))
+        {
+            if (TryMoveCurrentLine(doc, moveDown: key == Key.Down))
+                e.Handled = true;
+            return;
+        }
+
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && e.Key == Key.V
             && TryPasteClipboardImage(doc))
@@ -1743,6 +1753,56 @@ public partial class MainWindow : Window
 
         if (changed)
             RedrawHighlight(doc);
+    }
+
+    private static bool TryMoveCurrentLine(TabDocument doc, bool moveDown)
+    {
+        var editor = doc.Editor;
+        var document = editor.Document;
+        if (document.LineCount <= 1)
+            return false;
+
+        int caretLineNumber = Math.Max(1, editor.TextArea.Caret.Line);
+        int targetLineNumber = moveDown ? caretLineNumber + 1 : caretLineNumber - 1;
+        if (targetLineNumber < 1 || targetLineNumber > document.LineCount)
+            return false;
+
+        var currentLine = document.GetLineByNumber(caretLineNumber);
+        var targetLine = document.GetLineByNumber(targetLineNumber);
+        int caretColumn = Math.Max(1, editor.TextArea.Caret.Column);
+
+        int currentStart = currentLine.Offset;
+        int currentEnd = currentLine.EndOffset + currentLine.DelimiterLength;
+        if (currentEnd > document.TextLength)
+            currentEnd = currentLine.EndOffset;
+
+        int targetStart = targetLine.Offset;
+        int targetEnd = targetLine.EndOffset + targetLine.DelimiterLength;
+        if (targetEnd > document.TextLength)
+            targetEnd = targetLine.EndOffset;
+
+        using (document.RunUpdate())
+        {
+            if (moveDown)
+            {
+                string currentText = document.GetText(currentStart, currentEnd - currentStart);
+                string targetText = document.GetText(targetStart, targetEnd - targetStart);
+                document.Replace(currentStart, targetEnd - currentStart, targetText + currentText);
+            }
+            else
+            {
+                string targetText = document.GetText(targetStart, targetEnd - targetStart);
+                string currentText = document.GetText(currentStart, currentEnd - currentStart);
+                document.Replace(targetStart, currentEnd - targetStart, currentText + targetText);
+            }
+        }
+
+        var movedLine = document.GetLineByNumber(targetLineNumber);
+        int movedCaretOffset = Math.Min(movedLine.EndOffset, movedLine.Offset + (caretColumn - 1));
+        editor.TextArea.Caret.Offset = movedCaretOffset;
+        editor.Select(movedCaretOffset, 0);
+        editor.ScrollToLine(targetLineNumber);
+        return true;
     }
 
     private IReadOnlyDictionary<int, string> GetLineAssignments(TabDocument doc)
