@@ -21,6 +21,10 @@
                     <MenuItem Header="_Open file" Click="MenuOpenFile_Click"/>
                     <Separator/>
                     <MenuItem Header="Export to file..." Click="MenuExportToFile_Click"/>
+                    <MenuItem Header="Copy file content">
+                        <MenuItem Header="Copy without assignees" Click="MenuCopyFileContentWithoutAssignees_Click"/>
+                        <MenuItem Header="Copy with assignees" Click="MenuCopyFileContentWithAssignees_Click"/>
+                    </MenuItem>
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
                     <Separator/>

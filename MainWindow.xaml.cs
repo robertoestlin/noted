@@ -1560,6 +1560,26 @@ public partial class MainWindow : Window
     private static string RemoveTrailingWhitespaces(string text)
         => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
 
+    private bool CopyCurrentTabToClipboard(bool includeAssignees)
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return false;
+
+        try
+        {
+            var textToCopy = BuildExportText(doc, includeAssignees);
+            Clipboard.SetText(textToCopy ?? string.Empty);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not copy text:\n{ex.Message}", "Noted",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+    }
+
     private string BuildExportText(TabDocument doc, bool includeAssignees)
     {
         var textToSave = RemoveTrailingWhitespaces(doc.Editor.Text);
@@ -3877,6 +3897,8 @@ public partial class MainWindow : Window
     private void MenuCloseTab_Click(object sender, RoutedEventArgs e) => CloseCurrentTab();
     private void MenuReopenClosedTab_Click(object sender, RoutedEventArgs e) => ReopenLastClosedTab();
     private void MenuExit_Click(object sender, RoutedEventArgs e) => Close();
+    private void MenuCopyFileContentWithoutAssignees_Click(object sender, RoutedEventArgs e) => CopyCurrentTabToClipboard(includeAssignees: false);
+    private void MenuCopyFileContentWithAssignees_Click(object sender, RoutedEventArgs e) => CopyCurrentTabToClipboard(includeAssignees: true);
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
