@@ -9,6 +9,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 using System.Xml;
 using System.Windows;
 using System.Windows.Controls;
@@ -20,6 +21,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using System.Threading;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Highlighting;
@@ -50,6 +52,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _pluginAlarmTimer;
     private readonly DispatcherTimer _backupHeartbeatTimer;
     private DateTimeOffset _nextBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private Point _tabDragStartPoint;
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
@@ -136,6 +139,7 @@ public partial class MainWindow : Window
     private static readonly Regex ImageLineMarkerRegex =
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+    private static readonly Mutex HeartbeatFileMutex = new(initiallyOwned: false, name: @"Global\Noted.UptimeHeartbeat");
     private int _initialLines = DefaultInitialLines;
     private int _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
@@ -173,6 +177,16 @@ public partial class MainWindow : Window
     private double _inlineImageResizeStartX;
     private int _inlineImageResizeStartScalePercent;
     private int _inlineImageResizeCurrentScalePercent;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool GetLastInputInfo(ref LastInputInfo plii);
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
@@ -3374,6 +3388,12 @@ public partial class MainWindow : Window
     private void StartBackupHeartbeatTimer()
     {
         _backupHeartbeatTimer.Stop();
+        if (!string.IsNullOrWhiteSpace(_backupFolder))
+        {
+            var path = Path.Combine(_backupFolder, UptimeHeartbeatFileName);
+            _lastBackupHeartbeatAtLocal = ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
+        }
+
         ScheduleNextBackupHeartbeatTick();
     }
 
@@ -3384,7 +3404,11 @@ public partial class MainWindow : Window
         var elapsedSeconds = (now - hourStart).TotalSeconds;
         var slotsPassed = (int)Math.Floor(elapsedSeconds / _uptimeHeartbeatSeconds);
         var nextLocal = hourStart.AddSeconds((slotsPassed + 1) * _uptimeHeartbeatSeconds);
-        return new DateTimeOffset(nextLocal);
+        var next = new DateTimeOffset(nextLocal);
+        if (_lastBackupHeartbeatAtLocal != DateTimeOffset.MinValue && next <= _lastBackupHeartbeatAtLocal)
+            return _lastBackupHeartbeatAtLocal.AddSeconds(_uptimeHeartbeatSeconds);
+
+        return next;
     }
 
     private void ScheduleNextBackupHeartbeatTick()
@@ -3421,8 +3445,81 @@ public partial class MainWindow : Window
 
         Directory.CreateDirectory(_backupFolder);
         var path = Path.Combine(_backupFolder, UptimeHeartbeatFileName);
-        var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
-        File.AppendAllText(path, $"{timestamp}{Environment.NewLine}");
+        var lockTaken = false;
+        try
+        {
+            try
+            {
+                lockTaken = HeartbeatFileMutex.WaitOne(TimeSpan.FromSeconds(2));
+            }
+            catch (AbandonedMutexException)
+            {
+                // Another process died while holding the mutex; treat lock as acquired.
+                lockTaken = true;
+            }
+
+            if (!lockTaken)
+                return;
+
+            var lastTimestamp = ReadLastHeartbeatTimestamp(path);
+            var latestKnown = _lastBackupHeartbeatAtLocal;
+            if (lastTimestamp.HasValue && (latestKnown == DateTimeOffset.MinValue || lastTimestamp.Value > latestKnown))
+                latestKnown = lastTimestamp.Value;
+
+            if (latestKnown != DateTimeOffset.MinValue && timestampLocal <= latestKnown)
+                return;
+
+            var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
+            var idleSeconds = GetSystemIdleSeconds();
+            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s{Environment.NewLine}");
+            _lastBackupHeartbeatAtLocal = timestampLocal;
+        }
+        finally
+        {
+            if (lockTaken)
+                HeartbeatFileMutex.ReleaseMutex();
+        }
+    }
+
+    private static DateTimeOffset? ReadLastHeartbeatTimestamp(string path)
+    {
+        if (!File.Exists(path))
+            return null;
+
+        var lastLine = File.ReadLines(path)
+            .Select(line => line.Trim())
+            .LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
+        if (string.IsNullOrWhiteSpace(lastLine))
+            return null;
+
+        var timestampPart = lastLine.Split(',', 2)[0].Trim();
+        if (!DateTimeOffset.TryParseExact(timestampPart, "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            return null;
+
+        return parsed;
+    }
+
+    private static long GetSystemIdleSeconds()
+    {
+        try
+        {
+            LastInputInfo info = new()
+            {
+                cbSize = (uint)Marshal.SizeOf<LastInputInfo>()
+            };
+
+            if (!GetLastInputInfo(ref info))
+                return -1;
+
+            var nowTick = unchecked((uint)Environment.TickCount);
+            var elapsedMs = unchecked(nowTick - info.dwTime);
+
+            return elapsedMs / 1000;
+        }
+        catch
+        {
+            return -1;
+        }
     }
 
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
