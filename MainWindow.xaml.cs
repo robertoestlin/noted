@@ -138,6 +138,8 @@ public partial class MainWindow : Window
     private const int MaxDeletedInlineImages = 100;
     private static readonly Regex ImageLineMarkerRegex =
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HorizontalRuleLineRegex =
+        new(@"^---$", RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private static readonly Mutex HeartbeatFileMutex = new(initiallyOwned: false, name: @"Global\Noted.UptimeHeartbeat");
     private int _initialLines = DefaultInitialLines;
@@ -239,6 +241,10 @@ public partial class MainWindow : Window
         private readonly Func<int, bool> _lineSelectionProvider;
         private readonly Func<Brush> _normalBrushProvider;
         private readonly Func<Brush> _selectedBrushProvider;
+        private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
+        private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
+        private static readonly Pen HorizontalRuleAccentPen = CreateFrozenPen(Color.FromRgb(229, 233, 240), 0.8);
+        private static readonly Pen HorizontalRuleSelectedPen = CreateFrozenPen(Color.FromRgb(63, 154, 214), 1.8);
 
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
@@ -272,6 +278,15 @@ public partial class MainWindow : Window
                 (byte)Math.Round(color.B * f));
         }
 
+        private static Pen CreateFrozenPen(Color color, double thickness)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            var pen = new Pen(brush, thickness);
+            pen.Freeze();
+            return pen;
+        }
+
         // Draw on selection layer so highlight remains visible even when selected.
         public KnownLayer Layer => KnownLayer.Selection;
 
@@ -302,6 +317,42 @@ public partial class MainWindow : Window
                         drawingContext.DrawRectangle(brush, null, fullWidthRect);
                     }
                 }
+            }
+
+            foreach (var visualLine in textView.VisualLines)
+            {
+                var line = visualLine.FirstDocumentLine;
+                if (line == null || line.Length <= 0)
+                    continue;
+
+                var lineText = textView.Document.GetText(line.Offset, line.Length);
+                if (!IsHorizontalRuleLine(lineText))
+                    continue;
+
+                var segment = new TextSegment
+                {
+                    StartOffset = line.Offset,
+                    EndOffset = line.Offset + line.Length
+                };
+
+                var lineRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
+                if (lineRects.Count == 0)
+                    continue;
+
+                var lineRect = lineRects[0];
+                bool isSelected = _lineSelectionProvider(line.LineNumber);
+                if (isSelected)
+                {
+                    var bandRect = new Rect(0, lineRect.Top, textView.ActualWidth, lineRect.Height);
+                    drawingContext.DrawRectangle(HorizontalRuleSelectedBandBrush, null, bandRect);
+                }
+
+                double y = lineRect.Top + (lineRect.Height / 2);
+                double xStart = lineRects.Min(rect => rect.Left);
+                double xEnd = Math.Max(xStart + 24, textView.ActualWidth - 10);
+                drawingContext.DrawLine(isSelected ? HorizontalRuleSelectedPen : HorizontalRulePen, new Point(xStart, y), new Point(xEnd, y));
+                if (!isSelected)
+                    drawingContext.DrawLine(HorizontalRuleAccentPen, new Point(xStart, y - 1), new Point(xEnd, y - 1));
             }
 
             var assignments = _assigneeProvider();
@@ -454,6 +505,24 @@ public partial class MainWindow : Window
             {
                 return null;
             }
+        }
+    }
+
+    private sealed class HorizontalRuleTextMaskingTransformer : DocumentColorizingTransformer
+    {
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            if (CurrentContext?.Document == null || line.Length <= 0)
+                return;
+
+            var lineText = CurrentContext.Document.GetText(line.Offset, line.Length);
+            if (!IsHorizontalRuleLine(lineText))
+                return;
+
+            ChangeLinePart(line.Offset, line.EndOffset, visualElement =>
+            {
+                visualElement.TextRunProperties.SetForegroundBrush(Brushes.Transparent);
+            });
         }
     }
 
@@ -616,6 +685,7 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(
             (line, marker) => CreateInlineImageElement(editor, line.LineNumber, marker),
             CanRenderInlineImageLine));
+        editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer());
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
@@ -751,6 +821,14 @@ public partial class MainWindow : Window
 
         marker = new InlineImageMarker(fileName, scalePercent);
         return true;
+    }
+
+    private static bool IsHorizontalRuleLine(string lineText)
+    {
+        if (string.IsNullOrWhiteSpace(lineText))
+            return false;
+
+        return HorizontalRuleLineRegex.IsMatch(lineText);
     }
 
     private bool TryGetInlineImageSource(string fileName, out BitmapSource imageSource)
