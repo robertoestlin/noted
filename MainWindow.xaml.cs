@@ -94,6 +94,8 @@ public partial class MainWindow : Window
     /// <summary>Filenames written by <see cref="SaveSession"/> (<c>noted_yyyyMMdd_HHmmss.txt</c>).</summary>
     private static readonly Regex NotedBackupFileNameRegex =
         new(@"^noted_\d{8}_\d{6}\.txt$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex InlineAssigneeSuffixRegex =
+        new(@"^(?<content>.*?)(?:\s*)\[(?<person>[^\[\]\r\n]+)\]\s*$", RegexOptions.Compiled);
     private const int DefaultAutoSaveSeconds = 30;
     private const int DefaultUptimeHeartbeatSeconds = 300;
     private const int DefaultInitialLines = 50;
@@ -1525,6 +1527,15 @@ public partial class MainWindow : Window
         var doc = CurrentDoc();
         if (doc == null) return false;
 
+        var includeAssigneesDialogResult = MessageBox.Show(
+            "Include assignees in exported text?\n\nYes: include assignees\nNo: plain text export\nCancel: abort export",
+            "Export options",
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question);
+        if (includeAssigneesDialogResult == MessageBoxResult.Cancel)
+            return false;
+        bool includeAssignees = includeAssigneesDialogResult == MessageBoxResult.Yes;
+
         var dlg = new SaveFileDialog
         {
             FileName = doc.Header,
@@ -1534,7 +1545,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var textToSave = RemoveTrailingWhitespaces(doc.Editor.Text);
+            var textToSave = BuildExportText(doc, includeAssignees);
             File.WriteAllText(dlg.FileName, textToSave, System.Text.Encoding.UTF8);
             return true;
         }
@@ -1548,6 +1559,62 @@ public partial class MainWindow : Window
 
     private static string RemoveTrailingWhitespaces(string text)
         => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
+
+    private string BuildExportText(TabDocument doc, bool includeAssignees)
+    {
+        var textToSave = RemoveTrailingWhitespaces(doc.Editor.Text);
+        if (!includeAssignees)
+            return textToSave;
+
+        var lineAssignments = GetLineAssignments(doc);
+        var parts = Regex.Split(textToSave, @"(\r\n|\n)");
+        var builder = new StringBuilder(textToSave.Length + 128);
+        int lineNumber = 1;
+
+        for (int i = 0; i < parts.Length; i += 2)
+        {
+            var lineText = parts[i];
+            string transformedLine = TransformLineForExport(lineText, lineNumber, lineAssignments);
+            builder.Append(transformedLine);
+
+            if (i + 1 < parts.Length)
+            {
+                builder.Append(parts[i + 1]);
+                lineNumber++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string TransformLineForExport(string lineText, int lineNumber, IReadOnlyDictionary<int, string> lineAssignments)
+    {
+        if (TryConvertInlineAssigneeSuffix(lineText, out var inlineConvertedLine))
+            return inlineConvertedLine;
+
+        if (lineAssignments.TryGetValue(lineNumber, out var person) && !string.IsNullOrWhiteSpace(person))
+            return $"{lineText} - Assigned to {person.Trim()}";
+
+        return lineText;
+    }
+
+    private static bool TryConvertInlineAssigneeSuffix(string lineText, out string convertedLine)
+    {
+        convertedLine = lineText;
+        var match = InlineAssigneeSuffixRegex.Match(lineText);
+        if (!match.Success)
+            return false;
+
+        var person = match.Groups["person"].Value.Trim();
+        if (person.Length == 0)
+            return false;
+
+        var content = match.Groups["content"].Value.TrimEnd();
+        convertedLine = content.Length == 0
+            ? $"Assigned to {person}"
+            : $"{content} - Assigned to {person}";
+        return true;
+    }
 
     private static bool IsLineSelected(TextEditor editor, int lineNumber)
     {
