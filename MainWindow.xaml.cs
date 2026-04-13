@@ -2181,8 +2181,18 @@ public partial class MainWindow : Window
         if (string.Equals(text, updated, StringComparison.Ordinal))
             return;
 
+        int unchangedPrefixLength = 0;
+        int maxPrefixLength = Math.Min(text.Length, updated.Length);
+        while (unchangedPrefixLength < maxPrefixLength
+               && text[unchangedPrefixLength] == updated[unchangedPrefixLength])
+        {
+            unchangedPrefixLength++;
+        }
+
         int caretOffset = Math.Min(doc.Editor.CaretOffset, updated.Length);
-        doc.Editor.Text = updated;
+        int removedLength = text.Length - unchangedPrefixLength;
+        string insertedTail = updated[unchangedPrefixLength..];
+        doc.Editor.Document.Replace(unchangedPrefixLength, removedLength, insertedTail);
         doc.Editor.CaretOffset = caretOffset;
     }
 
