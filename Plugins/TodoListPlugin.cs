@@ -91,6 +91,15 @@ public partial class MainWindow
             TodoPanelBorder.Focus();
             Keyboard.Focus(TodoPanelBorder);
         }
+        else
+        {
+            var currentDoc = CurrentDoc();
+            if (currentDoc != null)
+            {
+                currentDoc.Editor.Focus();
+                Keyboard.Focus(currentDoc.Editor);
+            }
+        }
     }
 
     private void PruneCompletedTodoItems()
