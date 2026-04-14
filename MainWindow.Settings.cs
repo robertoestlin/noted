@@ -42,6 +42,7 @@ public partial class MainWindow
                 opts);
             SaveTimeReports(opts);
             SaveSearchFilesHistory(opts);
+            SaveTodoItems(opts);
         }
         catch { /* non-critical */ }
     }
@@ -118,6 +119,7 @@ public partial class MainWindow
             ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
             LoadTimeReports();
             LoadSearchFilesHistory();
+            LoadTodoItems();
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
@@ -138,6 +140,12 @@ public partial class MainWindow
         _windowSettingsStore.Save(timeReportsPath, BuildTimeReportSettings(), options);
     }
 
+    private void SaveTodoItems(JsonSerializerOptions options)
+    {
+        var todoItemsPath = Path.Combine(_backupFolder, TodoItemsFileName);
+        _windowSettingsStore.Save(todoItemsPath, BuildTodoItemsSnapshot(), options);
+    }
+
     private void LoadSearchFilesHistory()
     {
         var historyPath = Path.Combine(_backupFolder, SearchFilesHistoryFileName);
@@ -154,6 +162,15 @@ public partial class MainWindow
         LoadTimeReportSettings(records);
         if (records == null)
             SaveTimeReports(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private void LoadTodoItems()
+    {
+        var todoItemsPath = Path.Combine(_backupFolder, TodoItemsFileName);
+        var items = _windowSettingsStore.Load<List<TodoItemState>>(todoItemsPath);
+        ApplyTodoItems(items);
+        if (items == null)
+            SaveTodoItems(new JsonSerializerOptions { WriteIndented = true });
     }
 
     private void ResetSettingsToDefaults()
@@ -193,6 +210,8 @@ public partial class MainWindow
         _searchFilesHistory = [];
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
+        _todoItems.Clear();
+        _todoPanelVisible = false;
         ResetQuickMessageOverlaySettings();
     }
 
@@ -334,6 +353,9 @@ public partial class MainWindow
 
     private void CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, TimeReportsFileName);
+
+    private void CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, TodoItemsFileName);
 
     private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {

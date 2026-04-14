@@ -87,6 +87,7 @@ public partial class MainWindow : Window
     private const string ClosedTabsFileName = "closed-tabs.json";
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
+    private const string TodoItemsFileName = "todo-items.json";
     private const string UptimeHeartbeatFileName = "uptime-heartbeat.log";
     private const int MaxClosedTabs = 10;
 
@@ -214,6 +215,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand ToggleTodoPanelCommand = new("Toggle Todo Panel", nameof(ToggleTodoPanelCommand), typeof(MainWindow));
     private static readonly RoutedUICommand FakeSaveCommand = new("Fake Save", nameof(FakeSaveCommand), typeof(MainWindow));
     private static readonly (FancyBulletStyle Style, string Label)[] FancyBulletStyleOptions =
     [
@@ -695,6 +697,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
         CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
+        CommandBindings.Add(new CommandBinding(ToggleTodoPanelCommand, (_, _) => ExecuteToggleTodoPanel()));
         CommandBindings.Add(new CommandBinding(FakeSaveCommand, (_, _) => ExecuteFakeSaveShortcut()));
 
         MainTabControl.AllowDrop = true;
@@ -712,6 +715,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        InitializeTodoPanel();
         UpdateViewMenuChecks();
         _pluginAlarmTimer.Start();
         StartBackupHeartbeatTimer();
@@ -2509,6 +2513,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
+        AddShortcutBinding(DefaultShortcutToggleTodoPanel, ToggleTodoPanelCommand);
         AddShortcutBinding(DefaultShortcutFakeSave, FakeSaveCommand);
         UpdateMenuShortcutTexts();
     }

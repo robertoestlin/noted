@@ -818,6 +818,7 @@ public partial class MainWindow
                     CopyClosedTabsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyTimeReportsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopySearchFilesHistoryFileToBackupFolder(previousBackupFolder, backupPath);
+                    CopyTodoItemsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyImageFolderToBackupFolder(previousBackupFolder, backupPath);
                 }
 

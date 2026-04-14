@@ -49,6 +49,22 @@ public sealed class TimeReportMonthState
     public Dictionary<string, string> WeekComments { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+public enum TodoBucket
+{
+    Today = 0,
+    ThisWeek = 1
+}
+
+public sealed class TodoItemState
+{
+    public string Id { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public TodoBucket Bucket { get; set; } = TodoBucket.Today;
+    public int SortOrder { get; set; }
+    public DateTime CreatedUtc { get; set; }
+    public DateTime? CompletedAtUtc { get; set; }
+}
+
 public sealed class PluginAlarmSettings
 {
     public string Name { get; set; } = string.Empty;

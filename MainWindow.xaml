@@ -9,8 +9,72 @@
         Closing="Window_Closing">
 
     <Grid>
-        <DockPanel>
-            <DockPanel DockPanel.Dock="Top">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="TodoPanelColumn" Width="0"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border x:Name="TodoPanelBorder"
+                Grid.Row="1"
+                Grid.Column="0"
+                Visibility="Collapsed"
+                BorderBrush="#DDDDDD"
+                BorderThickness="0,0,1,0"
+                Background="#FAFAFA"
+                Focusable="True"
+                PreviewKeyDown="TodoPanelBorder_PreviewKeyDown"
+                MouseDown="TodoPanelBorder_MouseDown">
+            <DockPanel Margin="10">
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBlock Text="TODO" FontSize="18" FontWeight="SemiBold"/>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="TodoAddTodayButton"
+                                Content="+"
+                                Width="30"
+                                Height="30"
+                                Margin="0,0,6,0"
+                                FontWeight="SemiBold"
+                                ToolTip="Add to Today"
+                                Click="TodoAddTodayButton_Click"/>
+                        <Button x:Name="TodoAddThisWeekButton"
+                                Content="W"
+                                Width="30"
+                                Height="30"
+                                Margin="0,0,6,0"
+                                FontWeight="SemiBold"
+                                ToolTip="Add to This Week"
+                                Click="TodoAddThisWeekButton_Click"/>
+                        <Button x:Name="TodoCompletedToggleButton"
+                                Content="✓"
+                                Width="30"
+                                Height="30"
+                                HorizontalAlignment="Right"
+                                FontWeight="SemiBold"
+                                ToolTip="Recently Completed"
+                                Click="TodoCompletedToggleButton_Click"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="Today" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <StackPanel x:Name="TodoTodayItemsPanel" Margin="0,0,0,10"/>
+
+                        <TextBlock Text="This Week" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <StackPanel x:Name="TodoThisWeekItemsPanel" Margin="0,0,0,10"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <DockPanel Grid.Row="0" Grid.ColumnSpan="2">
             <Border DockPanel.Dock="Left" Padding="6,2,4,2" VerticalAlignment="Center">
                 <Image Source="logo/logo.png" Width="24" Height="24" Stretch="Uniform"/>
             </Border>
@@ -104,13 +168,15 @@
                     </MenuItem>
                     <MenuItem Header="Time _Converter" Click="MenuTimeConverter_Click"/>
                     <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
+                    <MenuItem Header="_Todo List" InputGestureText="F3" Click="MenuTodoList_Click"/>
                 </MenuItem>
                 <MenuItem Header="_About">
                     <MenuItem Header="_Info" Click="MenuAboutInfo_Click"/>
                 </MenuItem>
             </Menu>
-            </DockPanel>
+        </DockPanel>
 
+        <DockPanel Grid.Row="1" Grid.Column="1">
         <!-- Status bar -->
             <StatusBar DockPanel.Dock="Bottom" Background="#F0F0F0">
                 <StatusBarItem>
@@ -136,7 +202,9 @@
                         Background="White"/>
         </DockPanel>
 
-        <TextBlock Text="0.9"
+        <TextBlock Grid.Row="1"
+                   Grid.Column="1"
+                   Text="0.9"
                    HorizontalAlignment="Right"
                    VerticalAlignment="Bottom"
                    Margin="0,0,8,4"
@@ -145,6 +213,8 @@
                    IsHitTestVisible="False"/>
 
         <Border x:Name="MessageOverlay"
+                Grid.RowSpan="2"
+                Grid.ColumnSpan="2"
                 Visibility="Collapsed"
                 Panel.ZIndex="99"
                 Background="#D9111827"
