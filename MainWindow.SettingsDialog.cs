@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Shapes = System.Windows.Shapes;
 using Noted.Models;
 using Ookii.Dialogs.Wpf;
 
@@ -13,6 +14,12 @@ public partial class MainWindow
 {
     private void ShowSettingsDialog()
     {
+        bool originalFancyBulletsEnabled = _fancyBulletsEnabled;
+        bool originalShowHorizontalRuler = _showHorizontalRuler;
+        bool originalShowInlineImages = _showInlineImages;
+        var originalFancyBulletStyle = _fancyBulletStyle;
+        bool viewPreviewCommitted = false;
+
         var dlg = new Window
         {
             Title = "Settings",
@@ -344,6 +351,210 @@ public partial class MainWindow
             Content = new ScrollViewer { Content = shortkeysPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
         });
 
+        var viewPanel = new StackPanel { Margin = new Thickness(12) };
+        var chkStyledBullets = new CheckBox
+        {
+            Content = "Replace '- ' and '* ' prefixes with rendered bullet symbols",
+            IsChecked = _fancyBulletsEnabled,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var chkShowHorizontalRuler = new CheckBox
+        {
+            Content = "Render '---' lines as horizontal dividers",
+            IsChecked = _showHorizontalRuler,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var chkShowInlineImages = new CheckBox
+        {
+            Content = "Render inline image markers (^<file.png>) as images",
+            IsChecked = _showInlineImages,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        viewPanel.Children.Add(chkStyledBullets);
+        viewPanel.Children.Add(chkShowHorizontalRuler);
+        viewPanel.Children.Add(chkShowInlineImages);
+        viewPanel.Children.Add(new TextBlock
+        {
+            Text = "Rendered bullet style:",
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var cmbBulletStyle = new ComboBox
+        {
+            Width = 220,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        foreach (var option in FancyBulletStyleOptions)
+        {
+            cmbBulletStyle.Items.Add(new ComboBoxItem
+            {
+                Content = option.Label,
+                Tag = option.Style
+            });
+        }
+        for (int i = 0; i < cmbBulletStyle.Items.Count; i++)
+        {
+            if (cmbBulletStyle.Items[i] is ComboBoxItem item
+                && item.Tag is FancyBulletStyle style
+                && style == _fancyBulletStyle)
+            {
+                cmbBulletStyle.SelectedIndex = i;
+                break;
+            }
+        }
+        if (cmbBulletStyle.SelectedIndex < 0)
+            cmbBulletStyle.SelectedIndex = 0;
+        cmbBulletStyle.IsEnabled = chkStyledBullets.IsChecked == true;
+        viewPanel.Children.Add(cmbBulletStyle);
+        var bulletPreviewBorder = new Border
+        {
+            BorderBrush = Brushes.Gainsboro,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8),
+            Margin = new Thickness(0, 0, 0, 6),
+            Background = Brushes.WhiteSmoke
+        };
+        var bulletPreviewStack = new StackPanel();
+        bulletPreviewBorder.Child = bulletPreviewStack;
+        viewPanel.Children.Add(bulletPreviewBorder);
+        viewPanel.Children.Add(new TextBlock
+        {
+            Text = "Bullet style is only used when bullet symbol rendering is enabled.",
+            Foreground = Brushes.DimGray
+        });
+
+        static FrameworkElement BuildBulletMarker(FancyBulletStyle style)
+        {
+            const double markerSize = 8;
+            var color = SystemColors.ControlTextColor;
+            var brush = new SolidColorBrush(color);
+            var strokeBrush = new SolidColorBrush(color);
+            brush.Freeze();
+            strokeBrush.Freeze();
+
+            return style switch
+            {
+                FancyBulletStyle.HollowCircle => new Shapes.Ellipse
+                {
+                    Width = markerSize,
+                    Height = markerSize,
+                    Stroke = strokeBrush,
+                    StrokeThickness = 1.25
+                },
+                FancyBulletStyle.Square => new Shapes.Rectangle
+                {
+                    Width = markerSize,
+                    Height = markerSize,
+                    Fill = brush
+                },
+                FancyBulletStyle.Diamond => new Shapes.Polygon
+                {
+                    Fill = brush,
+                    Points = new PointCollection
+                    {
+                        new(markerSize / 2, 0),
+                        new(markerSize, markerSize / 2),
+                        new(markerSize / 2, markerSize),
+                        new(0, markerSize / 2)
+                    },
+                    Width = markerSize,
+                    Height = markerSize,
+                    Stretch = Stretch.Fill
+                },
+                FancyBulletStyle.Dash => new Shapes.Line
+                {
+                    X1 = 0,
+                    Y1 = markerSize / 2,
+                    X2 = markerSize + 4,
+                    Y2 = markerSize / 2,
+                    Stroke = strokeBrush,
+                    StrokeThickness = 1.5,
+                    Width = markerSize + 4,
+                    Height = markerSize
+                },
+                _ => new Shapes.Ellipse
+                {
+                    Width = markerSize,
+                    Height = markerSize,
+                    Fill = brush
+                }
+            };
+        }
+
+        void RefreshBulletPreview()
+        {
+            bulletPreviewStack.Children.Clear();
+
+            var selectedStyle = FancyBulletStyle.Dot;
+            if (cmbBulletStyle.SelectedItem is ComboBoxItem selectedStyleItem
+                && selectedStyleItem.Tag is FancyBulletStyle style)
+            {
+                selectedStyle = style;
+            }
+
+            string[] sampleLines =
+            [
+                "First task item",
+                "Secondary point",
+                "Something to remember"
+            ];
+
+            foreach (var line in sampleLines)
+            {
+                var row = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Margin = new Thickness(0, 2, 0, 2),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                row.Children.Add(new Border
+                {
+                    Width = 16,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = BuildBulletMarker(selectedStyle)
+                });
+                row.Children.Add(new TextBlock
+                {
+                    Text = line,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                bulletPreviewStack.Children.Add(row);
+            }
+        }
+
+        void ApplyLiveViewPreviewFromSettingsControls()
+        {
+            cmbBulletStyle.IsEnabled = chkStyledBullets.IsChecked == true;
+
+            _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
+            _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
+            _showInlineImages = chkShowInlineImages.IsChecked == true;
+            if (cmbBulletStyle.SelectedItem is ComboBoxItem selectedStyleItem
+                && selectedStyleItem.Tag is FancyBulletStyle selectedStyle)
+            {
+                _fancyBulletStyle = selectedStyle;
+            }
+
+            ApplyViewRenderingSettings();
+            RefreshBulletPreview();
+        }
+
+        chkStyledBullets.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkStyledBullets.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowHorizontalRuler.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowHorizontalRuler.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowInlineImages.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowInlineImages.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        cmbBulletStyle.SelectionChanged += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        RefreshBulletPreview();
+
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "View",
+            Content = new ScrollViewer { Content = viewPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
+
         var fridayPanel = new StackPanel { Margin = new Thickness(12) };
         var chkFridayFeeling = new CheckBox
         {
@@ -576,6 +787,13 @@ public partial class MainWindow
                 return;
             }
 
+            var selectedFancyBulletStyle = FancyBulletStyle.Dot;
+            if (cmbBulletStyle.SelectedItem is ComboBoxItem selectedStyleItem
+                && selectedStyleItem.Tag is FancyBulletStyle selectedStyle)
+            {
+                selectedFancyBulletStyle = selectedStyle;
+            }
+
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
                 && int.TryParse(txtUptimeHeartbeat.Text, out int uptimeHeartbeatSeconds)
                 && uptimeHeartbeatSeconds >= 60 && uptimeHeartbeatSeconds <= 3600
@@ -631,6 +849,10 @@ public partial class MainWindow
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
                 _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
+                _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
+                _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
+                _showInlineImages = chkShowInlineImages.IsChecked == true;
+                _fancyBulletStyle = selectedFancyBulletStyle;
                 _tabCleanupStaleDays = staleDays;
                 SaveClosedTabHistory();
 
@@ -647,7 +869,9 @@ public partial class MainWindow
                 ApplyShortcutBindings();
                 ApplyColorThemeToOpenEditors();
                 ApplyFridayFeelingToOpenEditors();
+                ApplyViewRenderingSettings();
 
+                viewPreviewCommitted = true;
                 SaveWindowSettings();
                 dlg.DialogResult = true;
             }
@@ -659,5 +883,13 @@ public partial class MainWindow
         };
 
         dlg.ShowDialog();
+        if (!viewPreviewCommitted)
+        {
+            _fancyBulletsEnabled = originalFancyBulletsEnabled;
+            _showHorizontalRuler = originalShowHorizontalRuler;
+            _showInlineImages = originalShowInlineImages;
+            _fancyBulletStyle = originalFancyBulletStyle;
+            ApplyViewRenderingSettings();
+        }
     }
 }

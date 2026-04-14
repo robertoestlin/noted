@@ -133,6 +133,10 @@ public sealed class WindowSettings
     public DateTime? LastCloudCopyUtc { get; set; }
     public int ActiveTabIndex { get; set; }
     public bool FridayFeelingEnabled { get; set; } = true;
+    public bool FancyBulletsEnabled { get; set; }
+    public bool ShowHorizontalRuler { get; set; } = true;
+    public bool ShowInlineImages { get; set; } = true;
+    public string FancyBulletStyle { get; set; } = "dot";
     public List<string>? Users { get; set; }
     public List<UserProfile>? UserProfiles { get; set; }
     public List<PluginAlarmSettings>? PluginAlarms { get; set; }

@@ -78,6 +78,10 @@ public partial class MainWindow
             LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
             ActiveTabIndex = MainTabControl.SelectedIndex,
             FridayFeelingEnabled = _isFridayFeelingEnabled,
+            FancyBulletsEnabled = _fancyBulletsEnabled,
+            ShowHorizontalRuler = _showHorizontalRuler,
+            ShowInlineImages = _showInlineImages,
+            FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
             UptimeHeartbeatSeconds = _uptimeHeartbeatSeconds,
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
@@ -170,6 +174,10 @@ public partial class MainWindow
         _shortcutGoToTab = DefaultShortcutGoToTab;
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _isFridayFeelingEnabled = true;
+        _fancyBulletsEnabled = false;
+        _showHorizontalRuler = true;
+        _showInlineImages = true;
+        _fancyBulletStyle = FancyBulletStyle.Dot;
         _isFredagspartySessionEnabled = false;
         _users = [];
         _timeReports.Clear();
@@ -232,6 +240,11 @@ public partial class MainWindow
         if (state.ActiveTabIndex >= 0)
             _activeTabIndex = state.ActiveTabIndex;
         _isFridayFeelingEnabled = state.FridayFeelingEnabled;
+        _fancyBulletsEnabled = state.FancyBulletsEnabled;
+        _showHorizontalRuler = state.ShowHorizontalRuler;
+        _showInlineImages = state.ShowInlineImages;
+        _fancyBulletStyle = ParseFancyBulletStyle(state.FancyBulletStyle);
+        UpdateViewMenuChecks();
 
         var loadedUsers = NormalizeUsers(state.UserProfiles);
         if (loadedUsers.Count == 0)

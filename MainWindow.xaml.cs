@@ -36,6 +36,15 @@ namespace Noted;
 
 public partial class MainWindow : Window
 {
+    private enum FancyBulletStyle
+    {
+        Dot,
+        HollowCircle,
+        Square,
+        Diamond,
+        Dash
+    }
+
     // --- State -------------------------------------------------------------------------
     private readonly SettingsService _settingsService = new();
     private readonly BackupService _backupService = new();
@@ -142,6 +151,8 @@ public partial class MainWindow : Window
         new(@"^\^<(?<file>[A-Za-z0-9][A-Za-z0-9._-]*\.png)(?:,(?<scale>[1-9][0-9]{0,2}))?>$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex HorizontalRuleLineRegex =
         new(@"^---$", RegexOptions.Compiled);
+    private static readonly Regex FancyBulletPrefixRegex =
+        new(@"^(?:-|\*)\s", RegexOptions.Compiled);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private static readonly Mutex HeartbeatFileMutex = new(initiallyOwned: false, name: @"Global\Noted.UptimeHeartbeat");
     private int _initialLines = DefaultInitialLines;
@@ -168,6 +179,10 @@ public partial class MainWindow : Window
     private Brush _highlightedLineBrush = CreateFrozenBrush(DefaultHighlightedLineColor);
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
     private bool _isFridayFeelingEnabled = true;
+    private bool _fancyBulletsEnabled;
+    private bool _showHorizontalRuler = true;
+    private bool _showInlineImages = true;
+    private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
     private bool _isFredagspartySessionEnabled = false;
     private bool _isFredagspartyTemporarilyDisabled;
     private ImageBrush? _fridayBackgroundBrush;
@@ -200,6 +215,14 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand FakeSaveCommand = new("Fake Save", nameof(FakeSaveCommand), typeof(MainWindow));
+    private static readonly (FancyBulletStyle Style, string Label)[] FancyBulletStyleOptions =
+    [
+        (FancyBulletStyle.Dot, "Filled dot"),
+        (FancyBulletStyle.HollowCircle, "Hollow circle"),
+        (FancyBulletStyle.Square, "Square"),
+        (FancyBulletStyle.Diamond, "Diamond"),
+        (FancyBulletStyle.Dash, "Dash")
+    ];
     private static readonly Lazy<IHighlightingDefinition> JsonSyntaxHighlighting = new(CreateJsonSyntaxHighlighting);
 
     private static IHighlightingDefinition CreateJsonSyntaxHighlighting()
@@ -243,6 +266,9 @@ public partial class MainWindow : Window
         private readonly Func<int, bool> _lineSelectionProvider;
         private readonly Func<Brush> _normalBrushProvider;
         private readonly Func<Brush> _selectedBrushProvider;
+        private readonly Func<bool> _showHorizontalRuleProvider;
+        private readonly Func<bool> _fancyBulletsEnabledProvider;
+        private readonly Func<FancyBulletStyle> _fancyBulletStyleProvider;
         private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
         private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
         private static readonly Pen HorizontalRuleAccentPen = CreateFrozenPen(Color.FromRgb(229, 233, 240), 0.8);
@@ -254,7 +280,10 @@ public partial class MainWindow : Window
             Func<string, Color> assigneeColorProvider,
             Func<int, bool> lineSelectionProvider,
             Func<Brush> normalBrushProvider,
-            Func<Brush> selectedBrushProvider)
+            Func<Brush> selectedBrushProvider,
+            Func<bool> showHorizontalRuleProvider,
+            Func<bool> fancyBulletsEnabledProvider,
+            Func<FancyBulletStyle> fancyBulletStyleProvider)
         {
             _lineProvider = lineProvider;
             _assigneeProvider = assigneeProvider;
@@ -262,6 +291,9 @@ public partial class MainWindow : Window
             _lineSelectionProvider = lineSelectionProvider;
             _normalBrushProvider = normalBrushProvider;
             _selectedBrushProvider = selectedBrushProvider;
+            _showHorizontalRuleProvider = showHorizontalRuleProvider;
+            _fancyBulletsEnabledProvider = fancyBulletsEnabledProvider;
+            _fancyBulletStyleProvider = fancyBulletStyleProvider;
         }
 
         private static Color ContrastTextColor(Color background)
@@ -321,40 +353,78 @@ public partial class MainWindow : Window
                 }
             }
 
-            foreach (var visualLine in textView.VisualLines)
+            bool showHorizontalRule = _showHorizontalRuleProvider();
+            bool showFancyBullets = _fancyBulletsEnabledProvider();
+            var fancyBulletColor = SystemColors.ControlTextColor;
+            var fancyBulletFillBrush = CreateFrozenBrush(fancyBulletColor);
+            var fancyBulletOutlinePen = CreateFrozenPen(fancyBulletColor, 1.25);
+            var fancyBulletDashPen = CreateFrozenPen(fancyBulletColor, 1.5);
+            if (showHorizontalRule || showFancyBullets)
             {
-                var line = visualLine.FirstDocumentLine;
-                if (line == null || line.Length <= 0)
-                    continue;
-
-                var lineText = textView.Document.GetText(line.Offset, line.Length);
-                if (!IsHorizontalRuleLine(lineText))
-                    continue;
-
-                var segment = new TextSegment
+                foreach (var visualLine in textView.VisualLines)
                 {
-                    StartOffset = line.Offset,
-                    EndOffset = line.Offset + line.Length
-                };
+                    var line = visualLine.FirstDocumentLine;
+                    if (line == null || line.Length <= 0)
+                        continue;
 
-                var lineRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
-                if (lineRects.Count == 0)
-                    continue;
+                    var lineText = textView.Document.GetText(line.Offset, line.Length);
+                    if (showHorizontalRule && IsHorizontalRuleLine(lineText))
+                    {
+                        var lineSegment = new TextSegment
+                        {
+                            StartOffset = line.Offset,
+                            EndOffset = line.Offset + line.Length
+                        };
 
-                var lineRect = lineRects[0];
-                bool isSelected = _lineSelectionProvider(line.LineNumber);
-                if (isSelected)
-                {
-                    var bandRect = new Rect(0, lineRect.Top, textView.ActualWidth, lineRect.Height);
-                    drawingContext.DrawRectangle(HorizontalRuleSelectedBandBrush, null, bandRect);
+                        var lineRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, lineSegment).ToList();
+                        if (lineRects.Count == 0)
+                            continue;
+
+                        var lineRect = lineRects[0];
+                        bool isSelected = _lineSelectionProvider(line.LineNumber);
+                        if (isSelected)
+                        {
+                            var bandRect = new Rect(0, lineRect.Top, textView.ActualWidth, lineRect.Height);
+                            drawingContext.DrawRectangle(HorizontalRuleSelectedBandBrush, null, bandRect);
+                        }
+
+                        double y = lineRect.Top + (lineRect.Height / 2);
+                        double xStart = lineRects.Min(rect => rect.Left);
+                        double xEnd = Math.Max(xStart + 24, textView.ActualWidth - 10);
+                        drawingContext.DrawLine(isSelected ? HorizontalRuleSelectedPen : HorizontalRulePen, new Point(xStart, y), new Point(xEnd, y));
+                        if (!isSelected)
+                            drawingContext.DrawLine(HorizontalRuleAccentPen, new Point(xStart, y - 1), new Point(xEnd, y - 1));
+                    }
+
+                    if (!showFancyBullets)
+                        continue;
+
+                    if (!TryGetFancyBulletPrefixLength(lineText, out int prefixLength))
+                        continue;
+
+                    var bulletSegment = new TextSegment
+                    {
+                        StartOffset = line.Offset,
+                        EndOffset = line.Offset + prefixLength
+                    };
+                    var bulletRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, bulletSegment).ToList();
+                    if (bulletRects.Count == 0)
+                        continue;
+
+                    var bulletRect = bulletRects[0];
+                    double bulletCenterY = bulletRect.Top + (bulletRect.Height / 2.0);
+                    double radius = Math.Max(2.0, Math.Min(3.5, bulletRect.Height * 0.18));
+                    double centerX = bulletRect.Left + (radius * 2.2);
+                    DrawFancyBullet(
+                        drawingContext,
+                        _fancyBulletStyleProvider(),
+                        centerX,
+                        bulletCenterY,
+                        radius,
+                        fancyBulletFillBrush,
+                        fancyBulletOutlinePen,
+                        fancyBulletDashPen);
                 }
-
-                double y = lineRect.Top + (lineRect.Height / 2);
-                double xStart = lineRects.Min(rect => rect.Left);
-                double xEnd = Math.Max(xStart + 24, textView.ActualWidth - 10);
-                drawingContext.DrawLine(isSelected ? HorizontalRuleSelectedPen : HorizontalRulePen, new Point(xStart, y), new Point(xEnd, y));
-                if (!isSelected)
-                    drawingContext.DrawLine(HorizontalRuleAccentPen, new Point(xStart, y - 1), new Point(xEnd, y - 1));
             }
 
             var assignments = _assigneeProvider();
@@ -419,6 +489,54 @@ public partial class MainWindow : Window
                 var badgeRect = new Rect(x, y, badgeWidth, badgeHeight);
                 drawingContext.DrawRoundedRectangle(style.Background, style.Border, badgeRect, 4, 4);
                 drawingContext.DrawText(formattedText, new Point(x + paddingX, y + Math.Max(0, (badgeHeight - formattedText.Height) / 2)));
+            }
+        }
+
+        private static void DrawFancyBullet(
+            DrawingContext drawingContext,
+            FancyBulletStyle style,
+            double centerX,
+            double centerY,
+            double radius,
+            Brush bulletFillBrush,
+            Pen bulletOutlinePen,
+            Pen bulletDashPen)
+        {
+            switch (style)
+            {
+                case FancyBulletStyle.HollowCircle:
+                    drawingContext.DrawEllipse(null, bulletOutlinePen, new Point(centerX, centerY), radius, radius);
+                    break;
+                case FancyBulletStyle.Square:
+                {
+                    var square = new Rect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+                    drawingContext.DrawRectangle(bulletFillBrush, null, square);
+                    break;
+                }
+                case FancyBulletStyle.Diamond:
+                {
+                    var geometry = new StreamGeometry();
+                    using (var ctx = geometry.Open())
+                    {
+                        ctx.BeginFigure(new Point(centerX, centerY - radius), true, true);
+                        ctx.LineTo(new Point(centerX + radius, centerY), true, false);
+                        ctx.LineTo(new Point(centerX, centerY + radius), true, false);
+                        ctx.LineTo(new Point(centerX - radius, centerY), true, false);
+                    }
+                    geometry.Freeze();
+                    drawingContext.DrawGeometry(bulletFillBrush, null, geometry);
+                    break;
+                }
+                case FancyBulletStyle.Dash:
+                    drawingContext.DrawLine(
+                        bulletDashPen,
+                        new Point(centerX - (radius * 1.7), centerY),
+                        new Point(centerX + (radius * 1.7), centerY));
+                    break;
+                case FancyBulletStyle.Dot:
+                default:
+                    drawingContext.DrawEllipse(bulletFillBrush, null, new Point(centerX, centerY), radius, radius);
+                    break;
             }
         }
     }
@@ -512,8 +630,16 @@ public partial class MainWindow : Window
 
     private sealed class HorizontalRuleTextMaskingTransformer : DocumentColorizingTransformer
     {
+        private readonly Func<bool> _enabledProvider;
+
+        public HorizontalRuleTextMaskingTransformer(Func<bool> enabledProvider)
+            => _enabledProvider = enabledProvider;
+
         protected override void ColorizeLine(DocumentLine line)
         {
+            if (!_enabledProvider())
+                return;
+
             if (CurrentContext?.Document == null || line.Length <= 0)
                 return;
 
@@ -522,6 +648,32 @@ public partial class MainWindow : Window
                 return;
 
             ChangeLinePart(line.Offset, line.EndOffset, visualElement =>
+            {
+                visualElement.TextRunProperties.SetForegroundBrush(Brushes.Transparent);
+            });
+        }
+    }
+
+    private sealed class FancyBulletTextMaskingTransformer : DocumentColorizingTransformer
+    {
+        private readonly Func<bool> _enabledProvider;
+
+        public FancyBulletTextMaskingTransformer(Func<bool> enabledProvider)
+            => _enabledProvider = enabledProvider;
+
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            if (!_enabledProvider())
+                return;
+
+            if (CurrentContext?.Document == null || line.Length <= 0)
+                return;
+
+            var lineText = CurrentContext.Document.GetText(line.Offset, line.Length);
+            if (!TryGetFancyBulletPrefixLength(lineText, out int prefixLength))
+                return;
+
+            ChangeLinePart(line.Offset, line.Offset + prefixLength, visualElement =>
             {
                 visualElement.TextRunProperties.SetForegroundBrush(Brushes.Transparent);
             });
@@ -560,6 +712,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        UpdateViewMenuChecks();
         _pluginAlarmTimer.Start();
         StartBackupHeartbeatTimer();
         ApplyShortcutBindings();
@@ -616,7 +769,10 @@ public partial class MainWindow : Window
             person => GetUserColor(person),
             line => IsLineSelected(doc.Editor, line),
             () => _highlightedLineBrush,
-            () => _selectedHighlightedLineBrush);
+            () => _selectedHighlightedLineBrush,
+            () => _showHorizontalRuler,
+            () => _fancyBulletsEnabled,
+            () => _fancyBulletStyle);
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
@@ -686,8 +842,9 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
         editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(
             (line, marker) => CreateInlineImageElement(editor, line.LineNumber, marker),
-            CanRenderInlineImageLine));
-        editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer());
+            marker => _showInlineImages && CanRenderInlineImageLine(marker)));
+        editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
+        editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
@@ -831,6 +988,45 @@ public partial class MainWindow : Window
             return false;
 
         return HorizontalRuleLineRegex.IsMatch(lineText);
+    }
+
+    private static bool TryGetFancyBulletPrefixLength(string lineText, out int prefixLength)
+    {
+        prefixLength = 0;
+        if (string.IsNullOrEmpty(lineText))
+            return false;
+
+        var match = FancyBulletPrefixRegex.Match(lineText);
+        if (!match.Success)
+            return false;
+
+        prefixLength = match.Length;
+        return prefixLength > 0;
+    }
+
+    private static string FancyBulletStyleToSetting(FancyBulletStyle style)
+        => style switch
+        {
+            FancyBulletStyle.HollowCircle => "hollow-circle",
+            FancyBulletStyle.Square => "square",
+            FancyBulletStyle.Diamond => "diamond",
+            FancyBulletStyle.Dash => "dash",
+            _ => "dot"
+        };
+
+    private static FancyBulletStyle ParseFancyBulletStyle(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return FancyBulletStyle.Dot;
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "hollow-circle" => FancyBulletStyle.HollowCircle,
+            "square" => FancyBulletStyle.Square,
+            "diamond" => FancyBulletStyle.Diamond,
+            "dash" => FancyBulletStyle.Dash,
+            _ => FancyBulletStyle.Dot
+        };
     }
 
     private bool TryGetInlineImageSource(string fileName, out BitmapSource imageSource)
@@ -3840,6 +4036,20 @@ public partial class MainWindow : Window
         StatusColumn.Text = $"Col {caret.Column}";
     }
 
+    private void UpdateViewMenuChecks()
+    {
+        MenuItemStyledBullets.IsChecked = _fancyBulletsEnabled;
+        MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
+        MenuItemShowInlineImages.IsChecked = _showInlineImages;
+    }
+
+    private void ApplyViewRenderingSettings()
+    {
+        UpdateViewMenuChecks();
+        foreach (var doc in _docs.Values)
+            doc.Editor.TextArea.TextView.Redraw();
+    }
+
     // --- Event handlers -------------------------------------------------------
 
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -3900,6 +4110,24 @@ public partial class MainWindow : Window
     private void MenuCopyFileContentWithoutAssignees_Click(object sender, RoutedEventArgs e) => CopyCurrentTabToClipboard(includeAssignees: false);
     private void MenuCopyFileContentWithAssignees_Click(object sender, RoutedEventArgs e) => CopyCurrentTabToClipboard(includeAssignees: true);
     private void MenuSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsDialog();
+    private void MenuStyledBullets_Click(object sender, RoutedEventArgs e)
+    {
+        _fancyBulletsEnabled = MenuItemStyledBullets.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+    private void MenuShowHorizontalRuler_Click(object sender, RoutedEventArgs e)
+    {
+        _showHorizontalRuler = MenuItemShowHorizontalRuler.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+    private void MenuShowInlineImages_Click(object sender, RoutedEventArgs e)
+    {
+        _showInlineImages = MenuItemShowInlineImages.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
