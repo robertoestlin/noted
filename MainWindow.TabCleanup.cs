@@ -24,6 +24,7 @@ public partial class MainWindow
 
         var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         var panel = new StackPanel();
+
         scroll.Content = panel;
 
         var staleForeground = new SolidColorBrush(Color.FromRgb(168, 96, 102));
