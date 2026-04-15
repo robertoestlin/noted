@@ -1760,6 +1760,35 @@ public partial class MainWindow : Window
     private static string RemoveTrailingWhitespaces(string text)
         => string.IsNullOrEmpty(text) ? text : Regex.Replace(text, @"[ \t]+$", "", RegexOptions.Multiline);
 
+    private static string RemoveTrailingWhitespacesExceptLine(string text, int preservedLineNumber)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        if (preservedLineNumber < 1)
+            return RemoveTrailingWhitespaces(text);
+
+        var parts = Regex.Split(text, @"(\r\n|\n)");
+        var builder = new StringBuilder(text.Length);
+        int lineNumber = 1;
+
+        for (int i = 0; i < parts.Length; i += 2)
+        {
+            var lineText = parts[i];
+            builder.Append(lineNumber == preservedLineNumber
+                ? lineText
+                : Regex.Replace(lineText, @"[ \t]+$", string.Empty));
+
+            if (i + 1 < parts.Length)
+            {
+                builder.Append(parts[i + 1]);
+                lineNumber++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
     private bool CopyCurrentTabToClipboard(bool includeAssignees)
     {
         var doc = CurrentDoc();
@@ -3737,8 +3766,21 @@ public partial class MainWindow : Window
         try
         {
             _lastSaveIncludedCloudCopy = false;
+            var activeDoc = CurrentDoc();
             foreach (var doc in _docs.Values)
-                doc.CachedText = doc.Editor.Text;
+            {
+                var originalText = doc.Editor.Text;
+                int preservedLineNumber = doc == activeDoc ? doc.Editor.TextArea.Caret.Line : 0;
+                var normalizedText = RemoveTrailingWhitespacesExceptLine(originalText, preservedLineNumber);
+                if (!string.Equals(originalText, normalizedText, StringComparison.Ordinal))
+                {
+                    int caretOffset = Math.Min(doc.Editor.CaretOffset, normalizedText.Length);
+                    doc.Editor.Text = normalizedText;
+                    doc.Editor.CaretOffset = caretOffset;
+                }
+
+                doc.CachedText = normalizedText;
+            }
             var referencedNow = GetReferencedInlineImageFilesFromDocs();
             var removedReferences = _referencedInlineImagesSnapshot
                 .Except(referencedNow, StringComparer.OrdinalIgnoreCase)
