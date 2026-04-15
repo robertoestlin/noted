@@ -256,6 +256,8 @@ public partial class MainWindow
                 item.CompletedAtUtc = DateTime.UtcNow;
                 RenderTodoLists();
                 SaveWindowSettings();
+                TodoPanelBorder?.Focus();
+                Keyboard.Focus(TodoPanelBorder);
             };
             checkBox.Unchecked += (_, _) =>
             {
@@ -264,6 +266,8 @@ public partial class MainWindow
                 item.CompletedAtUtc = null;
                 RenderTodoLists();
                 SaveWindowSettings();
+                TodoPanelBorder?.Focus();
+                Keyboard.Focus(TodoPanelBorder);
             };
             Grid.SetColumn(checkBox, 0);
             row.Children.Add(checkBox);
@@ -296,9 +300,15 @@ public partial class MainWindow
             };
             removeButton.Click += (_, _) =>
             {
+                // Completed items stay visible in both the todo panel and Recently Completed.
+                if (item.CompletedAtUtc.HasValue)
+                    return;
+
                 _todoItems.RemoveAll(existing => string.Equals(existing.Id, item.Id, StringComparison.OrdinalIgnoreCase));
                 RenderTodoLists();
                 SaveWindowSettings();
+                TodoPanelBorder?.Focus();
+                Keyboard.Focus(TodoPanelBorder);
             };
             Grid.SetColumn(removeButton, 1);
             row.Children.Add(removeButton);
@@ -310,23 +320,58 @@ public partial class MainWindow
     private UIElement BuildCompletedRow(TodoItemState item)
     {
         var completedAt = item.CompletedAtUtc?.ToLocalTime() ?? DateTime.Now;
-        var container = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
+        
+        var grid = new Grid { Margin = new Thickness(4, 4, 4, 4) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        container.Children.Add(new TextBlock
+        var checkIcon = new TextBlock
         {
-            Text = "X " + item.Text,
-            Opacity = 0.75
-        });
+            Text = "✓",
+            Foreground = Brushes.MediumSeaGreen,
+            FontSize = 18,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, -2, 0, 0)
+        };
+        Grid.SetColumn(checkIcon, 0);
+        grid.Children.Add(checkIcon);
 
-        container.Children.Add(new TextBlock
+        var textContainer = new StackPanel();
+        Grid.SetColumn(textContainer, 1);
+
+        var nameText = new TextBlock
         {
-            Text = $"[{GetTodoBucketLabel(item.Bucket)}]  Completed {completedAt.ToString("yyyy-MM-dd", CultureInfo.CurrentCulture)}",
-            Foreground = Brushes.DimGray,
-            FontSize = 11,
-            Margin = new Thickness(18, 1, 0, 0)
-        });
+            Text = item.Text,
+            FontSize = 14,
+            Opacity = 0.9,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 2)
+        };
+        textContainer.Children.Add(nameText);
 
-        return container;
+        var detailsText = new TextBlock
+        {
+            Text = $"Completed at {completedAt.ToString("g", CultureInfo.CurrentCulture)} • {GetTodoBucketLabel(item.Bucket)}",
+            Foreground = Brushes.Gray,
+            FontSize = 12
+        };
+        textContainer.Children.Add(detailsText);
+
+        grid.Children.Add(textContainer);
+
+        var border = new Border
+        {
+            Background = Brushes.Transparent,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(30, 128, 128, 128)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Padding = new Thickness(0, 0, 0, 8),
+            Margin = new Thickness(0, 0, 0, 4),
+            Child = grid
+        };
+
+        return border;
     }
 
     private static string GetTodoBucketLabel(TodoBucket bucket)
