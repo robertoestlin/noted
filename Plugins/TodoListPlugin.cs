@@ -238,6 +238,12 @@ public partial class MainWindow
                 ReorderTodoItemWithinBucket(draggedItem.Id, item.Id, bucket, insertBefore);
             };
 
+            var rowContextMenu = new ContextMenu();
+            var renameItem = new MenuItem { Header = "Rename..." };
+            renameItem.Click += (_, _) => RenameTodoItem(item);
+            rowContextMenu.Items.Add(renameItem);
+            row.ContextMenu = rowContextMenu;
+
             var checkBox = new CheckBox
             {
                 VerticalAlignment = VerticalAlignment.Center,
@@ -684,5 +690,78 @@ public partial class MainWindow
 
         RenderTodoLists();
         SaveWindowSettings();
+    }
+
+    private void RenameTodoItem(TodoItemState item)
+    {
+        var renamedText = ShowRenameTodoDialog(item.Text);
+        if (string.IsNullOrWhiteSpace(renamedText))
+            return;
+
+        item.Text = renamedText.Trim();
+        RenderTodoLists();
+        SaveWindowSettings();
+        TodoPanelBorder?.Focus();
+        Keyboard.Focus(TodoPanelBorder);
+    }
+
+    private string? ShowRenameTodoDialog(string currentText)
+    {
+        var dialog = new Window
+        {
+            Title = "Rename Todo Item",
+            Width = 440,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+
+        var renameButton = new Button { Content = "Rename", Width = 90, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancelButton = new Button { Content = "Cancel", Width = 90, IsCancel = true };
+        buttons.Children.Add(renameButton);
+        buttons.Children.Add(cancelButton);
+        root.Children.Add(buttons);
+
+        var textBox = new TextBox
+        {
+            Height = 30,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Text = currentText
+        };
+        root.Children.Add(textBox);
+
+        string? updatedText = null;
+        renameButton.Click += (_, _) =>
+        {
+            var text = (textBox.Text ?? string.Empty).Trim();
+            if (text.Length == 0)
+            {
+                MessageBox.Show("Todo text cannot be empty.", "Rename Todo Item", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            updatedText = text;
+            dialog.DialogResult = true;
+        };
+
+        dialog.Content = root;
+        dialog.Loaded += (_, _) =>
+        {
+            textBox.Focus();
+            Keyboard.Focus(textBox);
+            textBox.SelectAll();
+        };
+
+        return dialog.ShowDialog() == true ? updatedText : null;
     }
 }
