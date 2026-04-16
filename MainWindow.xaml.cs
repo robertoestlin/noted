@@ -2068,7 +2068,8 @@ public partial class MainWindow : Window
 
         var docLine = doc.Editor.Document.GetLineByNumber(line);
         var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
-        anchor.MovementType = AnchorMovementType.BeforeInsertion;
+        // Keep highlight tied to the original line content when inserting at column 1.
+        anchor.MovementType = AnchorMovementType.AfterInsertion;
         doc.HighlightAnchors.Add(anchor);
 
         if (markDirty)
