@@ -154,6 +154,8 @@ public partial class MainWindow : Window
         new(@"^---$", RegexOptions.Compiled);
     private static readonly Regex FancyBulletPrefixRegex =
         new(@"^(?:-|\*)\s", RegexOptions.Compiled);
+    private static readonly Regex SmileyTokenRegex =
+        new(@":\)|;\)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
     private static readonly Mutex HeartbeatFileMutex = new(initiallyOwned: false, name: @"Global\Noted.UptimeHeartbeat");
     private int _initialLines = DefaultInitialLines;
@@ -181,6 +183,7 @@ public partial class MainWindow : Window
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
     private bool _isFridayFeelingEnabled = true;
     private bool _fancyBulletsEnabled;
+    private bool _showSmileys = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -270,11 +273,24 @@ public partial class MainWindow : Window
         private readonly Func<Brush> _selectedBrushProvider;
         private readonly Func<bool> _showHorizontalRuleProvider;
         private readonly Func<bool> _fancyBulletsEnabledProvider;
+        private readonly Func<bool> _showSmileysProvider;
         private readonly Func<FancyBulletStyle> _fancyBulletStyleProvider;
         private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
         private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
         private static readonly Pen HorizontalRuleAccentPen = CreateFrozenPen(Color.FromRgb(229, 233, 240), 0.8);
         private static readonly Pen HorizontalRuleSelectedPen = CreateFrozenPen(Color.FromRgb(63, 154, 214), 1.8);
+        private static readonly Brush SmileyFaceBrush = CreateFrozenBrush(Color.FromRgb(255, 213, 79));
+        private static readonly Pen SmileyFaceOutlinePen = CreateFrozenPen(Color.FromRgb(191, 142, 43), 1.1);
+        private static readonly Brush SmileyFeatureBrush = CreateFrozenBrush(Color.FromRgb(74, 55, 21));
+        private static readonly Pen SmileyFeaturePen = CreateFrozenPen(Color.FromRgb(74, 55, 21), 1.1);
+        private static readonly Pen SmileyMouthPen = CreateFrozenPen(Color.FromRgb(74, 55, 21), 1.25);
+        private static readonly Brush SmileyHighlightBrush = CreateFrozenBrush(Color.FromArgb(145, 255, 244, 196));
+        private static readonly Brush SmileyBlushBrush = CreateFrozenBrush(Color.FromArgb(120, 255, 153, 153));
+        private static readonly Brush SmileyGrinFillBrush = CreateFrozenBrush(Color.FromRgb(120, 68, 47));
+        private static readonly Pen SmileyGrinPen = CreateFrozenPen(Color.FromRgb(74, 55, 21), 0.9);
+        private static readonly Brush SmileyTeethBrush = CreateFrozenBrush(Color.FromRgb(250, 250, 246));
+        private static readonly Brush SmileyTearBrush = CreateFrozenBrush(Color.FromRgb(76, 182, 255));
+        private static readonly Pen SmileyTearPen = CreateFrozenPen(Color.FromRgb(41, 132, 196), 0.85);
 
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
@@ -285,6 +301,7 @@ public partial class MainWindow : Window
             Func<Brush> selectedBrushProvider,
             Func<bool> showHorizontalRuleProvider,
             Func<bool> fancyBulletsEnabledProvider,
+            Func<bool> showSmileysProvider,
             Func<FancyBulletStyle> fancyBulletStyleProvider)
         {
             _lineProvider = lineProvider;
@@ -295,6 +312,7 @@ public partial class MainWindow : Window
             _selectedBrushProvider = selectedBrushProvider;
             _showHorizontalRuleProvider = showHorizontalRuleProvider;
             _fancyBulletsEnabledProvider = fancyBulletsEnabledProvider;
+            _showSmileysProvider = showSmileysProvider;
             _fancyBulletStyleProvider = fancyBulletStyleProvider;
         }
 
@@ -429,6 +447,31 @@ public partial class MainWindow : Window
                 }
             }
 
+            if (_showSmileysProvider())
+            {
+                foreach (var visualLine in textView.VisualLines)
+                {
+                    var line = visualLine.FirstDocumentLine;
+                    if (line == null || line.Length <= 0)
+                        continue;
+
+                    var lineText = textView.Document.GetText(line.Offset, line.Length);
+                    foreach (var token in EnumerateSmileyTokens(lineText))
+                    {
+                        var segment = new TextSegment
+                        {
+                            StartOffset = line.Offset + token.StartIndex,
+                            EndOffset = line.Offset + token.StartIndex + token.Length
+                        };
+                        var rects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
+                        if (rects.Count == 0)
+                            continue;
+
+                        DrawSmileyIcon(drawingContext, rects[0], token.Glyph);
+                    }
+                }
+            }
+
             var assignments = _assigneeProvider();
             if (assignments.Count == 0)
                 return;
@@ -541,6 +584,122 @@ public partial class MainWindow : Window
                     break;
             }
         }
+
+        private static void DrawSmileyIcon(DrawingContext drawingContext, Rect tokenRect, string glyph)
+        {
+            double size = Math.Min(tokenRect.Width, tokenRect.Height) * 0.9;
+            size = Math.Max(10, Math.Min(16, size));
+            double radius = size / 2.0;
+            double centerX = tokenRect.Left + (tokenRect.Width / 2.0);
+            double centerY = tokenRect.Top + (tokenRect.Height / 2.0);
+
+            drawingContext.DrawEllipse(SmileyFaceBrush, SmileyFaceOutlinePen, new Point(centerX, centerY), radius, radius);
+            drawingContext.DrawEllipse(
+                SmileyHighlightBrush,
+                null,
+                new Point(centerX - (radius * 0.3), centerY - (radius * 0.35)),
+                radius * 0.33,
+                radius * 0.25);
+
+            double eyeOffsetX = radius * 0.42;
+            double eyeOffsetY = radius * 0.28;
+            double eyeRadius = Math.Max(0.85, radius * 0.1);
+            var leftEye = new Point(centerX - eyeOffsetX, centerY - eyeOffsetY);
+            var rightEye = new Point(centerX + eyeOffsetX, centerY - eyeOffsetY);
+
+            if (glyph == "😉")
+            {
+                DrawWinkEye(drawingContext, leftEye, radius * 0.26, angleDegrees: -14);
+                drawingContext.DrawEllipse(SmileyFeatureBrush, null, rightEye, eyeRadius * 1.18, eyeRadius * 1.18);
+            }
+            else if (glyph == "😂")
+            {
+                DrawXEye(drawingContext, leftEye, radius * 0.2);
+                DrawXEye(drawingContext, rightEye, radius * 0.2);
+            }
+            else
+            {
+                drawingContext.DrawEllipse(SmileyFeatureBrush, null, leftEye, eyeRadius, eyeRadius);
+                drawingContext.DrawEllipse(SmileyFeatureBrush, null, rightEye, eyeRadius, eyeRadius);
+            }
+
+            if (glyph == "😄")
+            {
+                DrawGrinMouth(drawingContext, centerX, centerY + (radius * 0.28), radius * 0.56, radius * 0.32);
+            }
+            else if (glyph == "😂")
+            {
+                DrawGrinMouth(drawingContext, centerX, centerY + (radius * 0.28), radius * 0.58, radius * 0.36);
+                DrawTearDrop(drawingContext, new Point(centerX - (radius * 0.62), centerY + (radius * 0.22)), radius * 0.2);
+                DrawTearDrop(drawingContext, new Point(centerX + (radius * 0.62), centerY + (radius * 0.22)), radius * 0.2);
+            }
+            else
+            {
+                DrawSmileMouth(drawingContext, centerX, centerY + (radius * 0.28), radius * 0.56, radius * 0.34);
+            }
+
+            drawingContext.DrawEllipse(SmileyBlushBrush, null, new Point(centerX - (radius * 0.46), centerY + (radius * 0.24)), radius * 0.17, radius * 0.12);
+            drawingContext.DrawEllipse(SmileyBlushBrush, null, new Point(centerX + (radius * 0.46), centerY + (radius * 0.24)), radius * 0.17, radius * 0.12);
+        }
+
+        private static void DrawWinkEye(DrawingContext drawingContext, Point center, double halfWidth, double angleDegrees)
+        {
+            double radians = angleDegrees * (Math.PI / 180.0);
+            double dx = Math.Cos(radians) * halfWidth;
+            double dy = Math.Sin(radians) * halfWidth;
+            drawingContext.DrawLine(SmileyFeaturePen, new Point(center.X - dx, center.Y - dy), new Point(center.X + dx, center.Y + dy));
+        }
+
+        private static void DrawXEye(DrawingContext drawingContext, Point center, double halfSize)
+        {
+            drawingContext.DrawLine(SmileyFeaturePen, new Point(center.X - halfSize, center.Y - halfSize), new Point(center.X + halfSize, center.Y + halfSize));
+            drawingContext.DrawLine(SmileyFeaturePen, new Point(center.X - halfSize, center.Y + halfSize), new Point(center.X + halfSize, center.Y - halfSize));
+        }
+
+        private static void DrawSmileMouth(DrawingContext drawingContext, double centerX, double centerY, double halfWidth, double height)
+        {
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                var start = new Point(centerX - halfWidth, centerY);
+                var end = new Point(centerX + halfWidth, centerY);
+                var control = new Point(centerX, centerY + height);
+                ctx.BeginFigure(start, false, false);
+                ctx.QuadraticBezierTo(control, end, true, false);
+            }
+            geometry.Freeze();
+            drawingContext.DrawGeometry(null, SmileyMouthPen, geometry);
+        }
+
+        private static void DrawGrinMouth(DrawingContext drawingContext, double centerX, double centerY, double halfWidth, double height)
+        {
+            var mouthRect = new Rect(centerX - halfWidth, centerY - (height * 0.55), halfWidth * 2, height * 1.45);
+            drawingContext.DrawRoundedRectangle(SmileyGrinFillBrush, SmileyGrinPen, mouthRect, height * 0.55, height * 0.55);
+
+            var teethRect = new Rect(
+                mouthRect.Left + (mouthRect.Width * 0.12),
+                mouthRect.Top + (mouthRect.Height * 0.14),
+                mouthRect.Width * 0.76,
+                mouthRect.Height * 0.28);
+            drawingContext.DrawRoundedRectangle(SmileyTeethBrush, null, teethRect, height * 0.2, height * 0.2);
+        }
+
+        private static void DrawTearDrop(DrawingContext drawingContext, Point center, double size)
+        {
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                var top = new Point(center.X, center.Y - size);
+                var bottom = new Point(center.X, center.Y + size);
+                var left = new Point(center.X - (size * 0.72), center.Y);
+                var right = new Point(center.X + (size * 0.72), center.Y);
+                ctx.BeginFigure(top, true, true);
+                ctx.BezierTo(new Point(top.X - (size * 0.52), top.Y + (size * 0.2)), left, bottom, true, false);
+                ctx.BezierTo(right, new Point(top.X + (size * 0.52), top.Y + (size * 0.2)), top, true, false);
+            }
+            geometry.Freeze();
+            drawingContext.DrawGeometry(SmileyTearBrush, SmileyTearPen, geometry);
+        }
     }
 
     private sealed class GoToTabOption
@@ -556,6 +715,8 @@ public partial class MainWindow : Window
                 ? $"^<{FileName}>"
                 : $"^<{FileName},{ScalePercent}>";
     }
+
+    private readonly record struct SmileyToken(int StartIndex, int Length, string Glyph);
 
     private sealed class ImageLineElementGenerator : VisualLineElementGenerator
     {
@@ -682,6 +843,32 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed class SmileyTextMaskingTransformer : DocumentColorizingTransformer
+    {
+        private readonly Func<bool> _enabledProvider;
+
+        public SmileyTextMaskingTransformer(Func<bool> enabledProvider)
+            => _enabledProvider = enabledProvider;
+
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            if (!_enabledProvider())
+                return;
+
+            if (CurrentContext?.Document == null || line.Length <= 0)
+                return;
+
+            var lineText = CurrentContext.Document.GetText(line.Offset, line.Length);
+            foreach (var token in EnumerateSmileyTokens(lineText))
+            {
+                ChangeLinePart(line.Offset + token.StartIndex, line.Offset + token.StartIndex + token.Length, visualElement =>
+                {
+                    visualElement.TextRunProperties.SetForegroundBrush(Brushes.Transparent);
+                });
+            }
+        }
+    }
+
     // --- Constructor -------------------------------------------------------------
     public MainWindow()
     {
@@ -776,6 +963,7 @@ public partial class MainWindow : Window
             () => _selectedHighlightedLineBrush,
             () => _showHorizontalRuler,
             () => _fancyBulletsEnabled,
+            () => _showSmileys,
             () => _fancyBulletStyle);
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
@@ -849,6 +1037,7 @@ public partial class MainWindow : Window
             marker => _showInlineImages && CanRenderInlineImageLine(marker)));
         editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
         editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
+        editor.TextArea.TextView.LineTransformers.Add(new SmileyTextMaskingTransformer(() => _showSmileys));
         // AvalonEdit enables hyperlinks by default (Ctrl+click). Intercept before it uses Process.Start with an arbitrary URI.
         editor.AddHandler(Hyperlink.RequestNavigateEvent, (RequestNavigateEventHandler)((_, e) =>
         {
@@ -1012,6 +1201,32 @@ public partial class MainWindow : Window
 
         prefixLength = match.Length;
         return prefixLength > 0;
+    }
+
+    private static IEnumerable<SmileyToken> EnumerateSmileyTokens(string lineText)
+    {
+        if (string.IsNullOrEmpty(lineText))
+            yield break;
+
+        foreach (Match match in SmileyTokenRegex.Matches(lineText))
+        {
+            if (!TryResolveSmileyGlyph(match.Value, out var glyph))
+                continue;
+
+            yield return new SmileyToken(match.Index, match.Length, glyph);
+        }
+    }
+
+    private static bool TryResolveSmileyGlyph(string token, out string glyph)
+    {
+        glyph = token switch
+        {
+            ":)" => "🙂",
+            ";)" => "😉",
+            _ => string.Empty
+        };
+
+        return glyph.Length > 0;
     }
 
     private static string FancyBulletStyleToSetting(FancyBulletStyle style)
@@ -4167,6 +4382,7 @@ public partial class MainWindow : Window
     private void UpdateViewMenuChecks()
     {
         MenuItemStyledBullets.IsChecked = _fancyBulletsEnabled;
+        MenuItemShowSmileys.IsChecked = _showSmileys;
         MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
         MenuItemShowInlineImages.IsChecked = _showInlineImages;
     }
@@ -4241,6 +4457,12 @@ public partial class MainWindow : Window
     private void MenuStyledBullets_Click(object sender, RoutedEventArgs e)
     {
         _fancyBulletsEnabled = MenuItemStyledBullets.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+    private void MenuShowSmileys_Click(object sender, RoutedEventArgs e)
+    {
+        _showSmileys = MenuItemShowSmileys.IsChecked;
         ApplyViewRenderingSettings();
         SaveWindowSettings();
     }

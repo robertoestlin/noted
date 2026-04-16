@@ -150,6 +150,7 @@ public sealed class WindowSettings
     public int ActiveTabIndex { get; set; }
     public bool FridayFeelingEnabled { get; set; } = true;
     public bool FancyBulletsEnabled { get; set; }
+    public bool ShowSmileys { get; set; } = true;
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;
     public string FancyBulletStyle { get; set; } = "dot";

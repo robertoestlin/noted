@@ -80,6 +80,7 @@ public partial class MainWindow
             ActiveTabIndex = MainTabControl.SelectedIndex,
             FridayFeelingEnabled = _isFridayFeelingEnabled,
             FancyBulletsEnabled = _fancyBulletsEnabled,
+            ShowSmileys = _showSmileys,
             ShowHorizontalRuler = _showHorizontalRuler,
             ShowInlineImages = _showInlineImages,
             FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
@@ -192,6 +193,7 @@ public partial class MainWindow
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _isFridayFeelingEnabled = true;
         _fancyBulletsEnabled = false;
+        _showSmileys = true;
         _showHorizontalRuler = true;
         _showInlineImages = true;
         _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -260,6 +262,7 @@ public partial class MainWindow
             _activeTabIndex = state.ActiveTabIndex;
         _isFridayFeelingEnabled = state.FridayFeelingEnabled;
         _fancyBulletsEnabled = state.FancyBulletsEnabled;
+        _showSmileys = state.ShowSmileys;
         _showHorizontalRuler = state.ShowHorizontalRuler;
         _showInlineImages = state.ShowInlineImages;
         _fancyBulletStyle = ParseFancyBulletStyle(state.FancyBulletStyle);

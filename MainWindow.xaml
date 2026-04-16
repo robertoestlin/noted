@@ -130,6 +130,10 @@
                               Header="Render _Bullet Symbols"
                               IsCheckable="True"
                               Click="MenuStyledBullets_Click"/>
+                    <MenuItem x:Name="MenuItemShowSmileys"
+                              Header="Render _Smileys"
+                              IsCheckable="True"
+                              Click="MenuShowSmileys_Click"/>
                     <MenuItem x:Name="MenuItemShowHorizontalRuler"
                               Header="Render Horizontal _Dividers"
                               IsCheckable="True"
