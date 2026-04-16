@@ -15,6 +15,8 @@ public partial class MainWindow
     private void ShowSettingsDialog()
     {
         bool originalFancyBulletsEnabled = _fancyBulletsEnabled;
+        bool originalWrapLongLinesVisually = _wrapLongLinesVisually;
+        int originalVisualLineWrapColumn = _visualLineWrapColumn;
         bool originalShowHorizontalRuler = _showHorizontalRuler;
         bool originalShowInlineImages = _showInlineImages;
         var originalFancyBulletStyle = _fancyBulletStyle;
@@ -358,6 +360,31 @@ public partial class MainWindow
             IsChecked = _fancyBulletsEnabled,
             Margin = new Thickness(0, 0, 0, 10)
         };
+        var chkWrapLongLinesVisually = new CheckBox
+        {
+            Content = "Split lines visually",
+            IsChecked = _wrapLongLinesVisually,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        var visualWrapColumnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(24, 0, 0, 10),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        visualWrapColumnRow.Children.Add(new TextBlock
+        {
+            Text = "Line length (characters):",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        });
+        var txtVisualWrapColumn = new TextBox
+        {
+            Text = _visualLineWrapColumn.ToString(),
+            Width = 80,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+        visualWrapColumnRow.Children.Add(txtVisualWrapColumn);
         var chkShowHorizontalRuler = new CheckBox
         {
             Content = "Render '---' lines as horizontal dividers",
@@ -371,8 +398,16 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 10)
         };
         viewPanel.Children.Add(chkStyledBullets);
+        viewPanel.Children.Add(chkWrapLongLinesVisually);
+        viewPanel.Children.Add(visualWrapColumnRow);
         viewPanel.Children.Add(chkShowHorizontalRuler);
         viewPanel.Children.Add(chkShowInlineImages);
+        viewPanel.Children.Add(new TextBlock
+        {
+            Text = "Visual wrapping only changes display. File content and line numbers stay unchanged.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 10)
+        });
         viewPanel.Children.Add(new TextBlock
         {
             Text = "Rendered bullet style:",
@@ -526,8 +561,12 @@ public partial class MainWindow
         void ApplyLiveViewPreviewFromSettingsControls()
         {
             cmbBulletStyle.IsEnabled = chkStyledBullets.IsChecked == true;
+            txtVisualWrapColumn.IsEnabled = chkWrapLongLinesVisually.IsChecked == true;
 
             _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
+            _wrapLongLinesVisually = chkWrapLongLinesVisually.IsChecked == true;
+            if (int.TryParse(txtVisualWrapColumn.Text, out var visualWrapColumn))
+                _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
             _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
             _showInlineImages = chkShowInlineImages.IsChecked == true;
             if (cmbBulletStyle.SelectedItem is ComboBoxItem selectedStyleItem
@@ -540,8 +579,12 @@ public partial class MainWindow
             RefreshBulletPreview();
         }
 
+        txtVisualWrapColumn.IsEnabled = chkWrapLongLinesVisually.IsChecked == true;
         chkStyledBullets.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkStyledBullets.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkWrapLongLinesVisually.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkWrapLongLinesVisually.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        txtVisualWrapColumn.TextChanged += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowHorizontalRuler.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowHorizontalRuler.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowInlineImages.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
@@ -801,6 +844,9 @@ public partial class MainWindow
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
                 && !string.IsNullOrWhiteSpace(cmbFont.Text)
+                && int.TryParse(txtVisualWrapColumn.Text, out int visualWrapColumn)
+                && visualWrapColumn >= MinVisualLineWrapColumn
+                && visualWrapColumn <= MaxVisualLineWrapColumn
                 && cmbCloudHours.SelectedItem is int cloudHours && cloudHours >= 0 && cloudHours <= 50
                 && cmbCloudMinutes.SelectedItem is int cloudMinutes && cloudMinutes >= 0
                 && cloudMinutes <= 55 && cloudMinutes % 5 == 0
@@ -851,6 +897,8 @@ public partial class MainWindow
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
                 _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
                 _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
+                _wrapLongLinesVisually = chkWrapLongLinesVisually.IsChecked == true;
+                _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
                 _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
                 _showInlineImages = chkShowInlineImages.IsChecked == true;
                 _fancyBulletStyle = selectedFancyBulletStyle;
@@ -878,7 +926,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show("Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
+                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
@@ -887,6 +935,8 @@ public partial class MainWindow
         if (!viewPreviewCommitted)
         {
             _fancyBulletsEnabled = originalFancyBulletsEnabled;
+            _wrapLongLinesVisually = originalWrapLongLinesVisually;
+            _visualLineWrapColumn = originalVisualLineWrapColumn;
             _showHorizontalRuler = originalShowHorizontalRuler;
             _showInlineImages = originalShowInlineImages;
             _fancyBulletStyle = originalFancyBulletStyle;

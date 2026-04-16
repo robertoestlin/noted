@@ -109,6 +109,9 @@ public partial class MainWindow : Window
     private const int DefaultAutoSaveSeconds = 30;
     private const int DefaultUptimeHeartbeatSeconds = 300;
     private const int DefaultInitialLines = 50;
+    private const int DefaultVisualLineWrapColumn = 150;
+    private const int MinVisualLineWrapColumn = 60;
+    private const int MaxVisualLineWrapColumn = 400;
     private const int DefaultTabCleanupStaleDays = 30;
     private const string DefaultFontFamily = "Consolas, Courier New";
     private const double DefaultFontSize = 13;
@@ -183,6 +186,8 @@ public partial class MainWindow : Window
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
     private bool _isFridayFeelingEnabled = true;
     private bool _fancyBulletsEnabled;
+    private bool _wrapLongLinesVisually = true;
+    private int _visualLineWrapColumn = DefaultVisualLineWrapColumn;
     private bool _showSmileys = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
@@ -1024,7 +1029,6 @@ public partial class MainWindow : Window
             FontSize = ClampedEditorDisplayFontSize(),
             FontWeight = FontWeight.FromOpenTypeWeight(_fontWeight),
             ShowLineNumbers = true,
-            WordWrap = false,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Padding = new Thickness(4)
@@ -1047,6 +1051,7 @@ public partial class MainWindow : Window
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
+        ApplyVisualLineWrapSettings(editor);
         return editor;
     }
 
@@ -1922,6 +1927,49 @@ public partial class MainWindow : Window
     private double ClampedEditorDisplayFontSize()
         => Math.Max(6, Math.Min(72, _fontSize + _sessionEditorFontZoomDelta));
 
+    private static int NormalizeVisualLineWrapColumn(int value)
+        => Math.Max(MinVisualLineWrapColumn, Math.Min(MaxVisualLineWrapColumn, value));
+
+    private static double EstimateWrapCharacterWidth(TextEditor editor)
+    {
+        var dpi = VisualTreeHelper.GetDpi(editor);
+        var typeface = new Typeface(editor.FontFamily, FontStyles.Normal, editor.FontWeight, FontStretches.Normal);
+        const string sample = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        var formatted = new FormattedText(
+            sample,
+            CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            editor.FontSize,
+            Brushes.Black,
+            dpi.PixelsPerDip);
+        return Math.Max(1, formatted.WidthIncludingTrailingWhitespace / sample.Length);
+    }
+
+    private void ApplyVisualLineWrapSettings(TextEditor editor)
+    {
+        editor.TextArea.Options.InheritWordWrapIndentation = false;
+        editor.TextArea.Options.WordWrapIndentation = 0;
+
+        if (!_wrapLongLinesVisually)
+        {
+            editor.WordWrap = false;
+            editor.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+            editor.MaxWidth = double.PositiveInfinity;
+            editor.HorizontalAlignment = HorizontalAlignment.Stretch;
+            return;
+        }
+
+        editor.WordWrap = true;
+        editor.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+        editor.HorizontalAlignment = HorizontalAlignment.Left;
+
+        var charWidth = EstimateWrapCharacterWidth(editor);
+
+        // Keep wrapping visual-only by constraining the viewport width to a character column target.
+        editor.MaxWidth = Math.Max(280, (_visualLineWrapColumn * charWidth) + 80);
+    }
+
     private void Editor_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (Keyboard.Modifiers != ModifierKeys.Control) return;
@@ -1937,6 +1985,7 @@ public partial class MainWindow : Window
             doc.Editor.FontFamily = family;
             doc.Editor.FontSize = next;
             doc.Editor.FontWeight = FontWeight.FromOpenTypeWeight(_fontWeight);
+            ApplyVisualLineWrapSettings(doc.Editor);
         }
     }
 
@@ -4381,6 +4430,7 @@ public partial class MainWindow : Window
 
     private void UpdateViewMenuChecks()
     {
+        MenuItemWrapLongLinesVisually.IsChecked = _wrapLongLinesVisually;
         MenuItemStyledBullets.IsChecked = _fancyBulletsEnabled;
         MenuItemShowSmileys.IsChecked = _showSmileys;
         MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
@@ -4391,7 +4441,10 @@ public partial class MainWindow : Window
     {
         UpdateViewMenuChecks();
         foreach (var doc in _docs.Values)
+        {
+            ApplyVisualLineWrapSettings(doc.Editor);
             doc.Editor.TextArea.TextView.Redraw();
+        }
     }
 
     // --- Event handlers -------------------------------------------------------
@@ -4457,6 +4510,12 @@ public partial class MainWindow : Window
     private void MenuStyledBullets_Click(object sender, RoutedEventArgs e)
     {
         _fancyBulletsEnabled = MenuItemStyledBullets.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+    private void MenuWrapLongLinesVisually_Click(object sender, RoutedEventArgs e)
+    {
+        _wrapLongLinesVisually = MenuItemWrapLongLinesVisually.IsChecked;
         ApplyViewRenderingSettings();
         SaveWindowSettings();
     }

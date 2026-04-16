@@ -150,6 +150,8 @@ public sealed class WindowSettings
     public int ActiveTabIndex { get; set; }
     public bool FridayFeelingEnabled { get; set; } = true;
     public bool FancyBulletsEnabled { get; set; }
+    public bool WrapLongLinesVisually { get; set; } = true;
+    public int VisualLineWrapColumn { get; set; } = 150;
     public bool ShowSmileys { get; set; } = true;
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;

@@ -80,6 +80,8 @@ public partial class MainWindow
             ActiveTabIndex = MainTabControl.SelectedIndex,
             FridayFeelingEnabled = _isFridayFeelingEnabled,
             FancyBulletsEnabled = _fancyBulletsEnabled,
+            WrapLongLinesVisually = _wrapLongLinesVisually,
+            VisualLineWrapColumn = _visualLineWrapColumn,
             ShowSmileys = _showSmileys,
             ShowHorizontalRuler = _showHorizontalRuler,
             ShowInlineImages = _showInlineImages,
@@ -193,6 +195,8 @@ public partial class MainWindow
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _isFridayFeelingEnabled = true;
         _fancyBulletsEnabled = false;
+        _wrapLongLinesVisually = true;
+        _visualLineWrapColumn = DefaultVisualLineWrapColumn;
         _showSmileys = true;
         _showHorizontalRuler = true;
         _showInlineImages = true;
@@ -262,6 +266,8 @@ public partial class MainWindow
             _activeTabIndex = state.ActiveTabIndex;
         _isFridayFeelingEnabled = state.FridayFeelingEnabled;
         _fancyBulletsEnabled = state.FancyBulletsEnabled;
+        _wrapLongLinesVisually = state.WrapLongLinesVisually;
+        _visualLineWrapColumn = NormalizeVisualLineWrapColumn(state.VisualLineWrapColumn);
         _showSmileys = state.ShowSmileys;
         _showHorizontalRuler = state.ShowHorizontalRuler;
         _showInlineImages = state.ShowInlineImages;

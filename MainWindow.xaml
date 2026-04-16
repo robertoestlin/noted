@@ -126,6 +126,10 @@
                     </MenuItem>
                 </MenuItem>
                 <MenuItem Header="_View">
+                    <MenuItem x:Name="MenuItemWrapLongLinesVisually"
+                              Header="_Split Lines Visually"
+                              IsCheckable="True"
+                              Click="MenuWrapLongLinesVisually_Click"/>
                     <MenuItem x:Name="MenuItemStyledBullets"
                               Header="Render _Bullet Symbols"
                               IsCheckable="True"
