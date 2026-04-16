@@ -2178,6 +2178,13 @@ public partial class MainWindow : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
 
+        if (key == Key.Back
+            && Keyboard.Modifiers == ModifierKeys.None
+            && TryRemoveHighlightBeforeLineJoin(doc))
+        {
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Alt
             && (key == Key.Up || key == Key.Down))
         {
@@ -2211,6 +2218,26 @@ public partial class MainWindow : Window
 
         if (changed)
             RedrawHighlight(doc);
+    }
+
+    private bool TryRemoveHighlightBeforeLineJoin(TabDocument doc)
+    {
+        var editor = doc.Editor;
+        var selection = editor.TextArea.Selection;
+        if (selection != null && !selection.IsEmpty)
+            return false;
+
+        int caretLine = Math.Max(1, editor.TextArea.Caret.Line);
+        int caretColumn = Math.Max(1, editor.TextArea.Caret.Column);
+        if (caretLine <= 1 || caretColumn != 1 || !IsLineHighlighted(doc, caretLine))
+            return false;
+
+        var previousLine = editor.Document.GetLineByNumber(caretLine - 1);
+        var previousLineText = editor.Document.GetText(previousLine.Offset, previousLine.Length);
+        if (string.IsNullOrWhiteSpace(previousLineText))
+            return false;
+
+        return RemoveHighlightedLine(doc, caretLine);
     }
 
     private static bool TryMoveCurrentLine(TabDocument doc, bool moveDown)
