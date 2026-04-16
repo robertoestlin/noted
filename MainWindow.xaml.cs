@@ -56,6 +56,7 @@ public partial class MainWindow : Window
     private readonly ColorThemeService _colorThemeService = new();
     private readonly UserProfileService _userProfileService = new();
     private readonly TimeReportSettingsService _timeReportSettingsService = new();
+    private readonly AudioSessionSnapshotService _audioSessionSnapshotService = new();
     private readonly Dictionary<TabItem, TabDocument> _docs = new();
     private readonly DispatcherTimer _autoSaveTimer;
     private readonly DispatcherTimer _pluginAlarmTimer;
@@ -4336,7 +4337,8 @@ public partial class MainWindow : Window
 
             var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
             var idleSeconds = GetSystemIdleSeconds();
-            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s{Environment.NewLine}");
+            var audioSummary = _audioSessionSnapshotService.CaptureOutputAudioSummary();
+            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary}{Environment.NewLine}");
             _lastBackupHeartbeatAtLocal = timestampLocal;
         }
         finally
