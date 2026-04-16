@@ -89,7 +89,7 @@ public partial class MainWindow : Window
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string TodoItemsFileName = "todo-items.json";
-    private const string UptimeHeartbeatFileName = "uptime-heartbeat.log";
+    private const string UptimeHeartbeatFileNamePrefix = "uptime-heartbeat-";
     private const string AppLogFileName = "noted.log";
     private const int MaxClosedTabs = 10;
 
@@ -4256,7 +4256,7 @@ public partial class MainWindow : Window
         _backupHeartbeatTimer.Stop();
         if (!string.IsNullOrWhiteSpace(_backupFolder))
         {
-            var path = Path.Combine(_backupFolder, UptimeHeartbeatFileName);
+            var path = GetUptimeHeartbeatFilePath(DateTimeOffset.Now);
             _lastBackupHeartbeatAtLocal = ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
         }
 
@@ -4310,7 +4310,7 @@ public partial class MainWindow : Window
             return;
 
         Directory.CreateDirectory(_backupFolder);
-        var path = Path.Combine(_backupFolder, UptimeHeartbeatFileName);
+        var path = GetUptimeHeartbeatFilePath(timestampLocal);
         var lockTaken = false;
         try
         {
@@ -4349,6 +4349,12 @@ public partial class MainWindow : Window
             if (lockTaken)
                 HeartbeatFileMutex.ReleaseMutex();
         }
+    }
+
+    private string GetUptimeHeartbeatFilePath(DateTimeOffset timestampLocal)
+    {
+        var fileName = $"{UptimeHeartbeatFileNamePrefix}{timestampLocal:yyyy-MM}.log";
+        return Path.Combine(_backupFolder, fileName);
     }
 
     private static DateTimeOffset? ReadLastHeartbeatTimestamp(string path)
