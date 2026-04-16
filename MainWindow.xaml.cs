@@ -1372,8 +1372,10 @@ public partial class MainWindow : Window
     {
         var menu = new ContextMenu();
 
-        var formatJsonItem = new MenuItem { Header = "Format selection as pretty JSON" };
-        formatJsonItem.Click += (_, _) => FormatSelectedJson(editor);
+        var formatJsonItem = new MenuItem { Header = "Format JSON" };
+        formatJsonItem.Click += (_, _) => FormatJson(editor, keepOriginal: false);
+        var formatJsonKeepOriginalItem = new MenuItem { Header = "Format JSON (keep original)" };
+        formatJsonKeepOriginalItem.Click += (_, _) => FormatJson(editor, keepOriginal: true);
         var copySelectionItem = new MenuItem { Header = "Copy Selection To" };
         copySelectionItem.Items.Add(new MenuItem { Header = "(Loading...)", IsEnabled = false });
         copySelectionItem.SubmenuOpened += (_, _) => PopulateTransferMenu(copySelectionItem, editor, moveSelection: false);
@@ -1391,6 +1393,7 @@ public partial class MainWindow : Window
         openImageFolderItem.Click += (_, _) => ShowInlineImageInFolder(editor);
 
         menu.Items.Add(formatJsonItem);
+        menu.Items.Add(formatJsonKeepOriginalItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
         menu.Items.Add(new Separator());
@@ -1403,7 +1406,9 @@ public partial class MainWindow : Window
         menu.Opened += (_, _) =>
         {
             bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
-            formatJsonItem.IsEnabled = hasSelection;
+            bool canFormatJson = editor.Document != null && editor.Document.LineCount > 0;
+            formatJsonItem.IsEnabled = canFormatJson;
+            formatJsonKeepOriginalItem.IsEnabled = canFormatJson;
             copySelectionItem.IsEnabled = hasSelection;
             moveSelectionItem.IsEnabled = hasSelection;
 
@@ -1501,15 +1506,39 @@ public partial class MainWindow : Window
         return TryGetInlineImageMarker(lineText, out marker);
     }
 
-    private void FormatSelectedJson(TextEditor editor)
+    private void FormatJson(TextEditor editor, bool keepOriginal)
     {
-        var selectedText = editor.SelectedText;
-        if (string.IsNullOrWhiteSpace(selectedText))
+        if (editor.Document == null)
+            return;
+
+        string textToFormat;
+        int replaceStart;
+        int replaceLength;
+        string? lineDelimiterSuffix = null;
+
+        if (editor.SelectionLength > 0)
+        {
+            textToFormat = editor.SelectedText;
+            replaceStart = editor.SelectionStart;
+            replaceLength = editor.SelectionLength;
+        }
+        else
+        {
+            int lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
+            var line = editor.Document.GetLineByNumber(lineNumber);
+            textToFormat = editor.Document.GetText(line.Offset, line.Length);
+            replaceStart = line.Offset;
+            replaceLength = line.TotalLength;
+            if (line.DelimiterLength > 0)
+                lineDelimiterSuffix = editor.Document.GetText(line.Offset + line.Length, line.DelimiterLength);
+        }
+
+        if (string.IsNullOrWhiteSpace(textToFormat))
             return;
 
         try
         {
-            using var jsonDocument = JsonDocument.Parse(selectedText, new JsonDocumentOptions
+            using var jsonDocument = JsonDocument.Parse(textToFormat, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
                 CommentHandling = JsonCommentHandling.Skip
@@ -1520,17 +1549,35 @@ public partial class MainWindow : Window
                 WriteIndented = true
             });
 
-            var selectionStart = editor.SelectionStart;
-            var selectionLength = editor.SelectionLength;
-            editor.Document.Replace(selectionStart, selectionLength, formatted);
-            editor.Select(selectionStart, formatted.Length);
+            if (keepOriginal)
+            {
+                var doc = editor.Document;
+                // Same insert for selection and whole line: after the parsed range (replaceStart/Length).
+                int insertAt = replaceStart + replaceLength;
+                // No-selection range already includes the line delimiter (line.TotalLength),
+                // so only one extra newline is needed to match selection behavior.
+                var prefix = editor.SelectionLength > 0
+                    ? Environment.NewLine + Environment.NewLine
+                    : Environment.NewLine;
+                doc.Insert(insertAt, prefix + formatted);
+                editor.Select(insertAt + prefix.Length, formatted.Length);
+            }
+            else
+            {
+                if (lineDelimiterSuffix != null)
+                    formatted += lineDelimiterSuffix;
+
+                editor.Document.Replace(replaceStart, replaceLength, formatted);
+                editor.Select(replaceStart, formatted.Length);
+            }
+
             EnableJsonSyntaxHighlighting(editor);
         }
         catch (JsonException)
         {
             MessageBox.Show(
-                "Selected text is not valid JSON.",
-                "Pretty JSON",
+                "Could not parse as JSON.",
+                "Format JSON",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
