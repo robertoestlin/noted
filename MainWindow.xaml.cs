@@ -4336,9 +4336,12 @@ public partial class MainWindow : Window
                 return;
 
             var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
+            var writtenAtLocal = DateTimeOffset.Now;
+            var isDelayed = (writtenAtLocal - timestampLocal) > TimeSpan.FromMinutes(1);
             var idleSeconds = GetSystemIdleSeconds();
             var audioSummary = _audioSessionSnapshotService.CaptureOutputAudioSummary();
-            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary}{Environment.NewLine}");
+            var delayedFlag = isDelayed ? ",delayed=1" : string.Empty;
+            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary}{delayedFlag}{Environment.NewLine}");
             _lastBackupHeartbeatAtLocal = timestampLocal;
         }
         finally
