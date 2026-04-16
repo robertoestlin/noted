@@ -89,6 +89,7 @@ public partial class MainWindow : Window
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string TodoItemsFileName = "todo-items.json";
     private const string UptimeHeartbeatFileName = "uptime-heartbeat.log";
+    private const string AppLogFileName = "noted.log";
     private const int MaxClosedTabs = 10;
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
@@ -4209,13 +4210,44 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(cloudFolder)) return;
         if (!forceCloudBackup && !ShouldSaveCloudBackup()) return;
 
+        AppendAppLog($"Cloud copy started. source='{justSavedBackupPath}', target='{cloudFolder}', manualCloudSave={forceCloudBackup}");
+        var cloudCopyStopwatch = Stopwatch.StartNew();
+
         if (!_backupService.TryCopyBackupToFolder(justSavedBackupPath, cloudFolder))
+        {
+            cloudCopyStopwatch.Stop();
+            AppendAppLog($"Cloud copy completed with failure in {cloudCopyStopwatch.ElapsedMilliseconds} ms. source='{justSavedBackupPath}', target='{cloudFolder}'");
             return;
+        }
 
         _lastCloudSaveUtc = DateTime.UtcNow;
         _lastSaveIncludedCloudCopy = true;
         if (persistCloudMetadata)
             SaveWindowSettings();
+
+        cloudCopyStopwatch.Stop();
+        AppendAppLog($"Cloud copy completed successfully in {cloudCopyStopwatch.ElapsedMilliseconds} ms. source='{justSavedBackupPath}', target='{cloudFolder}'");
+    }
+
+    private void AppendAppLog(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_backupFolder))
+                return;
+
+            Directory.CreateDirectory(_backupFolder);
+            var logPath = Path.Combine(_backupFolder, AppLogFileName);
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+            File.AppendAllText(logPath, $"[{timestamp}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Logging is best effort; never block save flow.
+        }
     }
 
     private void StartBackupHeartbeatTimer()
