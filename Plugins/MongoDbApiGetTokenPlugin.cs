@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -218,8 +217,8 @@ public partial class MainWindow
         };
         docHyperlink.RequestNavigate += (_, e) =>
         {
-            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
             e.Handled = true;
+            SafeHttpUriLauncher.TryOpenInDefaultBrowser(e.Uri);
         };
         docLine.Inlines.Add(docHyperlink);
 

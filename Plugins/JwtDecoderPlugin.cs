@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
@@ -650,8 +649,8 @@ public partial class MainWindow
         };
         linkJwtIo.RequestNavigate += (_, e) =>
         {
-            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
             e.Handled = true;
+            SafeHttpUriLauncher.TryOpenInDefaultBrowser(e.Uri);
         };
         jwtDocLine.Inlines.Add(linkJwtIo);
         jwtDocLine.Inlines.Add(new Run(" · "));
@@ -661,8 +660,8 @@ public partial class MainWindow
         };
         linkIntro.RequestNavigate += (_, e) =>
         {
-            Process.Start(new ProcessStartInfo(e.Uri!.AbsoluteUri) { UseShellExecute = true });
             e.Handled = true;
+            SafeHttpUriLauncher.TryOpenInDefaultBrowser(e.Uri);
         };
         jwtDocLine.Inlines.Add(linkIntro);
 

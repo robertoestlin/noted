@@ -849,6 +849,12 @@ public partial class MainWindow : Window
             marker => _showInlineImages && CanRenderInlineImageLine(marker)));
         editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
         editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
+        // AvalonEdit enables hyperlinks by default (Ctrl+click). Intercept before it uses Process.Start with an arbitrary URI.
+        editor.AddHandler(Hyperlink.RequestNavigateEvent, (RequestNavigateEventHandler)((_, e) =>
+        {
+            e.Handled = true;
+            SafeHttpUriLauncher.TryOpenHyperlinkUri(e.Uri);
+        }));
         EnableJsonSyntaxHighlighting(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
