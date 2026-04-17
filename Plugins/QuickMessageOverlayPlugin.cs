@@ -868,6 +868,16 @@ public partial class MainWindow
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && key == Key.O
+            && MessageOverlay.Visibility != Visibility.Visible)
+        {
+            ShowQuickMessageOverlayDialog();
+            e.Handled = true;
+            return;
+        }
+
         HandleMessageOverlayKey(e);
     }
 

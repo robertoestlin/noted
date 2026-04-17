@@ -2071,6 +2071,7 @@ public partial class MainWindow : Window
     {
         editor.TextArea.Options.InheritWordWrapIndentation = false;
         editor.TextArea.Options.WordWrapIndentation = 0;
+        var textView = editor.TextArea.TextView;
 
         if (!_wrapLongLinesVisually)
         {
@@ -2078,17 +2079,22 @@ public partial class MainWindow : Window
             editor.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
             editor.MaxWidth = double.PositiveInfinity;
             editor.HorizontalAlignment = HorizontalAlignment.Stretch;
+            textView.MaxWidth = double.PositiveInfinity;
+            textView.HorizontalAlignment = HorizontalAlignment.Stretch;
             return;
         }
 
         editor.WordWrap = true;
         editor.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
-        editor.HorizontalAlignment = HorizontalAlignment.Left;
+        editor.HorizontalAlignment = HorizontalAlignment.Stretch;
+        editor.MaxWidth = double.PositiveInfinity;
 
         var charWidth = EstimateWrapCharacterWidth(editor);
+        var targetWidth = Math.Max(280, (_visualLineWrapColumn * charWidth) + 80);
 
-        // Keep wrapping visual-only by constraining the viewport width to a character column target.
-        editor.MaxWidth = Math.Max(280, (_visualLineWrapColumn * charWidth) + 80);
+        // Keep wrapping visual-only by constraining the text viewport width, not the whole editor.
+        textView.MaxWidth = targetWidth;
+        textView.HorizontalAlignment = HorizontalAlignment.Left;
     }
 
     private void Editor_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
