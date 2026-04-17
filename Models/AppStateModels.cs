@@ -172,4 +172,9 @@ public sealed class WindowSettings
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }
     public string? QuickMessageCustom { get; set; }
+    public int? MessageOverlayBlinkIntervalMs { get; set; }
+    public int? MessageOverlayFadeMs { get; set; }
+    public int? MessageOverlayBlinkPhaseMs { get; set; }
+    public int? MessageOverlayHoldMs { get; set; }
+    public string? MessageOverlayBlinkMode { get; set; }
 }

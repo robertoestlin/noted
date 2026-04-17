@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using Noted.Models;
 
 namespace Noted;
@@ -14,9 +17,27 @@ public partial class MainWindow
     private const string DefaultQuickMessageColorHex = "#FFFF66CC";
     private const string QuickMessageButtonBackgroundHex = "#D9111827";
     private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB", "GLHF", "LOL"];
+    private const int DefaultMessageOverlayBlinkIntervalMs = 1000;
+    private const int DefaultMessageOverlayFadeMs = 400;
+    private const int MinMessageOverlayTimingMs = 50;
+    private const int MaxMessageOverlayTimingMs = 20000;
+    private const int CharacterBlinkTickMs = 40;
+    private const string BlinkModeWholeText = "whole-text";
+    private const string BlinkModeCharacterSweep = "character-sweep";
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
     private string _quickMessageColorHex = DefaultQuickMessageColorHex;
+    private bool _isMessageOverlayBlinking;
+    private int _messageOverlayBlinkIntervalMs = DefaultMessageOverlayBlinkIntervalMs;
+    private int _messageOverlayFadeMs = DefaultMessageOverlayFadeMs;
+    private string _messageOverlayBlinkMode = BlinkModeWholeText;
+    private DispatcherTimer? _messageOverlayCharacterTimer;
+    private int _messageOverlayCharacterFadeMs;
+    private int _messageOverlayCharacterIntervalMs;
+    private string _messageOverlayCharacterBaseText = string.Empty;
+    private Brush _messageOverlayCharacterForeground = Brushes.White;
+    private int _messageOverlayCharacterVisibleChars;
+    private int _messageOverlayActiveColorIndex = -1;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -26,12 +47,20 @@ public partial class MainWindow
         ("Neon Pink", "#FFFF66CC"),
         ("Classic White", "#FFF7FAFF")
     ];
+    private static readonly (string Label, string Value)[] MessageOverlayBlinkModes =
+    [
+        ("Whole text", BlinkModeWholeText),
+        ("Character sweep", BlinkModeCharacterSweep)
+    ];
 
     private void ResetQuickMessageOverlaySettings()
     {
         _quickMessagePresets = [.. DefaultQuickMessagePresets];
         _quickMessageCustom = string.Empty;
         _quickMessageColorHex = DefaultQuickMessageColorHex;
+        _messageOverlayBlinkIntervalMs = DefaultMessageOverlayBlinkIntervalMs;
+        _messageOverlayFadeMs = DefaultMessageOverlayFadeMs;
+        _messageOverlayBlinkMode = BlinkModeWholeText;
     }
 
     private List<string> BuildQuickMessagePresetsSnapshot()
@@ -46,6 +75,13 @@ public partial class MainWindow
         _quickMessagePresets = presets.Count == 0 ? [.. DefaultQuickMessagePresets] : presets;
         _quickMessageCustom = (state.QuickMessageCustom ?? string.Empty).Trim();
         _quickMessageColorHex = NormalizeQuickMessageColorHex(state.QuickMessageColor);
+        _messageOverlayBlinkIntervalMs = NormalizeMessageOverlayTimingMs(
+            state.MessageOverlayBlinkIntervalMs ?? state.MessageOverlayHoldMs,
+            DefaultMessageOverlayBlinkIntervalMs);
+        _messageOverlayFadeMs = NormalizeMessageOverlayTimingMs(
+            state.MessageOverlayFadeMs ?? state.MessageOverlayBlinkPhaseMs,
+            DefaultMessageOverlayFadeMs);
+        _messageOverlayBlinkMode = NormalizeMessageOverlayBlinkMode(state.MessageOverlayBlinkMode);
     }
 
     private static List<string> NormalizeQuickMessagePresets(IEnumerable<string>? presets)
@@ -71,6 +107,31 @@ public partial class MainWindow
         return DefaultQuickMessageColorHex;
     }
 
+    private static int NormalizeMessageOverlayTimingMs(int? value, int fallback)
+    {
+        if (value is >= MinMessageOverlayTimingMs and <= MaxMessageOverlayTimingMs)
+            return value.Value;
+        return fallback;
+    }
+
+    private static string NormalizeMessageOverlayBlinkMode(string? value)
+    {
+        return string.Equals(value, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase)
+            ? BlinkModeCharacterSweep
+            : BlinkModeWholeText;
+    }
+
+    private static int FindQuickMessageColorIndex(Brush brush)
+    {
+        if (brush is not SolidColorBrush solid)
+            return -1;
+
+        var hex = ColorToHex(solid.Color);
+        return Array.FindIndex(
+            QuickMessageColorOptions,
+            option => string.Equals(option.Hex, hex, StringComparison.OrdinalIgnoreCase));
+    }
+
     private Brush ResolveQuickMessageBrush()
     {
         if (TryParseColor(_quickMessageColorHex, out var color))
@@ -86,7 +147,7 @@ public partial class MainWindow
     {
         var dlg = new Window
         {
-            Title = "Quick Message Overlay",
+            Title = "Message Overlay",
             Width = 620,
             Height = 420,
             MinWidth = 500,
@@ -315,11 +376,11 @@ public partial class MainWindow
     {
         var dlg = new Window
         {
-            Title = "Quick Message Settings",
-            Width = 480,
-            Height = 380,
+            Title = "Message Overlay Settings",
+            Width = 520,
+            Height = 470,
             MinWidth = 380,
-            MinHeight = 300,
+            MinHeight = 360,
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
@@ -327,6 +388,7 @@ public partial class MainWindow
         // Layout: list on the left, icon button column on the right, input at bottom
         var root = new Grid { Margin = new Thickness(12) };
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -375,6 +437,88 @@ public partial class MainWindow
         Grid.SetColumnSpan(txtMessage, 2);
         root.Children.Add(txtMessage);
 
+        var behaviorGroup = new GroupBox
+        {
+            Header = "Blink behavior",
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        Grid.SetRow(behaviorGroup, 2);
+        Grid.SetColumn(behaviorGroup, 0);
+        Grid.SetColumnSpan(behaviorGroup, 2);
+
+        var behaviorGrid = new Grid { Margin = new Thickness(8) };
+        behaviorGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        behaviorGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        behaviorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        behaviorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        behaviorGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var lblMode = new TextBlock
+        {
+            Text = "Blink type",
+            Margin = new Thickness(0, 0, 8, 8),
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold
+        };
+        behaviorGrid.Children.Add(lblMode);
+
+        var cmbBlinkMode = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        foreach (var mode in MessageOverlayBlinkModes)
+        {
+            cmbBlinkMode.Items.Add(new ComboBoxItem
+            {
+                Content = mode.Label,
+                Tag = mode.Value
+            });
+        }
+
+        var selectedModeIndex = Array.FindIndex(
+            MessageOverlayBlinkModes,
+            mode => string.Equals(mode.Value, _messageOverlayBlinkMode, StringComparison.OrdinalIgnoreCase));
+        cmbBlinkMode.SelectedIndex = selectedModeIndex >= 0 ? selectedModeIndex : 0;
+        Grid.SetColumn(cmbBlinkMode, 1);
+        behaviorGrid.Children.Add(cmbBlinkMode);
+
+        var lblIntervalMs = new TextBlock
+        {
+            Text = "Time between blinks (ms)",
+            Margin = new Thickness(0, 0, 8, 8),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetRow(lblIntervalMs, 1);
+        behaviorGrid.Children.Add(lblIntervalMs);
+
+        var txtIntervalMs = new TextBox
+        {
+            Text = _messageOverlayBlinkIntervalMs.ToString(),
+            Margin = new Thickness(0, 0, 0, 8),
+            MinWidth = 120
+        };
+        Grid.SetRow(txtIntervalMs, 1);
+        Grid.SetColumn(txtIntervalMs, 1);
+        behaviorGrid.Children.Add(txtIntervalMs);
+
+        var lblFadeMs = new TextBlock
+        {
+            Text = "Fade time (ms)",
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetRow(lblFadeMs, 2);
+        behaviorGrid.Children.Add(lblFadeMs);
+
+        var txtFadeMs = new TextBox
+        {
+            Text = _messageOverlayFadeMs.ToString(),
+            MinWidth = 120
+        };
+        Grid.SetRow(txtFadeMs, 2);
+        Grid.SetColumn(txtFadeMs, 1);
+        behaviorGrid.Children.Add(txtFadeMs);
+
+        behaviorGroup.Content = behaviorGrid;
+        root.Children.Add(behaviorGroup);
+
         void CommitPresets()
         {
             var lines = new List<string>();
@@ -385,6 +529,42 @@ public partial class MainWindow
                     lines.Add(text);
             }
             _quickMessagePresets = lines.Count == 0 ? [.. DefaultQuickMessagePresets] : lines;
+            SaveWindowSettings();
+        }
+
+        static bool TryParseTimingInput(TextBox input, int fallback, out int value)
+        {
+            if (!int.TryParse((input.Text ?? string.Empty).Trim(), out var parsed))
+            {
+                value = fallback;
+                return false;
+            }
+
+            if (parsed < MinMessageOverlayTimingMs || parsed > MaxMessageOverlayTimingMs)
+            {
+                value = fallback;
+                return false;
+            }
+
+            value = parsed;
+            return true;
+        }
+
+        void CommitBlinkBehaviorSettings()
+        {
+            var intervalOk = TryParseTimingInput(txtIntervalMs, _messageOverlayBlinkIntervalMs, out var nextIntervalMs);
+            var fadeOk = TryParseTimingInput(txtFadeMs, _messageOverlayFadeMs, out var nextFadeMs);
+            if (!intervalOk)
+                txtIntervalMs.Text = _messageOverlayBlinkIntervalMs.ToString();
+            if (!fadeOk)
+                txtFadeMs.Text = _messageOverlayFadeMs.ToString();
+
+            _messageOverlayFadeMs = nextFadeMs;
+            _messageOverlayBlinkIntervalMs = nextIntervalMs;
+            _messageOverlayBlinkMode = cmbBlinkMode.SelectedItem is ComboBoxItem item && item.Tag is string value
+                ? NormalizeMessageOverlayBlinkMode(value)
+                : BlinkModeWholeText;
+
             SaveWindowSettings();
         }
 
@@ -425,6 +605,23 @@ public partial class MainWindow
         }
 
         txtMessage.TextChanged += (_, _) => RefreshButtonState();
+        txtIntervalMs.LostFocus += (_, _) => CommitBlinkBehaviorSettings();
+        txtFadeMs.LostFocus += (_, _) => CommitBlinkBehaviorSettings();
+        txtIntervalMs.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter)
+                return;
+            e.Handled = true;
+            CommitBlinkBehaviorSettings();
+        };
+        txtFadeMs.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter)
+                return;
+            e.Handled = true;
+            CommitBlinkBehaviorSettings();
+        };
+        cmbBlinkMode.SelectionChanged += (_, _) => CommitBlinkBehaviorSettings();
 
         btnAdd.Click += (_, _) => AddCurrentText();
         btnUpdate.Click += (_, _) => UpdateSelectedText();
@@ -467,6 +664,7 @@ public partial class MainWindow
             if (e.Key != Key.Escape)
                 return;
             e.Handled = true;
+            CommitBlinkBehaviorSettings();
             dlg.Close();
         };
 
@@ -475,6 +673,7 @@ public partial class MainWindow
             txtMessage.Focus();
             RefreshButtonState();
         };
+        dlg.Closing += (_, _) => CommitBlinkBehaviorSettings();
 
         dlg.Content = root;
         return dlg.ShowDialog();
@@ -482,6 +681,10 @@ public partial class MainWindow
 
     private void ShowQuickMessageOverlay(string text, Brush foreground)
     {
+        SetMessageOverlayBlinking(false);
+        _messageOverlayCharacterBaseText = text;
+        _messageOverlayCharacterForeground = foreground;
+        _messageOverlayActiveColorIndex = FindQuickMessageColorIndex(foreground);
         MessageOverlayText.Text = text;
         MessageOverlayText.Foreground = foreground;
         MessageOverlay.Visibility = Visibility.Visible;
@@ -491,7 +694,143 @@ public partial class MainWindow
 
     private void HideQuickMessageOverlay()
     {
+        SetMessageOverlayBlinking(false);
         MessageOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void SetMessageOverlayBlinking(bool enabled)
+    {
+        _isMessageOverlayBlinking = enabled;
+        StopMessageOverlayCharacterBlinkTimer();
+
+        if (enabled)
+        {
+            if (string.Equals(_messageOverlayBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
+            {
+                StartCharacterSweepBlink();
+                return;
+            }
+
+            StartWholeTextBlink();
+            return;
+        }
+
+        MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
+        MessageOverlayText.Opacity = 1.0;
+        if (_messageOverlayCharacterBaseText.Length > 0)
+            MessageOverlayText.Text = _messageOverlayCharacterBaseText;
+    }
+
+    private void StartWholeTextBlink()
+    {
+        _messageOverlayCharacterBaseText = MessageOverlayText.Text ?? string.Empty;
+        var fadeMs = NormalizeMessageOverlayTimingMs(_messageOverlayFadeMs, DefaultMessageOverlayFadeMs);
+        var intervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
+        var cycleMs = intervalMs + fadeMs;
+
+        var animation = new DoubleAnimationUsingKeyFrames
+        {
+            Duration = TimeSpan.FromMilliseconds(cycleMs),
+            RepeatBehavior = RepeatBehavior.Forever
+        };
+        var halfFadeMs = fadeMs / 2.0;
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(intervalMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(intervalMs + halfFadeMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(cycleMs))));
+        MessageOverlayText.Text = _messageOverlayCharacterBaseText;
+        MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, animation);
+    }
+
+    private void StartCharacterSweepBlink()
+    {
+        _messageOverlayCharacterBaseText = MessageOverlayText.Text ?? string.Empty;
+        _messageOverlayCharacterForeground = MessageOverlayText.Foreground;
+        if (_messageOverlayCharacterBaseText.Length == 0)
+        {
+            MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
+            MessageOverlayText.Opacity = 1.0;
+            return;
+        }
+
+        _messageOverlayCharacterFadeMs = NormalizeMessageOverlayTimingMs(_messageOverlayFadeMs, DefaultMessageOverlayFadeMs);
+        _messageOverlayCharacterIntervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
+        var charCount = _messageOverlayCharacterBaseText.Length;
+        var stepMs = Math.Max(20, _messageOverlayCharacterFadeMs / Math.Max(charCount, 1));
+        _messageOverlayCharacterTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(Math.Min(CharacterBlinkTickMs, stepMs))
+        };
+
+        var elapsedMs = 0;
+        var holding = false;
+        MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
+        MessageOverlayText.Opacity = 1.0;
+        _messageOverlayCharacterVisibleChars = 0;
+        RenderCharacterSweepText(0);
+
+        _messageOverlayCharacterTimer.Tick += (_, _) =>
+        {
+            elapsedMs += (int)_messageOverlayCharacterTimer.Interval.TotalMilliseconds;
+            if (!holding)
+            {
+                var progress = Math.Min(1.0, (double)elapsedMs / _messageOverlayCharacterFadeMs);
+                var visibleChars = Math.Max(1, (int)Math.Ceiling(progress * charCount));
+                _messageOverlayCharacterVisibleChars = visibleChars;
+                RenderCharacterSweepText(visibleChars);
+                if (elapsedMs >= _messageOverlayCharacterFadeMs)
+                {
+                    holding = true;
+                    elapsedMs = 0;
+                    _messageOverlayCharacterVisibleChars = charCount;
+                    RenderCharacterSweepText(charCount);
+                }
+                return;
+            }
+
+            if (elapsedMs >= _messageOverlayCharacterIntervalMs)
+            {
+                holding = false;
+                elapsedMs = 0;
+                _messageOverlayCharacterVisibleChars = 0;
+                RenderCharacterSweepText(0);
+            }
+        };
+        _messageOverlayCharacterTimer.Start();
+    }
+
+    private void RenderCharacterSweepText(int visibleChars)
+    {
+        var source = _messageOverlayCharacterBaseText ?? string.Empty;
+        var maxVisible = Math.Max(0, Math.Min(visibleChars, source.Length));
+        var transparentBrush = Brushes.Transparent;
+
+        MessageOverlayText.Inlines.Clear();
+        for (var i = 0; i < source.Length; i++)
+        {
+            var ch = source[i];
+            if (ch == '\r')
+                continue;
+            if (ch == '\n')
+            {
+                MessageOverlayText.Inlines.Add(new LineBreak());
+                continue;
+            }
+
+            MessageOverlayText.Inlines.Add(new Run(ch.ToString())
+            {
+                Foreground = i < maxVisible ? _messageOverlayCharacterForeground : transparentBrush
+            });
+        }
+    }
+
+    private void StopMessageOverlayCharacterBlinkTimer()
+    {
+        if (_messageOverlayCharacterTimer == null)
+            return;
+
+        _messageOverlayCharacterTimer.Stop();
+        _messageOverlayCharacterTimer = null;
     }
 
     private void MessageOverlay_DismissByMouseDown(object sender, MouseButtonEventArgs e)
@@ -502,7 +841,62 @@ public partial class MainWindow
 
     private void MessageOverlay_DismissByKeyDown(object sender, KeyEventArgs e)
     {
+        HandleMessageOverlayKey(e);
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        HandleMessageOverlayKey(e);
+    }
+
+    private bool HandleMessageOverlayKey(KeyEventArgs e)
+    {
+        if (MessageOverlay.Visibility != Visibility.Visible)
+            return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.Up || key == Key.Down)
+        {
+            CycleMessageOverlayColor(key == Key.Down ? 1 : -1);
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.B)
+        {
+            SetMessageOverlayBlinking(!_isMessageOverlayBlinking);
+            e.Handled = true;
+            return true;
+        }
+
         HideQuickMessageOverlay();
         e.Handled = true;
+        return true;
+    }
+
+    private void CycleMessageOverlayColor(int direction)
+    {
+        if (QuickMessageColorOptions.Length == 0)
+            return;
+
+        if (_messageOverlayActiveColorIndex < 0)
+            _messageOverlayActiveColorIndex = FindQuickMessageColorIndex(MessageOverlayText.Foreground);
+        if (_messageOverlayActiveColorIndex < 0)
+            _messageOverlayActiveColorIndex = 0;
+
+        _messageOverlayActiveColorIndex =
+            (_messageOverlayActiveColorIndex + direction + QuickMessageColorOptions.Length) % QuickMessageColorOptions.Length;
+        var nextHex = QuickMessageColorOptions[_messageOverlayActiveColorIndex].Hex;
+        if (!TryParseColor(nextHex, out var color))
+            return;
+
+        var nextBrush = new SolidColorBrush(color);
+        MessageOverlayText.Foreground = nextBrush;
+        _messageOverlayCharacterForeground = nextBrush;
+        if (_isMessageOverlayBlinking
+            && string.Equals(_messageOverlayBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
+        {
+            RenderCharacterSweepText(_messageOverlayCharacterVisibleChars);
+        }
     }
 }

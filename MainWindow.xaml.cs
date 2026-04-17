@@ -897,6 +897,7 @@ public partial class MainWindow : Window
         MainTabControl.AllowDrop = true;
         MainTabControl.DragOver += MainTabControl_DragOver;
         MainTabControl.Drop += MainTabControl_Drop;
+        PreviewKeyDown += MainWindow_PreviewKeyDown;
 
         // Auto-save timer
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };

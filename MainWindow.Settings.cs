@@ -102,7 +102,10 @@ public partial class MainWindow
             TabCleanupStaleDays = _tabCleanupStaleDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
-            QuickMessageCustom = _quickMessageCustom
+            QuickMessageCustom = _quickMessageCustom,
+            MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
+            MessageOverlayFadeMs = _messageOverlayFadeMs,
+            MessageOverlayBlinkMode = _messageOverlayBlinkMode
         };
 
     private void LoadWindowSettings()

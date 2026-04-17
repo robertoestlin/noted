@@ -537,6 +537,9 @@ public partial class MainWindow
 
     private void TodoPanelBorder_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (HandleMessageOverlayKey(e))
+            return;
+
         if (!_todoPanelVisible)
             return;
 
