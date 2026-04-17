@@ -18,7 +18,7 @@ public partial class MainWindow
     private const string QuickMessageButtonBackgroundHex = "#D9111827";
     private static readonly string[] DefaultQuickMessagePresets = ["GG", "AFK", "BRB", "GLHF", "LOL"];
     private const int DefaultMessageOverlayBlinkIntervalMs = 1000;
-    private const int DefaultMessageOverlayFadeMs = 400;
+    private const int DefaultMessageOverlayFadeMs = 2000;
     private const int MinMessageOverlayTimingMs = 50;
     private const int MaxMessageOverlayTimingMs = 20000;
     private const int CharacterBlinkTickMs = 40;
