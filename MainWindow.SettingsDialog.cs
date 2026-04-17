@@ -865,6 +865,7 @@ public partial class MainWindow
                     CopyTimeReportsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopySearchFilesHistoryFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyTodoItemsFileToBackupFolder(previousBackupFolder, backupPath);
+                    CopySafePasteDataFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyImageFolderToBackupFolder(previousBackupFolder, backupPath);
                 }
 

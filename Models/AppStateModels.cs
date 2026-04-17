@@ -117,6 +117,12 @@ public sealed class ClosedTabEntry
     public FileMetadata? Metadata { get; set; }
 }
 
+public sealed class SafePasteKeyRecord
+{
+    public string Identifier { get; set; } = string.Empty;
+    public string Key { get; set; } = string.Empty;
+}
+
 public sealed class WindowSettings
 {
     public double Left { get; set; } = 100;
@@ -177,4 +183,6 @@ public sealed class WindowSettings
     public int? MessageOverlayBlinkPhaseMs { get; set; }
     public int? MessageOverlayHoldMs { get; set; }
     public string? MessageOverlayBlinkMode { get; set; }
+    public List<SafePasteKeyRecord>? SafePasteKeyRecords { get; set; }
+    public List<string>? SafePasteKeys { get; set; }
 }

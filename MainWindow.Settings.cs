@@ -43,6 +43,7 @@ public partial class MainWindow
             SaveTimeReports(opts);
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
+            SaveSafePasteData(opts);
         }
         catch { /* non-critical */ }
     }
@@ -105,7 +106,8 @@ public partial class MainWindow
             QuickMessageCustom = _quickMessageCustom,
             MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
             MessageOverlayFadeMs = _messageOverlayFadeMs,
-            MessageOverlayBlinkMode = _messageOverlayBlinkMode
+            MessageOverlayBlinkMode = _messageOverlayBlinkMode,
+            SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot()
         };
 
     private void LoadWindowSettings()
@@ -123,6 +125,7 @@ public partial class MainWindow
 
             ApplyBootstrapSettings(loaded.BootstrapBackupFolder, loaded.BootstrapCloudBackupFolder, loaded.BootstrapSettings);
             ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
+            LoadSafePasteData(loaded.EffectiveSettings.SafePasteKeyRecords, loaded.EffectiveSettings.SafePasteKeys);
             LoadTimeReports();
             LoadSearchFilesHistory();
             LoadTodoItems();
@@ -220,6 +223,7 @@ public partial class MainWindow
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         _todoItems.Clear();
+        _safePasteSavedEntries.Clear();
         _todoPanelVisible = false;
         ResetQuickMessageOverlaySettings();
     }
@@ -368,6 +372,9 @@ public partial class MainWindow
 
     private void CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, TodoItemsFileName);
+
+    private void CopySafePasteDataFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, SafePasteDataFileName);
 
     private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {

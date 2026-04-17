@@ -1,23 +1,274 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Noted.Models;
 
 namespace Noted;
 
 public partial class MainWindow
 {
+    private const string SafePasteDataFileName = "safe-paste.dat";
+    private readonly List<SafePasteSavedEntry> _safePasteSavedEntries = [];
+    private readonly List<SafePasteKeyRecord> _safePasteKeyRecords = [];
+
+    private sealed class SafePasteSavedEntry
+    {
+        public string Identifier { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+        public string Secret { get; set; } = string.Empty;
+        public DateTime SavedAtUtc { get; set; }
+    }
+
+    private sealed class SafePasteEncryptedEntry
+    {
+        public string Identifier { get; set; } = string.Empty;
+        public string TextCipher { get; set; } = string.Empty;
+        public string TextNonce { get; set; } = string.Empty;
+        public string TextTag { get; set; } = string.Empty;
+        public string SecretCipher { get; set; } = string.Empty;
+        public string SecretNonce { get; set; } = string.Empty;
+        public string SecretTag { get; set; } = string.Empty;
+        public DateTime SavedAtUtc { get; set; }
+    }
+
+    private sealed class SafePasteLegacyEntry
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Text { get; set; } = string.Empty;
+        public string Secret { get; set; } = string.Empty;
+        public DateTime SavedAtUtc { get; set; }
+    }
+
+    private List<SafePasteKeyRecord> BuildSafePasteKeyRecordsSnapshot()
+        => _safePasteKeyRecords
+            .Where(record =>
+                !string.IsNullOrWhiteSpace(record.Identifier) &&
+                !string.IsNullOrWhiteSpace(record.Key))
+            .Select(record => new SafePasteKeyRecord
+            {
+                Identifier = record.Identifier,
+                Key = record.Key
+            })
+            .ToList();
+
+    private static string GenerateSafePasteKey()
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+
+    private static string GenerateSafePasteIdentifier()
+        => Convert.ToHexString(RandomNumberGenerator.GetBytes(8));
+
+    private bool TryGetKeyBytesForIdentifier(string identifier, out byte[] keyBytes)
+    {
+        keyBytes = [];
+        var keyHex = _safePasteKeyRecords
+            .FirstOrDefault(record => string.Equals(record.Identifier, identifier, StringComparison.Ordinal))
+            ?.Key;
+        if (string.IsNullOrWhiteSpace(keyHex))
+            return false;
+
+        try
+        {
+            keyBytes = Convert.FromHexString(keyHex);
+            return keyBytes.Length == 32;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryEncryptWithKey(string plainText, byte[] keyBytes, out string cipher, out string nonce, out string tag)
+    {
+        cipher = string.Empty;
+        nonce = string.Empty;
+        tag = string.Empty;
+        try
+        {
+            var plaintextBytes = Encoding.UTF8.GetBytes(plainText ?? string.Empty);
+            var nonceBytes = RandomNumberGenerator.GetBytes(12);
+            var cipherBytes = new byte[plaintextBytes.Length];
+            var tagBytes = new byte[16];
+            using var aes = new AesGcm(keyBytes, 16);
+            aes.Encrypt(nonceBytes, plaintextBytes, cipherBytes, tagBytes);
+            cipher = Convert.ToBase64String(cipherBytes);
+            nonce = Convert.ToBase64String(nonceBytes);
+            tag = Convert.ToBase64String(tagBytes);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryDecryptWithKey(string cipher, string nonce, string tag, byte[] keyBytes, out string plainText)
+    {
+        plainText = string.Empty;
+        try
+        {
+            var cipherBytes = Convert.FromBase64String(cipher ?? string.Empty);
+            var nonceBytes = Convert.FromBase64String(nonce ?? string.Empty);
+            var tagBytes = Convert.FromBase64String(tag ?? string.Empty);
+            var plaintextBytes = new byte[cipherBytes.Length];
+            using var aes = new AesGcm(keyBytes, 16);
+            aes.Decrypt(nonceBytes, cipherBytes, tagBytes, plaintextBytes);
+            plainText = Encoding.UTF8.GetString(plaintextBytes);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void SaveSafePasteData(JsonSerializerOptions options)
+    {
+        try
+        {
+            var encryptedEntries = new List<SafePasteEncryptedEntry>();
+            foreach (var entry in _safePasteSavedEntries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Identifier))
+                    continue;
+                if (!TryGetKeyBytesForIdentifier(entry.Identifier, out var keyBytes))
+                    continue;
+                if (!TryEncryptWithKey(entry.Text, keyBytes, out var textCipher, out var textNonce, out var textTag))
+                    continue;
+                if (!TryEncryptWithKey(entry.Secret, keyBytes, out var secretCipher, out var secretNonce, out var secretTag))
+                    continue;
+
+                encryptedEntries.Add(new SafePasteEncryptedEntry
+                {
+                    Identifier = entry.Identifier,
+                    TextCipher = textCipher,
+                    TextNonce = textNonce,
+                    TextTag = textTag,
+                    SecretCipher = secretCipher,
+                    SecretNonce = secretNonce,
+                    SecretTag = secretTag,
+                    SavedAtUtc = entry.SavedAtUtc
+                });
+            }
+
+            var path = Path.Combine(_backupFolder, SafePasteDataFileName);
+            _windowSettingsStore.Save(path, encryptedEntries, options);
+        }
+        catch
+        {
+            // Non-critical persistence.
+        }
+    }
+
+    private void LoadSafePasteData(IEnumerable<SafePasteKeyRecord>? safePasteKeyRecords, IEnumerable<string>? legacySafePasteKeys)
+    {
+        _safePasteSavedEntries.Clear();
+        _safePasteKeyRecords.Clear();
+        try
+        {
+            var seenIdentifiers = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var record in safePasteKeyRecords ?? [])
+            {
+                var identifier = (record.Identifier ?? string.Empty).Trim();
+                var key = (record.Key ?? string.Empty).Trim();
+                if (identifier.Length == 0 || key.Length == 0 || !seenIdentifiers.Add(identifier))
+                    continue;
+                _safePasteKeyRecords.Add(new SafePasteKeyRecord
+                {
+                    Identifier = identifier,
+                    Key = key
+                });
+            }
+
+            // Legacy migration: old settings kept only keys, no identifiers.
+            foreach (var legacyKey in legacySafePasteKeys ?? [])
+            {
+                var key = (legacyKey ?? string.Empty).Trim();
+                if (key.Length == 0 || _safePasteKeyRecords.Any(record => string.Equals(record.Identifier, key, StringComparison.Ordinal)))
+                    continue;
+                _safePasteKeyRecords.Add(new SafePasteKeyRecord
+                {
+                    Identifier = key,
+                    Key = key
+                });
+            }
+
+            var path = Path.Combine(_backupFolder, SafePasteDataFileName);
+            var loaded = _windowSettingsStore.Load<List<SafePasteEncryptedEntry>>(path);
+            if (loaded != null && loaded.Count > 0)
+            {
+                foreach (var entry in loaded)
+                {
+                    var identifier = (entry.Identifier ?? string.Empty).Trim();
+                    if (identifier.Length == 0 || !TryGetKeyBytesForIdentifier(identifier, out var keyBytes))
+                        continue;
+                    if (!TryDecryptWithKey(entry.TextCipher, entry.TextNonce, entry.TextTag, keyBytes, out var text))
+                        continue;
+                    if (!TryDecryptWithKey(entry.SecretCipher, entry.SecretNonce, entry.SecretTag, keyBytes, out var secret))
+                        continue;
+
+                    _safePasteSavedEntries.Add(new SafePasteSavedEntry
+                    {
+                        Identifier = identifier,
+                        Text = text,
+                        Secret = secret,
+                        SavedAtUtc = entry.SavedAtUtc == default ? DateTime.UtcNow : entry.SavedAtUtc
+                    });
+                }
+                return;
+            }
+
+            // Legacy migration: old .dat had plaintext Key/Text/Secret.
+            var legacy = _windowSettingsStore.Load<List<SafePasteLegacyEntry>>(path);
+            if (legacy == null || legacy.Count == 0)
+                return;
+
+            foreach (var entry in legacy)
+            {
+                var legacyIdentifier = (entry.Key ?? string.Empty).Trim();
+                if (legacyIdentifier.Length == 0)
+                    continue;
+                if (_safePasteKeyRecords.All(record => !string.Equals(record.Identifier, legacyIdentifier, StringComparison.Ordinal)))
+                {
+                    _safePasteKeyRecords.Add(new SafePasteKeyRecord
+                    {
+                        Identifier = legacyIdentifier,
+                        Key = legacyIdentifier
+                    });
+                }
+
+                _safePasteSavedEntries.Add(new SafePasteSavedEntry
+                {
+                    Identifier = legacyIdentifier,
+                    Text = entry.Text ?? string.Empty,
+                    Secret = entry.Secret ?? string.Empty,
+                    SavedAtUtc = entry.SavedAtUtc == default ? DateTime.UtcNow : entry.SavedAtUtc
+                });
+            }
+        }
+        catch
+        {
+            // Non-critical persistence.
+        }
+    }
+
     private void ShowSafePasteAreaDialog()
     {
         var dlg = new Window
         {
             Title = "Safe Paste Area",
-            Width = 760,
-            Height = 540,
-            MinWidth = 620,
-            MinHeight = 420,
+            Width = 960,
+            Height = 700,
+            MinWidth = 760,
+            MinHeight = 560,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this
         };
@@ -28,6 +279,7 @@ public partial class MainWindow
         var plainVisible = true;
         var secretVisible = false;
         var suppressPlainTextSync = false;
+        var savedSecrets = _safePasteSavedEntries;
 
         var root = new DockPanel { Margin = new Thickness(12) };
 
@@ -82,6 +334,8 @@ public partial class MainWindow
 
         static string BuildSecretMask(string text)
             => string.IsNullOrEmpty(text) ? string.Empty : new string('*', text.Length);
+
+        var centerPanel = new StackPanel();
 
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -243,7 +497,49 @@ public partial class MainWindow
         Grid.SetColumn(secretPanel, 2);
         body.Children.Add(secretPanel);
 
-        root.Children.Add(body);
+        centerPanel.Children.Add(body);
+
+        var savedSection = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        savedSection.Children.Add(new TextBlock
+        {
+            Text = "Saved Secrets",
+            FontWeight = FontWeights.SemiBold
+        });
+        savedSection.Children.Add(new TextBlock
+        {
+            Text = "Save creates a new key for the current text + secret snapshot.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 2, 0, 6)
+        });
+        var saveButtonsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        var btnSaveSecrets = new Button
+        {
+            Content = "Save (generate key)",
+            Padding = new Thickness(14, 6, 14, 6)
+        };
+        var btnRemoveSavedSecret = new Button
+        {
+            Content = "Remove selected save",
+            Padding = new Thickness(14, 6, 14, 6),
+            Margin = new Thickness(8, 0, 0, 0),
+            IsEnabled = false
+        };
+        saveButtonsRow.Children.Add(btnSaveSecrets);
+        saveButtonsRow.Children.Add(btnRemoveSavedSecret);
+        savedSection.Children.Add(saveButtonsRow);
+        var lstSavedSecrets = new ListBox
+        {
+            Height = 110,
+            MinHeight = 90,
+            MaxHeight = 140
+        };
+        savedSection.Children.Add(lstSavedSecrets);
+        centerPanel.Children.Add(savedSection);
+        root.Children.Add(centerPanel);
 
         bool TryReadClipboardText(out string value)
         {
@@ -384,6 +680,20 @@ public partial class MainWindow
             }
         }
 
+        void RefreshSavedSecretsList()
+        {
+            lstSavedSecrets.Items.Clear();
+            for (var i = 0; i < savedSecrets.Count; i++)
+            {
+                var item = savedSecrets[i];
+                var localSavedAt = item.SavedAtUtc.ToLocalTime();
+                lstSavedSecrets.Items.Add(
+                    $"{i + 1}. Id: {item.Identifier} | text: {item.Text.Length} | secret: {item.Secret.Length} | saved: {localSavedAt:yyyy-MM-dd HH:mm:ss}");
+            }
+
+            btnRemoveSavedSecret.IsEnabled = lstSavedSecrets.SelectedIndex >= 0;
+        }
+
         void PastePlainFromClipboard(bool insertAtCaret = false)
         {
             if (!TryReadClipboardText(out var value))
@@ -494,10 +804,77 @@ public partial class MainWindow
             ApplySecretVisibility();
         };
 
+        lstSavedSecrets.SelectionChanged += (_, _) =>
+        {
+            var selectedIndex = lstSavedSecrets.SelectedIndex;
+            btnRemoveSavedSecret.IsEnabled = selectedIndex >= 0;
+            if (selectedIndex < 0 || selectedIndex >= savedSecrets.Count)
+                return;
+
+            var selected = savedSecrets[selectedIndex];
+            plainValue = selected.Text ?? string.Empty;
+            secretValue = selected.Secret ?? string.Empty;
+            ApplyPlainVisibility();
+            UpdatePlainIndicators();
+            ApplySecretVisibility();
+            UpdateSecretIndicators();
+            SetStatus($"Loaded saved entry id: {selected.Identifier}");
+        };
+
+        btnSaveSecrets.Click += (_, _) =>
+        {
+            if (plainValue.Length == 0 && secretValue.Length == 0)
+            {
+                SetStatus("Nothing to save. Enter text or secret first.", Brushes.IndianRed);
+                return;
+            }
+
+            var existingIdentifiers = new HashSet<string>(_safePasteKeyRecords.Select(record => record.Identifier), StringComparer.Ordinal);
+            var generatedIdentifier = GenerateSafePasteIdentifier();
+            while (existingIdentifiers.Contains(generatedIdentifier))
+                generatedIdentifier = GenerateSafePasteIdentifier();
+
+            var generatedKey = GenerateSafePasteKey();
+            _safePasteKeyRecords.Add(new SafePasteKeyRecord
+            {
+                Identifier = generatedIdentifier,
+                Key = generatedKey
+            });
+
+            savedSecrets.Add(new SafePasteSavedEntry
+            {
+                Identifier = generatedIdentifier,
+                Text = plainValue,
+                Secret = secretValue,
+                SavedAtUtc = DateTime.UtcNow
+            });
+            RefreshSavedSecretsList();
+            lstSavedSecrets.SelectedIndex = savedSecrets.Count - 1;
+            SaveWindowSettings();
+            SetStatus($"Saved text+secret. Generated identifier: {generatedIdentifier}");
+        };
+
+        btnRemoveSavedSecret.Click += (_, _) =>
+        {
+            var selectedIndex = lstSavedSecrets.SelectedIndex;
+            if (selectedIndex < 0 || selectedIndex >= savedSecrets.Count)
+                return;
+
+            var removedIdentifier = savedSecrets[selectedIndex].Identifier;
+            savedSecrets.RemoveAt(selectedIndex);
+            _safePasteKeyRecords.RemoveAll(record => string.Equals(record.Identifier, removedIdentifier, StringComparison.Ordinal));
+            RefreshSavedSecretsList();
+            if (savedSecrets.Count > 0)
+                lstSavedSecrets.SelectedIndex = Math.Min(selectedIndex, savedSecrets.Count - 1);
+            SaveWindowSettings();
+            SetStatus($"Removed saved entry and key record: {removedIdentifier}");
+        };
+
         ApplyPlainVisibility();
         UpdatePlainIndicators();
         ApplySecretVisibility();
         UpdateSecretIndicators();
+        RefreshSavedSecretsList();
 
         btnClose.Click += (_, _) => dlg.Close();
         dlg.Content = root;
