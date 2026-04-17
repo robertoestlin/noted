@@ -170,6 +170,7 @@
                         <MenuItem Header="_Project Line Counter" Click="MenuProjectLineCounter_Click"/>
                     </MenuItem>
                     <MenuItem Header="_Password Generator" Click="MenuPasswordGenerator_Click"/>
+                    <MenuItem Header="Safe _Paste Area" Click="MenuSafePasteArea_Click"/>
                     <MenuItem Header="_Seach Files" Click="MenuSearchFiles_Click"/>
                     <MenuItem Header="_Text">
                         <MenuItem Header="Text _Splitter" Click="MenuTextSplitter_Click"/>
