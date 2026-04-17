@@ -114,6 +114,7 @@ public partial class MainWindow : Window
     private const int DefaultVisualLineWrapColumn = 150;
     private const int MinVisualLineWrapColumn = 60;
     private const int MaxVisualLineWrapColumn = 400;
+    private const int ControlArrowLineJump = 10;
     private const int DefaultTabCleanupStaleDays = 30;
     private const string DefaultFontFamily = "Consolas, Courier New";
     private const double DefaultFontSize = 13;
@@ -2584,6 +2585,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && (key == Key.Up || key == Key.Down))
+        {
+            if (TryMoveCaretByLines(doc, key == Key.Down ? ControlArrowLineJump : -ControlArrowLineJump))
+                e.Handled = true;
+            return;
+        }
+
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && e.Key == Key.V
             && TryPasteClipboardImage(doc))
@@ -2678,6 +2687,28 @@ public partial class MainWindow : Window
         editor.TextArea.Caret.Offset = movedCaretOffset;
         editor.Select(movedCaretOffset, 0);
         editor.ScrollToLine(targetLineNumber);
+        return true;
+    }
+
+    private static bool TryMoveCaretByLines(TabDocument doc, int lineDelta)
+    {
+        if (lineDelta == 0)
+            return false;
+
+        var editor = doc.Editor;
+        var document = editor.Document;
+        int currentLine = Math.Max(1, editor.TextArea.Caret.Line);
+        int targetLine = Math.Clamp(currentLine + lineDelta, 1, Math.Max(1, document.LineCount));
+        if (targetLine == currentLine)
+            return false;
+
+        int currentColumn = Math.Max(1, editor.TextArea.Caret.Column);
+        var targetDocumentLine = document.GetLineByNumber(targetLine);
+        int targetColumn = Math.Min(currentColumn, targetDocumentLine.Length + 1);
+
+        editor.TextArea.Caret.Location = new TextLocation(targetLine, targetColumn);
+        editor.Select(editor.CaretOffset, 0);
+        editor.ScrollToLine(targetLine);
         return true;
     }
 
