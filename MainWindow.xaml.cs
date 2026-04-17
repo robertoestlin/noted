@@ -207,6 +207,8 @@ public partial class MainWindow : Window
     private double _inlineImageResizeStartX;
     private int _inlineImageResizeStartScalePercent;
     private int _inlineImageResizeCurrentScalePercent;
+    private bool _isSelectionCursorClipActive;
+    private TextEditor? _selectionCursorClipEditor;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct LastInputInfo
@@ -217,6 +219,21 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetLastInputInfo(ref LastInputInfo plii);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CursorClipRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ClipCursor(ref CursorClipRect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ClipCursor(IntPtr rect);
 
     private static readonly RoutedUICommand RenameTabCommand = new("Rename Tab", nameof(RenameTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ReopenClosedTabCommand = new("Reopen Closed Tab", nameof(ReopenClosedTabCommand), typeof(MainWindow));
@@ -898,6 +915,10 @@ public partial class MainWindow : Window
         MainTabControl.DragOver += MainTabControl_DragOver;
         MainTabControl.Drop += MainTabControl_Drop;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
+        Deactivated += (_, _) => EndSelectionCursorClip();
+        LocationChanged += (_, _) => RefreshSelectionCursorClipBounds();
+        SizeChanged += (_, _) => RefreshSelectionCursorClipBounds();
+        StateChanged += (_, _) => RefreshSelectionCursorClipBounds();
 
         // Auto-save timer
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };
@@ -992,6 +1013,10 @@ public partial class MainWindow : Window
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
         editor.PreviewKeyDown += (_, e) => HandleEditorPreviewKeyDown(doc, e);
         editor.PreviewMouseRightButtonDown += (_, e) => MoveCaretToMousePosition(editor, e);
+        editor.PreviewMouseLeftButtonDown += (_, e) => BeginSelectionCursorClip(editor, e);
+        editor.PreviewMouseMove += (_, e) => UpdateSelectionCursorClip(editor, e);
+        editor.PreviewMouseLeftButtonUp += (_, _) => EndSelectionCursorClip(editor);
+        editor.LostMouseCapture += (_, _) => EndSelectionCursorClip(editor);
 
         // Build tab header
         var headerLabel = new TextBlock
@@ -1056,6 +1081,99 @@ public partial class MainWindow : Window
         ApplyFridayBackgroundToEditor(editor);
         ApplyVisualLineWrapSettings(editor);
         return editor;
+    }
+
+    private void BeginSelectionCursorClip(TextEditor editor, MouseButtonEventArgs e)
+    {
+        if (_isInlineImageResizeActive || e.ChangedButton != MouseButton.Left)
+            return;
+
+        if (e.OriginalSource is not DependencyObject source || !IsWithinTextArea(editor, source))
+            return;
+
+        _selectionCursorClipEditor = editor;
+        _isSelectionCursorClipActive = true;
+        RefreshSelectionCursorClipBounds();
+    }
+
+    private void UpdateSelectionCursorClip(TextEditor editor, MouseEventArgs e)
+    {
+        if (!_isSelectionCursorClipActive || !ReferenceEquals(_selectionCursorClipEditor, editor))
+            return;
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            EndSelectionCursorClip(editor);
+            return;
+        }
+
+        RefreshSelectionCursorClipBounds();
+    }
+
+    private static bool IsWithinTextArea(TextEditor editor, DependencyObject source)
+    {
+        DependencyObject? current = source;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, editor.TextArea))
+                return true;
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private void RefreshSelectionCursorClipBounds()
+    {
+        if (!_isSelectionCursorClipActive)
+            return;
+
+        if (!TryGetWindowScreenBounds(out var clipRect))
+        {
+            EndSelectionCursorClip();
+            return;
+        }
+
+        ClipCursor(ref clipRect);
+    }
+
+    private bool TryGetWindowScreenBounds(out CursorClipRect clipRect)
+    {
+        clipRect = default;
+        if (!IsLoaded || WindowState == WindowState.Minimized || ActualWidth <= 0 || ActualHeight <= 0)
+            return false;
+
+        var topLeft = PointToScreen(new Point(0, 0));
+        var bottomRight = PointToScreen(new Point(ActualWidth, ActualHeight));
+        int left = (int)Math.Floor(Math.Min(topLeft.X, bottomRight.X));
+        int top = (int)Math.Floor(Math.Min(topLeft.Y, bottomRight.Y));
+        int right = (int)Math.Ceiling(Math.Max(topLeft.X, bottomRight.X));
+        int bottom = (int)Math.Ceiling(Math.Max(topLeft.Y, bottomRight.Y));
+        if (right <= left || bottom <= top)
+            return false;
+
+        clipRect = new CursorClipRect
+        {
+            Left = left,
+            Top = top,
+            Right = right,
+            Bottom = bottom
+        };
+        return true;
+    }
+
+    private void EndSelectionCursorClip(TextEditor? editor = null)
+    {
+        if (!_isSelectionCursorClipActive)
+            return;
+
+        if (editor != null && _selectionCursorClipEditor != null && !ReferenceEquals(editor, _selectionCursorClipEditor))
+            return;
+
+        ClipCursor(IntPtr.Zero);
+        _isSelectionCursorClipActive = false;
+        _selectionCursorClipEditor = null;
     }
 
     private string GetBackupImagesFolderPath()
@@ -4682,6 +4800,7 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        EndSelectionCursorClip();
         _autoSaveTimer.Stop();
         _pluginAlarmTimer.Stop();
         _backupHeartbeatTimer.Stop();
