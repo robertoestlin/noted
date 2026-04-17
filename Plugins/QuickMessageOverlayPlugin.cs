@@ -22,6 +22,7 @@ public partial class MainWindow
     private const int MinMessageOverlayTimingMs = 50;
     private const int MaxMessageOverlayTimingMs = 20000;
     private const int CharacterBlinkTickMs = 40;
+    private const int CharacterSweepBlankPauseMs = 500;
     private const string BlinkModeWholeText = "whole-text";
     private const string BlinkModeCharacterSweep = "character-sweep";
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
@@ -38,6 +39,9 @@ public partial class MainWindow
     private Brush _messageOverlayCharacterForeground = Brushes.White;
     private int _messageOverlayCharacterVisibleChars;
     private int _messageOverlayActiveColorIndex = -1;
+    private string _messageOverlayActiveBlinkMode = BlinkModeWholeText;
+    private List<string> _messageOverlaySavedMessages = [];
+    private int _messageOverlaySavedMessageIndex = -1;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -685,6 +689,10 @@ public partial class MainWindow
         _messageOverlayCharacterBaseText = text;
         _messageOverlayCharacterForeground = foreground;
         _messageOverlayActiveColorIndex = FindQuickMessageColorIndex(foreground);
+        _messageOverlayActiveBlinkMode = _messageOverlayBlinkMode;
+        _messageOverlaySavedMessages = BuildQuickMessagePresetsSnapshot();
+        _messageOverlaySavedMessageIndex = _messageOverlaySavedMessages.FindIndex(
+            value => string.Equals(value, text, StringComparison.Ordinal));
         MessageOverlayText.Text = text;
         MessageOverlayText.Foreground = foreground;
         MessageOverlay.Visibility = Visibility.Visible;
@@ -705,7 +713,7 @@ public partial class MainWindow
 
         if (enabled)
         {
-            if (string.Equals(_messageOverlayBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
             {
                 StartCharacterSweepBlink();
                 return;
@@ -766,6 +774,7 @@ public partial class MainWindow
 
         var elapsedMs = 0;
         var holding = false;
+        var blanking = false;
         MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
         MessageOverlayText.Opacity = 1.0;
         _messageOverlayCharacterVisibleChars = 0;
@@ -774,6 +783,16 @@ public partial class MainWindow
         _messageOverlayCharacterTimer.Tick += (_, _) =>
         {
             elapsedMs += (int)_messageOverlayCharacterTimer.Interval.TotalMilliseconds;
+            if (blanking)
+            {
+                if (elapsedMs >= CharacterSweepBlankPauseMs)
+                {
+                    blanking = false;
+                    elapsedMs = 0;
+                }
+                return;
+            }
+
             if (!holding)
             {
                 var progress = Math.Min(1.0, (double)elapsedMs / _messageOverlayCharacterFadeMs);
@@ -793,6 +812,7 @@ public partial class MainWindow
             if (elapsedMs >= _messageOverlayCharacterHoldMs)
             {
                 holding = false;
+                blanking = true;
                 elapsedMs = 0;
                 _messageOverlayCharacterVisibleChars = 0;
                 RenderCharacterSweepText(0);
@@ -864,6 +884,20 @@ public partial class MainWindow
             return true;
         }
 
+        if (key == Key.Left || key == Key.Right)
+        {
+            CycleMessageOverlayText(key == Key.Right ? 1 : -1);
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.T)
+        {
+            ToggleMessageOverlayBlinkType();
+            e.Handled = true;
+            return true;
+        }
+
         if (key == Key.B)
         {
             SetMessageOverlayBlinking(!_isMessageOverlayBlinking);
@@ -896,9 +930,54 @@ public partial class MainWindow
         MessageOverlayText.Foreground = nextBrush;
         _messageOverlayCharacterForeground = nextBrush;
         if (_isMessageOverlayBlinking
-            && string.Equals(_messageOverlayBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
+            && string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
         {
             RenderCharacterSweepText(_messageOverlayCharacterVisibleChars);
         }
+    }
+
+    private void ToggleMessageOverlayBlinkType()
+    {
+        _messageOverlayActiveBlinkMode =
+            string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase)
+                ? BlinkModeWholeText
+                : BlinkModeCharacterSweep;
+
+        if (!_isMessageOverlayBlinking)
+            return;
+
+        SetMessageOverlayBlinking(false);
+        SetMessageOverlayBlinking(true);
+    }
+
+    private void CycleMessageOverlayText(int direction)
+    {
+        if (_messageOverlaySavedMessages.Count == 0)
+            return;
+
+        if (_messageOverlaySavedMessageIndex < 0)
+            _messageOverlaySavedMessageIndex = 0;
+        else
+            _messageOverlaySavedMessageIndex =
+                (_messageOverlaySavedMessageIndex + direction + _messageOverlaySavedMessages.Count) % _messageOverlaySavedMessages.Count;
+
+        ApplyMessageOverlayText(_messageOverlaySavedMessages[_messageOverlaySavedMessageIndex]);
+    }
+
+    private void ApplyMessageOverlayText(string text)
+    {
+        _messageOverlayCharacterBaseText = text;
+        _messageOverlayCharacterVisibleChars = 0;
+
+        if (_isMessageOverlayBlinking)
+        {
+            SetMessageOverlayBlinking(false);
+            SetMessageOverlayBlinking(true);
+            return;
+        }
+
+        MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
+        MessageOverlayText.Opacity = 1.0;
+        MessageOverlayText.Text = text;
     }
 }
