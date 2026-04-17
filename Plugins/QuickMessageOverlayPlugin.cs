@@ -33,7 +33,7 @@ public partial class MainWindow
     private string _messageOverlayBlinkMode = BlinkModeWholeText;
     private DispatcherTimer? _messageOverlayCharacterTimer;
     private int _messageOverlayCharacterFadeMs;
-    private int _messageOverlayCharacterIntervalMs;
+    private int _messageOverlayCharacterHoldMs;
     private string _messageOverlayCharacterBaseText = string.Empty;
     private Brush _messageOverlayCharacterForeground = Brushes.White;
     private int _messageOverlayCharacterVisibleChars;
@@ -726,7 +726,8 @@ public partial class MainWindow
         _messageOverlayCharacterBaseText = MessageOverlayText.Text ?? string.Empty;
         var fadeMs = NormalizeMessageOverlayTimingMs(_messageOverlayFadeMs, DefaultMessageOverlayFadeMs);
         var intervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
-        var cycleMs = intervalMs + fadeMs;
+        var holdMs = intervalMs;
+        var cycleMs = holdMs + fadeMs;
 
         var animation = new DoubleAnimationUsingKeyFrames
         {
@@ -735,8 +736,8 @@ public partial class MainWindow
         };
         var halfFadeMs = fadeMs / 2.0;
         animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(intervalMs))));
-        animation.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(intervalMs + halfFadeMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs + halfFadeMs))));
         animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(cycleMs))));
         MessageOverlayText.Text = _messageOverlayCharacterBaseText;
         MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, animation);
@@ -754,7 +755,8 @@ public partial class MainWindow
         }
 
         _messageOverlayCharacterFadeMs = NormalizeMessageOverlayTimingMs(_messageOverlayFadeMs, DefaultMessageOverlayFadeMs);
-        _messageOverlayCharacterIntervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
+        var intervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
+        _messageOverlayCharacterHoldMs = intervalMs;
         var charCount = _messageOverlayCharacterBaseText.Length;
         var stepMs = Math.Max(20, _messageOverlayCharacterFadeMs / Math.Max(charCount, 1));
         _messageOverlayCharacterTimer = new DispatcherTimer
@@ -788,7 +790,7 @@ public partial class MainWindow
                 return;
             }
 
-            if (elapsedMs >= _messageOverlayCharacterIntervalMs)
+            if (elapsedMs >= _messageOverlayCharacterHoldMs)
             {
                 holding = false;
                 elapsedMs = 0;
