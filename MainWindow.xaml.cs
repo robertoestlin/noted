@@ -74,6 +74,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, TimeReportMonthState> _timeReports = new(StringComparer.OrdinalIgnoreCase);
     private List<PluginAlarmSettings> _pluginAlarms = [];
     private bool _pluginAlarmsEnabled = true;
+    private DateTime? _pluginAlarmsSnoozedUntilLocal;
     private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
     private List<ProjectLineCounterType> _projectLineCounterTypes = [];
     private List<string> _projectLineCounterAutoDetectedFileTypes = [];
@@ -997,6 +998,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        UpdateAlarmSnoozeStatus();
         InitializeTodoPanel();
         UpdateViewMenuChecks();
         _pluginAlarmTimer.Start();

@@ -203,6 +203,10 @@
                 <StatusBarItem>
                     <TextBlock x:Name="StatusAutoSave" Text="" Foreground="#555"/>
                 </StatusBarItem>
+                <Separator x:Name="StatusAlarmSnoozeSeparator"/>
+                <StatusBarItem x:Name="StatusAlarmSnoozeItem">
+                    <TextBlock x:Name="StatusAlarmSnooze" Text="" Foreground="#555"/>
+                </StatusBarItem>
             </StatusBar>
 
         <!-- Tab control -->

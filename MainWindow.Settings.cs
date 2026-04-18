@@ -92,6 +92,7 @@ public partial class MainWindow
             UserProfiles = NormalizeUsers(_users),
             PluginAlarms = BuildPluginAlarmsSnapshot(),
             PluginAlarmsEnabled = _pluginAlarmsEnabled,
+            PluginAlarmsSnoozedUntilLocal = _pluginAlarmsSnoozedUntilLocal,
             AlarmPopupLeft = _alarmPopupLeft,
             AlarmPopupTop = _alarmPopupTop,
             ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
@@ -212,6 +213,7 @@ public partial class MainWindow
         _timeReports.Clear();
         _pluginAlarms = [];
         _pluginAlarmsEnabled = true;
+        _pluginAlarmsSnoozedUntilLocal = null;
         _alarmPopupLeft = null;
         _alarmPopupTop = null;
         _projectLineCounterProjects = [];
@@ -287,6 +289,13 @@ public partial class MainWindow
         _users = loadedUsers;
         ApplyPluginAlarmSettings(state.PluginAlarms);
         _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
+        _pluginAlarmsSnoozedUntilLocal = state.PluginAlarmsSnoozedUntilLocal;
+        if (_pluginAlarmsSnoozedUntilLocal is DateTime snoozedUntil
+            && snoozedUntil <= DateTime.Now)
+        {
+            _pluginAlarmsSnoozedUntilLocal = null;
+        }
+        UpdateAlarmSnoozeStatus();
         ApplyProjectLineCounterSettings(
             state.ProjectLineCounterProjects,
             state.ProjectLineCounterTypes,

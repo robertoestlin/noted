@@ -93,7 +93,57 @@ public partial class MainWindow
             .ToList();
     }
 
-    private void ShowPluginAlarmMessage(IEnumerable<string> alarmNames)
+    private static string FormatAlarmResumeTimestamp(DateTime value)
+        => value.ToString("yyyy-MM-dd HH:mm");
+
+    private bool TryGetActiveAlarmSnoozeUntil(out DateTime snoozedUntil)
+    {
+        snoozedUntil = DateTime.MinValue;
+        if (_pluginAlarmsSnoozedUntilLocal is not DateTime configuredUntil)
+            return false;
+
+        if (configuredUntil <= DateTime.Now)
+        {
+            _pluginAlarmsSnoozedUntilLocal = null;
+            UpdateAlarmSnoozeStatus();
+            SaveWindowSettings();
+            return false;
+        }
+
+        snoozedUntil = configuredUntil;
+        return true;
+    }
+
+    private void SnoozePluginAlarmsForHours(int hours)
+    {
+        if (hours <= 0)
+            return;
+
+        _pluginAlarmsSnoozedUntilLocal = DateTime.Now.AddHours(hours);
+        UpdateAlarmSnoozeStatus();
+        SaveWindowSettings();
+    }
+
+    private void UpdateAlarmSnoozeStatus()
+    {
+        if (TryGetActiveAlarmSnoozeUntil(out var snoozedUntil))
+        {
+            SetAlarmSnoozeStatusText($"Alarms snoozed until {FormatAlarmResumeTimestamp(snoozedUntil)}");
+            return;
+        }
+
+        SetAlarmSnoozeStatusText(string.Empty);
+    }
+
+    private void SetAlarmSnoozeStatusText(string text)
+    {
+        var hasText = !string.IsNullOrWhiteSpace(text);
+        StatusAlarmSnooze.Text = text;
+        StatusAlarmSnoozeSeparator.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+        StatusAlarmSnoozeItem.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ShowPluginAlarmMessage(IEnumerable<string> alarmNames, bool isTestPreview = false)
     {
         var names = alarmNames
             .Select(name => (name ?? string.Empty).Trim())
@@ -176,36 +226,86 @@ public partial class MainWindow
         Grid.SetRow(messageHost, 0);
         layout.Children.Add(messageHost);
 
-        var footer = new StackPanel
+        var footer = new Grid
+        {
+            Margin = new Thickness(14, 0, 14, 14)
+        };
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var snoozePanel = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var snoozeButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal
+        };
+        snoozePanel.Children.Add(new TextBlock
+        {
+            Text = "Snooze all alarms:",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        foreach (var hours in new[] { 1, 4, 8 })
+        {
+            var button = new Button
+            {
+                Content = $"{hours}H",
+                Width = 34,
+                Height = 24,
+                Margin = new Thickness(0, 0, 6, 0),
+                ToolTip = $"Snooze all alarms for {hours} hour{(hours == 1 ? string.Empty : "s")}"
+            };
+            button.Click += (_, _) =>
+            {
+                if (!isTestPreview)
+                    SnoozePluginAlarmsForHours(hours);
+                popup.Close();
+            };
+            snoozeButtons.Children.Add(button);
+        }
+        var btnDisableAlarms = new Button
+        {
+            Content = "D",
+            Width = 28,
+            Height = 24,
+            Margin = new Thickness(0, 0, 6, 0),
+            ToolTip = "Disable alarms"
+        };
+        btnDisableAlarms.Click += (_, _) =>
+        {
+            if (!isTestPreview)
+            {
+                _pluginAlarmsEnabled = false;
+                UpdateAlarmSnoozeStatus();
+                SaveWindowSettings();
+            }
+            popup.Close();
+        };
+        snoozeButtons.Children.Add(btnDisableAlarms);
+        snoozePanel.Children.Add(snoozeButtons);
+        Grid.SetColumn(snoozePanel, 0);
+        footer.Children.Add(snoozePanel);
+
+        var actionButtons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(14, 0, 14, 14)
-        };
-        var btnDisableAlarms = new Button
-        {
-            Content = "Disable alarms",
-            Width = 130,
-            Height = 34,
-            Margin = new Thickness(0, 0, 8, 0)
+            VerticalAlignment = VerticalAlignment.Bottom
         };
         var btnOk = new Button
         {
             Content = "OK",
-            Width = 90,
-            Height = 34,
+            Width = 72,
+            Height = 30,
             IsDefault = true,
             IsCancel = true
         };
-        btnDisableAlarms.Click += (_, _) =>
-        {
-            _pluginAlarmsEnabled = false;
-            SaveWindowSettings();
-            popup.Close();
-        };
         btnOk.Click += (_, _) => popup.Close();
-        footer.Children.Add(btnDisableAlarms);
-        footer.Children.Add(btnOk);
+        actionButtons.Children.Add(btnOk);
+        Grid.SetColumn(actionButtons, 1);
+        footer.Children.Add(actionButtons);
         Grid.SetRow(footer, 1);
         layout.Children.Add(footer);
 
@@ -255,6 +355,8 @@ public partial class MainWindow
     {
         if (!_pluginAlarmsEnabled || _pluginAlarms.Count == 0)
             return;
+        if (TryGetActiveAlarmSnoozeUntil(out _))
+            return;
 
         var now = DateTime.Now;
         var minuteKey = now.ToString("yyyyMMddHHmm");
@@ -291,6 +393,13 @@ public partial class MainWindow
     {
         var workingAlarms = NormalizePluginAlarms(_pluginAlarms);
         var workingPluginAlarmsEnabled = _pluginAlarmsEnabled;
+        var workingPluginAlarmsSnoozedUntilLocal = _pluginAlarmsSnoozedUntilLocal;
+        var settingsApplied = false;
+        if (workingPluginAlarmsSnoozedUntilLocal is DateTime storedSnooze
+            && storedSnooze <= DateTime.Now)
+        {
+            workingPluginAlarmsSnoozedUntilLocal = null;
+        }
 
         var dlg = new Window
         {
@@ -313,6 +422,95 @@ public partial class MainWindow
         };
         DockPanel.SetDock(chkEnableAlarms, Dock.Top);
         root.Children.Add(chkEnableAlarms);
+        var snoozeBorder = new Border
+        {
+            Margin = new Thickness(0, 0, 0, 10),
+            Padding = new Thickness(10, 8, 10, 8),
+            Background = new SolidColorBrush(Color.FromRgb(248, 250, 255)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(220, 228, 244)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            IsEnabled = workingPluginAlarmsEnabled
+        };
+        DockPanel.SetDock(snoozeBorder, Dock.Top);
+        var snoozeControls = new StackPanel();
+        snoozeControls.Children.Add(new TextBlock
+        {
+            Text = "Snooze all alarms:",
+            FontWeight = FontWeights.SemiBold
+        });
+        var snoozeButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 6, 0, 0)
+        };
+        var txtSnoozeStatus = new TextBlock
+        {
+            Margin = new Thickness(0, 6, 0, 0),
+            Foreground = Brushes.DimGray
+        };
+        void UpdateBottomSnoozeStatusPreview()
+        {
+            if (workingPluginAlarmsSnoozedUntilLocal is DateTime snoozedUntil
+                && snoozedUntil > DateTime.Now)
+            {
+                SetAlarmSnoozeStatusText($"Alarms snoozed until {FormatAlarmResumeTimestamp(snoozedUntil)}");
+                return;
+            }
+
+            SetAlarmSnoozeStatusText(string.Empty);
+        }
+
+        void RefreshSnoozeStatus()
+        {
+            if (workingPluginAlarmsSnoozedUntilLocal is DateTime snoozedUntil
+                && snoozedUntil > DateTime.Now)
+            {
+                txtSnoozeStatus.Text = $"Alarms resume at {FormatAlarmResumeTimestamp(snoozedUntil)}";
+                UpdateBottomSnoozeStatusPreview();
+                return;
+            }
+
+            workingPluginAlarmsSnoozedUntilLocal = null;
+            txtSnoozeStatus.Text = "Alarms are not snoozed.";
+            UpdateBottomSnoozeStatusPreview();
+        }
+
+        foreach (var hours in new[] { 1, 4, 8 })
+        {
+            var btnSnooze = new Button
+            {
+                Content = $"{hours}H",
+                Width = 48,
+                Height = 28,
+                Margin = new Thickness(0, 0, 6, 0),
+                ToolTip = $"Snooze all alarms for {hours} hour{(hours == 1 ? string.Empty : "s")}"
+            };
+            btnSnooze.Click += (_, _) =>
+            {
+                workingPluginAlarmsSnoozedUntilLocal = DateTime.Now.AddHours(hours);
+                RefreshSnoozeStatus();
+            };
+            snoozeButtons.Children.Add(btnSnooze);
+        }
+        var btnResumeNow = new Button
+        {
+            Content = "Resume now",
+            Height = 28,
+            Padding = new Thickness(10, 0, 10, 0)
+        };
+        btnResumeNow.Click += (_, _) =>
+        {
+            workingPluginAlarmsSnoozedUntilLocal = null;
+            RefreshSnoozeStatus();
+        };
+        snoozeButtons.Children.Add(btnResumeNow);
+        snoozeControls.Children.Add(snoozeButtons);
+        snoozeControls.Children.Add(txtSnoozeStatus);
+        snoozeBorder.Child = snoozeControls;
+        root.Children.Add(snoozeBorder);
+        RefreshSnoozeStatus();
+
         var body = new Grid();
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
@@ -551,11 +749,15 @@ public partial class MainWindow
         chkEnableAlarms.Checked += (_, _) =>
         {
             workingPluginAlarmsEnabled = true;
+            snoozeBorder.IsEnabled = true;
+            UpdateBottomSnoozeStatusPreview();
             RebuildTimesEditor();
         };
         chkEnableAlarms.Unchecked += (_, _) =>
         {
             workingPluginAlarmsEnabled = false;
+            snoozeBorder.IsEnabled = false;
+            UpdateBottomSnoozeStatusPreview();
             RebuildTimesEditor();
         };
 
@@ -600,7 +802,7 @@ public partial class MainWindow
                 return;
             }
 
-            ShowPluginAlarmMessage([name]);
+            ShowPluginAlarmMessage([name], isTestPreview: true);
         };
 
         alarmList.SelectionChanged += (_, _) =>
@@ -655,10 +857,13 @@ public partial class MainWindow
 
             _pluginAlarms = NormalizePluginAlarms(workingAlarms);
             _pluginAlarmsEnabled = workingPluginAlarmsEnabled;
+            _pluginAlarmsSnoozedUntilLocal = workingPluginAlarmsSnoozedUntilLocal;
             _triggeredPluginAlarmMinuteKey = string.Empty;
             _triggeredPluginAlarmKeysForMinute.Clear();
+            UpdateAlarmSnoozeStatus();
             SaveWindowSettings();
             CheckPluginAlarms();
+            settingsApplied = true;
             dlg.DialogResult = true;
         };
 
@@ -674,6 +879,11 @@ public partial class MainWindow
             RefreshAlarmList();
             SetAlarmNameText(workingAlarms[0].Name);
             RebuildTimesEditor();
+        };
+        dlg.Closed += (_, _) =>
+        {
+            if (!settingsApplied)
+                UpdateAlarmSnoozeStatus();
         };
 
         dlg.ShowDialog();

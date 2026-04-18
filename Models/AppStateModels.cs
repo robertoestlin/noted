@@ -166,6 +166,7 @@ public sealed class WindowSettings
     public List<UserProfile>? UserProfiles { get; set; }
     public List<PluginAlarmSettings>? PluginAlarms { get; set; }
     public bool PluginAlarmsEnabled { get; set; } = true;
+    public DateTime? PluginAlarmsSnoozedUntilLocal { get; set; }
     public double? AlarmPopupLeft { get; set; }
     public double? AlarmPopupTop { get; set; }
     public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
