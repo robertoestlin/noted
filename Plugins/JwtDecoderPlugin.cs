@@ -425,6 +425,74 @@ public partial class MainWindow
             status.Foreground = brush ?? Brushes.DimGray;
         }
 
+        void CopyTextToClipboard(string text, string sectionName)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                SetStatus($"{sectionName} is empty; nothing to copy.", Brushes.IndianRed);
+                return;
+            }
+
+            try
+            {
+                Clipboard.SetText(text);
+                SetStatus($"Copied {sectionName} to clipboard.", Brushes.ForestGreen);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Failed to copy {sectionName}: {ex.Message}", Brushes.IndianRed);
+            }
+        }
+
+        static string ReadRichTextBoxText(RichTextBox box)
+        {
+            var range = new TextRange(box.Document.ContentStart, box.Document.ContentEnd);
+            return (range.Text ?? string.Empty).TrimEnd('\r', '\n');
+        }
+
+        static Button CreateCopyIconButton(string tooltip, Action onClick)
+        {
+            var icon = new TextBlock
+            {
+                Text = "\uE8C8",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var button = new Button
+            {
+                Width = 24,
+                Height = 22,
+                Padding = new Thickness(0),
+                Margin = new Thickness(6, 0, 0, 0),
+                ToolTip = tooltip,
+                Content = icon,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            button.Click += (_, _) => onClick();
+            return button;
+        }
+
+        static DockPanel CreateSectionHeader(string title, string copyTooltip, Action onCopy)
+        {
+            var row = new DockPanel
+            {
+                LastChildFill = false,
+                Margin = new Thickness(0, 0, 0, 4)
+            };
+            var copyButton = CreateCopyIconButton(copyTooltip, onCopy);
+            DockPanel.SetDock(copyButton, Dock.Right);
+            row.Children.Add(copyButton);
+            row.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            return row;
+        }
+
         static RichTextBox CreateHeaderOutputBox() => new()
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -488,13 +556,11 @@ public partial class MainWindow
         splitGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var headerCol = new StackPanel();
-        headerCol.Children.Add(new TextBlock
-        {
-            Text = "Header",
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
         var txtHeader = CreateHeaderOutputBox();
+        headerCol.Children.Add(CreateSectionHeader(
+            "Header",
+            "Copy header",
+            () => CopyTextToClipboard(ReadRichTextBoxText(txtHeader), "Header")));
         headerCol.Children.Add(txtHeader);
         Grid.SetColumn(headerCol, 0);
         splitGrid.Children.Add(headerCol);
@@ -504,23 +570,15 @@ public partial class MainWindow
         splitGrid.Children.Add(gutter);
 
         var payloadCol = new StackPanel();
-        payloadCol.Children.Add(new TextBlock
-        {
-            Text = "Payload",
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 4)
-        });
         var txtPayload = CreateHeaderOutputBox();
+        payloadCol.Children.Add(CreateSectionHeader(
+            "Payload",
+            "Copy payload",
+            () => CopyTextToClipboard(ReadRichTextBoxText(txtPayload), "Payload")));
         payloadCol.Children.Add(txtPayload);
         Grid.SetColumn(payloadCol, 2);
         splitGrid.Children.Add(payloadCol);
 
-        var lblSig = new TextBlock
-        {
-            Text = "Signature (Base64url, not verified)",
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 4)
-        };
         var txtSignature = new TextBox
         {
             FontFamily = new FontFamily("Consolas, Courier New"),
@@ -530,6 +588,10 @@ public partial class MainWindow
             MinHeight = 56,
             Margin = new Thickness(0, 0, 0, 6)
         };
+        var lblSig = CreateSectionHeader(
+            "Signature (Base64url, not verified)",
+            "Copy signature",
+            () => CopyTextToClipboard((txtSignature.Text ?? string.Empty).Trim(), "Signature"));
         var lblVerify = new TextBlock
         {
             Text = "JWT Signature Verification",
