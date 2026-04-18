@@ -4226,6 +4226,9 @@ public partial class MainWindow : Window
 
     private void AddClosedTabToHistory(TabDocument doc)
     {
+        if (string.IsNullOrWhiteSpace(doc.CachedText))
+            return;
+
         _closedTabHistory.Insert(0, new ClosedTabEntry
         {
             Header = doc.Header,
