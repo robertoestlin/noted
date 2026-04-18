@@ -202,6 +202,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _referencedInlineImagesSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<TabDocument, Stack<LineAssigneeUndoRecord>> _pendingShiftDeleteAssigneeUndo = [];
+    private readonly Dictionary<TabDocument, Stack<HighlightLineUndoRecord>> _pendingShiftDeleteHighlightUndo = [];
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -240,6 +241,17 @@ public partial class MainWindow : Window
     {
         public required int LineNumber { get; init; }
         public required string Person { get; init; }
+        public required string LineText { get; init; }
+    }
+
+    private sealed class HighlightLineUndoRecord
+    {
+        public required IReadOnlyList<HighlightLineUndoEntry> Entries { get; init; }
+    }
+
+    private sealed class HighlightLineUndoEntry
+    {
+        public required int LineNumber { get; init; }
         public required string LineText { get; init; }
     }
 
@@ -2642,6 +2654,20 @@ public partial class MainWindow : Window
         stack.Push(new LineAssigneeUndoRecord { Entries = removedAssignees });
     }
 
+    private void QueueShiftDeleteHighlightUndo(TabDocument doc, IReadOnlyList<HighlightLineUndoEntry> removedHighlights)
+    {
+        if (removedHighlights.Count == 0)
+            return;
+
+        if (!_pendingShiftDeleteHighlightUndo.TryGetValue(doc, out var stack))
+        {
+            stack = new Stack<HighlightLineUndoRecord>();
+            _pendingShiftDeleteHighlightUndo[doc] = stack;
+        }
+
+        stack.Push(new HighlightLineUndoRecord { Entries = removedHighlights });
+    }
+
     private void QueueTryRestoreShiftDeleteAssigneesOnUndo(TabDocument doc)
     {
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
@@ -2658,6 +2684,30 @@ public partial class MainWindow : Window
             bool changed = false;
             foreach (var entry in record.Entries)
                 changed |= SetLineAssignee(doc, entry.LineNumber, entry.Person, markDirty: false, redraw: false);
+
+            if (changed)
+                RedrawHighlight(doc);
+
+            stack.Pop();
+        }));
+    }
+
+    private void QueueTryRestoreShiftDeleteHighlightsOnUndo(TabDocument doc)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            if (!_pendingShiftDeleteHighlightUndo.TryGetValue(doc, out var stack) || stack.Count == 0)
+                return;
+
+            var record = stack.Peek();
+            bool isMatchingUndoStep = record.Entries.All(entry =>
+                string.Equals(GetLineText(doc, entry.LineNumber), entry.LineText, StringComparison.Ordinal));
+            if (!isMatchingUndoStep)
+                return;
+
+            bool changed = false;
+            foreach (var entry in record.Entries)
+                changed |= AddHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
 
             if (changed)
                 RedrawHighlight(doc);
@@ -2712,6 +2762,7 @@ public partial class MainWindow : Window
         if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.Z)
         {
             QueueTryRestoreShiftDeleteAssigneesOnUndo(doc);
+            QueueTryRestoreShiftDeleteHighlightsOnUndo(doc);
             return;
         }
 
@@ -2719,9 +2770,19 @@ public partial class MainWindow : Window
             return;
 
         var removedAssignees = new List<LineAssigneeUndoEntry>();
+        var removedHighlights = new List<HighlightLineUndoEntry>();
         bool changed = false;
         foreach (var line in GetSelectedOrCaretLineNumbers(doc))
         {
+            if (IsLineHighlighted(doc, line))
+            {
+                removedHighlights.Add(new HighlightLineUndoEntry
+                {
+                    LineNumber = line,
+                    LineText = GetLineText(doc, line)
+                });
+            }
+
             if (TryGetLineAssignee(doc, line, out var person))
             {
                 removedAssignees.Add(new LineAssigneeUndoEntry
@@ -2735,9 +2796,14 @@ public partial class MainWindow : Window
             changed |= RemoveLineAssignee(doc, line, markDirty: false, redraw: false);
         }
 
-        if (changed)
+        bool removedHighlight = false;
+        foreach (var entry in removedHighlights)
+            removedHighlight |= RemoveHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
+
+        if (changed || removedHighlight)
         {
             QueueShiftDeleteAssigneeUndo(doc, removedAssignees);
+            QueueShiftDeleteHighlightUndo(doc, removedHighlights);
             RedrawHighlight(doc);
         }
     }
