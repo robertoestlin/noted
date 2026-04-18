@@ -4297,10 +4297,35 @@ public partial class MainWindow : Window
         if (_closedTabHistory.Count == 0)
             return;
 
-        var entry = _closedTabHistory[0];
-        _closedTabHistory.RemoveAt(0);
-        SaveClosedTabHistory();
+        RestoreClosedTabAt(0);
+    }
 
+    private static DateTime ResolveClosedTabTimestampUtc(ClosedTabEntry entry)
+        => entry.ClosedAtUtc?.ToUniversalTime()
+            ?? entry.Metadata?.LastChangedUtc?.ToUniversalTime()
+            ?? entry.Metadata?.LastSavedUtc?.ToUniversalTime()
+            ?? DateTime.UtcNow;
+
+    private static string BuildClosedTabRecoveryDisplayText(ClosedTabEntry entry)
+    {
+        var statusText = entry.IsDirty ? "unsaved" : "saved";
+        var closedAtLocal = ResolveClosedTabTimestampUtc(entry).ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        return $"{entry.Header} ({statusText}, closed {closedAtLocal})";
+    }
+
+    private void RestoreClosedTabAt(int index)
+    {
+        if (index < 0 || index >= _closedTabHistory.Count)
+            return;
+
+        var entry = _closedTabHistory[index];
+        _closedTabHistory.RemoveAt(index);
+        SaveClosedTabHistory();
+        RestoreClosedTabEntry(entry);
+    }
+
+    private void RestoreClosedTabEntry(ClosedTabEntry entry)
+    {
         var doc = CreateTab(entry.Header, entry.Content);
         var highlightedLines = entry.Metadata?.HighlightLines ?? [];
         if (highlightedLines.Count == 0 && entry.Metadata?.HighlightLine is int legacyHighlightLine && legacyHighlightLine > 0)
@@ -4314,6 +4339,206 @@ public partial class MainWindow : Window
             ?? DateTime.UtcNow;
         doc.IsDirty = entry.IsDirty;
         RefreshTabHeader(doc);
+    }
+
+    private void ShowRecoverTabsDialog()
+    {
+        var dlg = new Window
+        {
+            Title = "Recover Tabs",
+            Width = 980,
+            Height = 640,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.CanResize
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var buttonRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        DockPanel.SetDock(buttonRow, Dock.Bottom);
+        var btnRestore = new Button
+        {
+            Content = "Restore Selected",
+            Width = 130,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsDefault = true
+        };
+        var btnDelete = new Button
+        {
+            Content = "Delete Selected",
+            Width = 120,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        var btnClose = new Button { Content = "Close", Width = 90, IsCancel = true };
+        buttonRow.Children.Add(btnRestore);
+        buttonRow.Children.Add(btnDelete);
+        buttonRow.Children.Add(btnClose);
+        root.Children.Add(buttonRow);
+
+        var body = new Grid();
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(340) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(10) });
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var lblList = new TextBlock
+        {
+            Text = "Closed tabs (newest first):",
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        Grid.SetColumn(lblList, 0);
+        Grid.SetRow(lblList, 0);
+        body.Children.Add(lblList);
+
+        var list = new ListBox
+        {
+            MinHeight = 360
+        };
+        Grid.SetColumn(list, 0);
+        Grid.SetRow(list, 1);
+        body.Children.Add(list);
+
+        var previewPanel = new Grid();
+        previewPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        previewPanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(previewPanel, 2);
+        Grid.SetRow(previewPanel, 1);
+        body.Children.Add(previewPanel);
+
+        var txtDetails = new TextBlock
+        {
+            Text = "Select a tab to preview.",
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        Grid.SetRow(txtDetails, 0);
+        previewPanel.Children.Add(txtDetails);
+
+        var txtPreview = new TextBox
+        {
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            AcceptsTab = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12
+        };
+        Grid.SetRow(txtPreview, 1);
+        previewPanel.Children.Add(txtPreview);
+
+        root.Children.Add(body);
+        dlg.Content = root;
+
+        void RefreshList(int? preferredIndex = null)
+        {
+            list.Items.Clear();
+            for (var i = 0; i < _closedTabHistory.Count; i++)
+            {
+                var entry = _closedTabHistory[i];
+                list.Items.Add(new ListBoxItem
+                {
+                    Content = BuildClosedTabRecoveryDisplayText(entry),
+                    Tag = i
+                });
+            }
+
+            if (list.Items.Count == 0)
+            {
+                txtDetails.Text = "No closed tabs available.";
+                txtPreview.Text = string.Empty;
+                btnRestore.IsEnabled = false;
+                btnDelete.IsEnabled = false;
+                return;
+            }
+
+            var indexToSelect = preferredIndex ?? 0;
+            if (indexToSelect < 0 || indexToSelect >= list.Items.Count)
+                indexToSelect = list.Items.Count - 1;
+            list.SelectedIndex = indexToSelect;
+            btnRestore.IsEnabled = true;
+            btnDelete.IsEnabled = true;
+        }
+
+        void UpdatePreview()
+        {
+            if (list.SelectedItem is not ListBoxItem selectedItem
+                || selectedItem.Tag is not int selectedIndex
+                || selectedIndex < 0
+                || selectedIndex >= _closedTabHistory.Count)
+            {
+                txtDetails.Text = "Select a tab to preview.";
+                txtPreview.Text = string.Empty;
+                btnRestore.IsEnabled = false;
+                btnDelete.IsEnabled = false;
+                return;
+            }
+
+            var entry = _closedTabHistory[selectedIndex];
+            var statusText = entry.IsDirty ? "Unsaved changes" : "No unsaved changes";
+            var closedText = ResolveClosedTabTimestampUtc(entry).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+            txtDetails.Text = $"{entry.Header}  |  {statusText}  |  Closed: {closedText}";
+            txtPreview.Text = entry.Content ?? string.Empty;
+            btnRestore.IsEnabled = true;
+            btnDelete.IsEnabled = true;
+        }
+
+        void RestoreSelected()
+        {
+            if (list.SelectedItem is not ListBoxItem selectedItem
+                || selectedItem.Tag is not int selectedIndex
+                || selectedIndex < 0
+                || selectedIndex >= _closedTabHistory.Count)
+            {
+                return;
+            }
+
+            RestoreClosedTabAt(selectedIndex);
+            var nextIndex = Math.Min(selectedIndex, _closedTabHistory.Count - 1);
+            RefreshList(nextIndex);
+        }
+
+        void DeleteSelected()
+        {
+            if (list.SelectedItem is not ListBoxItem selectedItem
+                || selectedItem.Tag is not int selectedIndex
+                || selectedIndex < 0
+                || selectedIndex >= _closedTabHistory.Count)
+            {
+                return;
+            }
+
+            var entry = _closedTabHistory[selectedIndex];
+            var confirm = MessageBox.Show(
+                $"Delete closed tab '{entry.Header}' from recovery history?\n\nThis cannot be undone.",
+                "Delete Closed Tab",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes)
+                return;
+
+            _closedTabHistory.RemoveAt(selectedIndex);
+            SaveClosedTabHistory();
+            var nextIndex = Math.Min(selectedIndex, _closedTabHistory.Count - 1);
+            RefreshList(nextIndex);
+        }
+
+        list.SelectionChanged += (_, _) => UpdatePreview();
+        list.MouseDoubleClick += (_, _) => RestoreSelected();
+        btnRestore.Click += (_, _) => RestoreSelected();
+        btnDelete.Click += (_, _) => DeleteSelected();
+        btnClose.Click += (_, _) => dlg.Close();
+
+        RefreshList();
+        dlg.ShowDialog();
     }
 
     private bool ConfirmDiscardUnsavedTab(string tabName)
@@ -4959,6 +5184,7 @@ public partial class MainWindow : Window
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
+    private void MenuRecoverTabs_Click(object sender, RoutedEventArgs e) => ShowRecoverTabsDialog();
     private void MenuAboutInfo_Click(object sender, RoutedEventArgs e)
         => new AboutWindow { Owner = this }.ShowDialog();
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
