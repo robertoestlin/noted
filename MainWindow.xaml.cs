@@ -294,6 +294,8 @@ public partial class MainWindow : Window
         private readonly Func<IReadOnlyDictionary<int, string>> _assigneeProvider;
         private readonly Func<string, Color> _assigneeColorProvider;
         private readonly Func<int, bool> _lineSelectionProvider;
+        private readonly Func<int> _caretLineProvider;
+        private readonly Func<Brush> _selectedLineBrushProvider;
         private readonly Func<Brush> _normalBrushProvider;
         private readonly Func<Brush> _selectedBrushProvider;
         private readonly Func<bool> _showHorizontalRuleProvider;
@@ -301,6 +303,7 @@ public partial class MainWindow : Window
         private readonly Func<bool> _showSmileysProvider;
         private readonly Func<FancyBulletStyle> _fancyBulletStyleProvider;
         private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
+        private static readonly Pen CaretLineBorderPen = CreateFrozenPen(Color.FromArgb(70, 60, 160, 80), 1.5);
         private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
         private static readonly Pen HorizontalRuleAccentPen = CreateFrozenPen(Color.FromRgb(229, 233, 240), 0.8);
         private static readonly Pen HorizontalRuleSelectedPen = CreateFrozenPen(Color.FromRgb(63, 154, 214), 1.8);
@@ -322,6 +325,8 @@ public partial class MainWindow : Window
             Func<IReadOnlyDictionary<int, string>> assigneeProvider,
             Func<string, Color> assigneeColorProvider,
             Func<int, bool> lineSelectionProvider,
+            Func<int> caretLineProvider,
+            Func<Brush> selectedLineBrushProvider,
             Func<Brush> normalBrushProvider,
             Func<Brush> selectedBrushProvider,
             Func<bool> showHorizontalRuleProvider,
@@ -333,6 +338,8 @@ public partial class MainWindow : Window
             _assigneeProvider = assigneeProvider;
             _assigneeColorProvider = assigneeColorProvider;
             _lineSelectionProvider = lineSelectionProvider;
+            _caretLineProvider = caretLineProvider;
+            _selectedLineBrushProvider = selectedLineBrushProvider;
             _normalBrushProvider = normalBrushProvider;
             _selectedBrushProvider = selectedBrushProvider;
             _showHorizontalRuleProvider = showHorizontalRuleProvider;
@@ -374,26 +381,59 @@ public partial class MainWindow : Window
             if (textView.Document == null || !textView.VisualLinesValid)
                 return;
 
+            // textView.ActualWidth is the document content width (sized to the longest line),
+            // NOT the visible viewport width. Use IScrollInfo to get the real viewport width
+            // and cover from x=0 to max(content, viewport) so every line spans the window.
+            double drawWidth = textView.ActualWidth;
+            if (textView is IScrollInfo si)
+                drawWidth = Math.Max(drawWidth, si.HorizontalOffset + si.ViewportWidth);
+
             var highlightedLines = _lineProvider();
-            if (highlightedLines.Count > 0)
+            var highlightedLineSet = highlightedLines.Count > 0
+                ? new HashSet<int>(highlightedLines)
+                : [];
+
+            // Paint selected/caret and highlighted rows using full editor width so the
+            // background remains consistent even when line content is short.
+            foreach (var visualLine in textView.VisualLines)
             {
-                foreach (var lineNumber in highlightedLines)
+                var line = visualLine.FirstDocumentLine;
+                if (line == null)
+                    continue;
+
+                bool isHighlighted = highlightedLineSet.Contains(line.LineNumber);
+                bool isSelected = _lineSelectionProvider(line.LineNumber);
+                if (!isHighlighted && !isSelected)
+                    continue;
+
+                var segment = new TextSegment
                 {
-                    if (lineNumber < 1 || lineNumber > textView.Document.LineCount)
-                        continue;
+                    StartOffset = line.Offset,
+                    EndOffset = line.Offset + line.Length
+                };
 
-                    var line = textView.Document.GetLineByNumber(lineNumber);
-                    var segment = new TextSegment
-                    {
-                        StartOffset = line.Offset,
-                        EndOffset = line.Offset + line.Length
-                    };
+                var lineRects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
+                if (lineRects.Count == 0)
+                    continue;
 
-                    foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
+                var brush = isHighlighted
+                    ? (isSelected ? _selectedBrushProvider() : _normalBrushProvider())
+                    : _selectedLineBrushProvider();
+
+                bool isCaretLine = line.LineNumber == _caretLineProvider();
+
+                foreach (var rect in lineRects)
+                {
+                    var fullWidthRect = new Rect(0, rect.Top, drawWidth, rect.Height);
+                    drawingContext.DrawRectangle(brush, null, fullWidthRect);
+
+                    if (isCaretLine)
                     {
-                        var fullWidthRect = new Rect(0, rect.Top, textView.ActualWidth, rect.Height);
-                        var brush = _lineSelectionProvider(lineNumber) ? _selectedBrushProvider() : _normalBrushProvider();
-                        drawingContext.DrawRectangle(brush, null, fullWidthRect);
+                        // Inset top/bottom by half the pen thickness so the border stays
+                        // inside the rect vertically; span the full draw width horizontally.
+                        const double inset = 0.75;
+                        var borderRect = new Rect(0, rect.Top + inset, drawWidth, rect.Height - inset * 2);
+                        drawingContext.DrawRectangle(null, CaretLineBorderPen, borderRect);
                     }
                 }
             }
@@ -429,13 +469,13 @@ public partial class MainWindow : Window
                         bool isSelected = _lineSelectionProvider(line.LineNumber);
                         if (isSelected)
                         {
-                            var bandRect = new Rect(0, lineRect.Top, textView.ActualWidth, lineRect.Height);
+                            var bandRect = new Rect(0, lineRect.Top, drawWidth, lineRect.Height);
                             drawingContext.DrawRectangle(HorizontalRuleSelectedBandBrush, null, bandRect);
                         }
 
                         double y = lineRect.Top + (lineRect.Height / 2);
                         double xStart = lineRects.Min(rect => rect.Left);
-                        double xEnd = Math.Max(xStart + 24, textView.ActualWidth - 10);
+                        double xEnd = Math.Max(xStart + 24, drawWidth - 10);
                         drawingContext.DrawLine(isSelected ? HorizontalRuleSelectedPen : HorizontalRulePen, new Point(xStart, y), new Point(xEnd, y));
                         if (!isSelected)
                             drawingContext.DrawLine(HorizontalRuleAccentPen, new Point(xStart, y - 1), new Point(xEnd, y - 1));
@@ -553,7 +593,7 @@ public partial class MainWindow : Window
                 double badgeHeight = Math.Max(16, lineRects[0].Height - 2);
                 double badgeWidth = formattedText.WidthIncludingTrailingWhitespace + (paddingX * 2);
                 double lineEndX = lineRects.Max(rect => rect.Right);
-                double x = Math.Max(0, Math.Min(textView.ActualWidth - badgeWidth - 4, lineEndX + 14));
+                double x = Math.Max(0, Math.Min(drawWidth - badgeWidth - 4, lineEndX + 14));
                 double y = lineRects[0].Top + Math.Max(0, (lineRects[0].Height - badgeHeight) / 2);
 
                 var badgeRect = new Rect(x, y, badgeWidth, badgeHeight);
@@ -989,6 +1029,8 @@ public partial class MainWindow : Window
             () => GetLineAssignments(doc),
             person => GetUserColor(person),
             line => IsLineSelected(doc.Editor, line),
+            () => doc.Editor.TextArea.Caret.Line,
+            () => _selectedLineBrush,
             () => _highlightedLineBrush,
             () => _selectedHighlightedLineBrush,
             () => _showHorizontalRuler,
@@ -1063,8 +1105,7 @@ public partial class MainWindow : Window
             Padding = new Thickness(4)
         };
         editor.TextArea.TextView.Margin = new Thickness(8, 0, 0, 0);
-        editor.Options.HighlightCurrentLine = true;
-        editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
+        editor.Options.HighlightCurrentLine = false;
         editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(
             (line, marker) => CreateInlineImageElement(editor, line.LineNumber, marker),
             marker => _showInlineImages && CanRenderInlineImageLine(marker)));
@@ -2338,7 +2379,6 @@ public partial class MainWindow : Window
 
         foreach (var doc in _docs.Values)
         {
-            doc.Editor.TextArea.TextView.CurrentLineBackground = _selectedLineBrush;
             RedrawHighlight(doc);
         }
     }
@@ -2817,8 +2857,9 @@ public partial class MainWindow : Window
         {
             var docLine = doc.Editor.Document.GetLineByNumber(line);
             var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
-            anchor.MovementType = AnchorMovementType.BeforeInsertion;
-            anchor.SurviveDeletion = false;
+            // Keep assignee badges attached to the original line content when text is
+            // inserted/deleted at the beginning of that line (e.g., Shift+Delete above).
+            anchor.MovementType = AnchorMovementType.AfterInsertion;
             doc.LineAssigneeAnchors.Add(new TabDocument.LineAssigneeAnchor
             {
                 Anchor = anchor,
