@@ -201,6 +201,7 @@ public partial class MainWindow : Window
     private readonly List<KeyBinding> _shortcutBindings = [];
     private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _referencedInlineImagesSnapshot = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<TabDocument, Stack<LineAssigneeUndoRecord>> _pendingShiftDeleteAssigneeUndo = [];
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -228,6 +229,18 @@ public partial class MainWindow : Window
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    private sealed class LineAssigneeUndoRecord
+    {
+        public required IReadOnlyList<LineAssigneeUndoEntry> Entries { get; init; }
+    }
+
+    private sealed class LineAssigneeUndoEntry
+    {
+        public required int LineNumber { get; init; }
+        public required string Person { get; init; }
+        public required string LineText { get; init; }
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -2606,6 +2619,53 @@ public partial class MainWindow : Window
         return [Math.Max(1, doc.Editor.TextArea.Caret.Line)];
     }
 
+    private static string GetLineText(TabDocument doc, int lineNumber)
+    {
+        if (lineNumber <= 0 || lineNumber > doc.Editor.Document.LineCount)
+            return string.Empty;
+
+        var line = doc.Editor.Document.GetLineByNumber(lineNumber);
+        return doc.Editor.Document.GetText(line.Offset, line.Length);
+    }
+
+    private void QueueShiftDeleteAssigneeUndo(TabDocument doc, IReadOnlyList<LineAssigneeUndoEntry> removedAssignees)
+    {
+        if (removedAssignees.Count == 0)
+            return;
+
+        if (!_pendingShiftDeleteAssigneeUndo.TryGetValue(doc, out var stack))
+        {
+            stack = new Stack<LineAssigneeUndoRecord>();
+            _pendingShiftDeleteAssigneeUndo[doc] = stack;
+        }
+
+        stack.Push(new LineAssigneeUndoRecord { Entries = removedAssignees });
+    }
+
+    private void QueueTryRestoreShiftDeleteAssigneesOnUndo(TabDocument doc)
+    {
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+        {
+            if (!_pendingShiftDeleteAssigneeUndo.TryGetValue(doc, out var stack) || stack.Count == 0)
+                return;
+
+            var record = stack.Peek();
+            bool isMatchingUndoStep = record.Entries.All(entry =>
+                string.Equals(GetLineText(doc, entry.LineNumber), entry.LineText, StringComparison.Ordinal));
+            if (!isMatchingUndoStep)
+                return;
+
+            bool changed = false;
+            foreach (var entry in record.Entries)
+                changed |= SetLineAssignee(doc, entry.LineNumber, entry.Person, markDirty: false, redraw: false);
+
+            if (changed)
+                RedrawHighlight(doc);
+
+            stack.Pop();
+        }));
+    }
+
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
@@ -2649,15 +2709,37 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.Z)
+        {
+            QueueTryRestoreShiftDeleteAssigneesOnUndo(doc);
+            return;
+        }
+
         if (e.Key != Key.Delete || (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
             return;
 
+        var removedAssignees = new List<LineAssigneeUndoEntry>();
         bool changed = false;
         foreach (var line in GetSelectedOrCaretLineNumbers(doc))
+        {
+            if (TryGetLineAssignee(doc, line, out var person))
+            {
+                removedAssignees.Add(new LineAssigneeUndoEntry
+                {
+                    LineNumber = line,
+                    Person = person,
+                    LineText = GetLineText(doc, line)
+                });
+            }
+
             changed |= RemoveLineAssignee(doc, line, markDirty: false, redraw: false);
+        }
 
         if (changed)
+        {
+            QueueShiftDeleteAssigneeUndo(doc, removedAssignees);
             RedrawHighlight(doc);
+        }
     }
 
     private bool TryRemoveHighlightBeforeLineJoin(TabDocument doc)
