@@ -7,6 +7,11 @@ namespace Noted.Services;
 
 public sealed class ClosedTabsService
 {
+    private const int MinClosedTabsCount = 1;
+    private const int MaxClosedTabsCount = 500;
+    private const int MinRetentionDays = 0;
+    private const int MaxRetentionDays = 3650;
+
     public string GetHistoryPath(string backupFolder, string fileName)
         => Path.Combine(backupFolder, fileName);
 
@@ -27,15 +32,31 @@ public sealed class ClosedTabsService
         return JsonSerializer.Deserialize<List<T>>(File.ReadAllText(path));
     }
 
-    public List<ClosedTabEntry> NormalizeHistory(IEnumerable<ClosedTabEntry> entries, int maxClosedTabs)
+    public List<ClosedTabEntry> NormalizeHistory(IEnumerable<ClosedTabEntry> entries, int maxClosedTabs, int retentionDays)
     {
+        var normalizedMaxCount = Math.Clamp(maxClosedTabs, MinClosedTabsCount, MaxClosedTabsCount);
+        var normalizedRetentionDays = Math.Clamp(retentionDays, MinRetentionDays, MaxRetentionDays);
+        var retentionThresholdUtc = normalizedRetentionDays > 0
+            ? DateTime.UtcNow.AddDays(-normalizedRetentionDays)
+            : DateTime.MinValue;
         var normalized = new List<ClosedTabEntry>();
 
-        foreach (var entry in entries
+        foreach (var normalizedEntry in entries
                      .Where(entry => entry != null)
                      .Where(entry => !string.IsNullOrWhiteSpace(entry.Header))
-                     .Take(maxClosedTabs))
+                     .Select(entry =>
+                     {
+                         var closedAtUtc = entry.ClosedAtUtc?.ToUniversalTime()
+                             ?? entry.Metadata?.LastChangedUtc?.ToUniversalTime()
+                             ?? entry.Metadata?.LastSavedUtc?.ToUniversalTime()
+                             ?? DateTime.UtcNow;
+                         return new { Entry = entry, ClosedAtUtc = closedAtUtc };
+                     })
+                     .Where(item => item.ClosedAtUtc >= retentionThresholdUtc)
+                     .Take(normalizedMaxCount))
         {
+            var entry = normalizedEntry.Entry;
+            var closedAtUtc = normalizedEntry.ClosedAtUtc;
             var highlightedLines = entry.Metadata?.HighlightLines?
                 .Where(line => line > 0)
                 .Distinct()
@@ -57,6 +78,7 @@ public sealed class ClosedTabsService
                 Header = entry.Header.Trim(),
                 Content = entry.Content ?? string.Empty,
                 IsDirty = entry.IsDirty,
+                ClosedAtUtc = closedAtUtc,
                 Metadata = entry.Metadata == null
                     ? null
                     : new FileMetadata

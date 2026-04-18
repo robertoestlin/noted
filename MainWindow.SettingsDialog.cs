@@ -649,6 +649,34 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 0)
         };
         tabsSettingsPanel.Children.Add(txtTabStaleDays);
+        tabsSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = $"Closed tabs to keep in {ClosedTabsFileName} ({MinClosedTabsMaxCount}-{MaxClosedTabsMaxCount}):",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 12, 0, 8)
+        });
+        var txtClosedTabsMaxCount = new TextBox
+        {
+            Text = _closedTabsMaxCount.ToString(),
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 0)
+        };
+        tabsSettingsPanel.Children.Add(txtClosedTabsMaxCount);
+        tabsSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = $"Closed tab retention in days ({MinClosedTabsRetentionDays}-{MaxClosedTabsRetentionDays}, 0 disables age cleanup):",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 12, 0, 8)
+        });
+        var txtClosedTabsRetentionDays = new TextBox
+        {
+            Text = _closedTabsRetentionDays.ToString(),
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 0)
+        };
+        tabsSettingsPanel.Children.Add(txtClosedTabsRetentionDays);
         tabControl.Items.Add(new TabItem
         {
             Header = "Tabs",
@@ -854,7 +882,11 @@ public partial class MainWindow
                 && TryParseColor(cmbSelectedLineColor.Text, out var selectedLineColor)
                 && TryParseColor(cmbHighlightedLineColor.Text, out var highlightedLineColor)
                 && TryParseColor(cmbSelectedHighlightedLineColor.Text, out var selectedHighlightedLineColor)
-                && int.TryParse(txtTabStaleDays.Text, out int staleDays) && staleDays >= 1 && staleDays <= 3650)
+                && int.TryParse(txtTabStaleDays.Text, out int staleDays) && staleDays >= 1 && staleDays <= 3650
+                && int.TryParse(txtClosedTabsMaxCount.Text, out int closedTabsMaxCount)
+                && closedTabsMaxCount >= MinClosedTabsMaxCount && closedTabsMaxCount <= MaxClosedTabsMaxCount
+                && int.TryParse(txtClosedTabsRetentionDays.Text, out int closedTabsRetentionDays)
+                && closedTabsRetentionDays >= MinClosedTabsRetentionDays && closedTabsRetentionDays <= MaxClosedTabsRetentionDays)
             {
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
@@ -904,6 +936,8 @@ public partial class MainWindow
                 _showInlineImages = chkShowInlineImages.IsChecked == true;
                 _fancyBulletStyle = selectedFancyBulletStyle;
                 _tabCleanupStaleDays = staleDays;
+                _closedTabsMaxCount = closedTabsMaxCount;
+                _closedTabsRetentionDays = closedTabsRetentionDays;
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors
@@ -927,7 +961,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.",
+                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

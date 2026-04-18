@@ -102,6 +102,8 @@ public partial class MainWindow
             ProjectLineCounterIgnoredFolders = BuildProjectLineCounterIgnoredFoldersSnapshot(),
             SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
+            ClosedTabsMaxCount = _closedTabsMaxCount,
+            ClosedTabsRetentionDays = _closedTabsRetentionDays,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
             QuickMessageCustom = _quickMessageCustom,
@@ -224,6 +226,8 @@ public partial class MainWindow
         _searchFilesHistory = [];
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
+        _closedTabsMaxCount = DefaultClosedTabsMaxCount;
+        _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
         _todoItems.Clear();
         _safePasteSavedEntries.Clear();
         _todoPanelVisible = false;
@@ -317,6 +321,8 @@ public partial class MainWindow
         }
         if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
+        _closedTabsMaxCount = NormalizeClosedTabsMaxCount(state.ClosedTabsMaxCount);
+        _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
         ApplyQuickMessageOverlaySettings(state);
 
         ApplyThemeColorsFromSettings(state);

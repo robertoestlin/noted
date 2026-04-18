@@ -115,6 +115,7 @@ public sealed class ClosedTabEntry
     public string Content { get; set; } = string.Empty;
     public bool IsDirty { get; set; }
     public FileMetadata? Metadata { get; set; }
+    public DateTime? ClosedAtUtc { get; set; }
 }
 
 public sealed class SafePasteKeyRecord
@@ -176,6 +177,8 @@ public sealed class WindowSettings
     public List<string>? ProjectLineCounterIgnoredFolders { get; set; }
     public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
+    public int ClosedTabsMaxCount { get; set; } = 10;
+    public int ClosedTabsRetentionDays { get; set; }
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }
     public string? QuickMessageCustom { get; set; }

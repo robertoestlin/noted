@@ -92,7 +92,12 @@ public partial class MainWindow : Window
     private const string TodoItemsFileName = "todo-items.json";
     private const string UptimeHeartbeatFileNamePrefix = "uptime-heartbeat-";
     private const string AppLogFileName = "noted.log";
-    private const int MaxClosedTabs = 10;
+    private const int DefaultClosedTabsMaxCount = 10;
+    private const int MinClosedTabsMaxCount = 1;
+    private const int MaxClosedTabsMaxCount = 500;
+    private const int DefaultClosedTabsRetentionDays = 0;
+    private const int MinClosedTabsRetentionDays = 0;
+    private const int MaxClosedTabsRetentionDays = 3650;
 
     private static string DefaultBackupFolder() => @"c:\tools\backup\noted";
     private static string DefaultCloudBackupFolder() => Path.Combine(DefaultBackupFolder(), "cloud");
@@ -168,6 +173,8 @@ public partial class MainWindow : Window
     private int _initialLines = DefaultInitialLines;
     private int _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
+    private int _closedTabsMaxCount = DefaultClosedTabsMaxCount;
+    private int _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     /// <summary>Session-only offset for Ctrl+wheel zoom; not saved to settings.</summary>
@@ -4224,19 +4231,40 @@ public partial class MainWindow : Window
             Header = doc.Header,
             Content = doc.CachedText,
             IsDirty = doc.IsDirty,
-            Metadata = CreateFileMetadata(doc)
+            Metadata = CreateFileMetadata(doc),
+            ClosedAtUtc = DateTime.UtcNow
         });
 
-        if (_closedTabHistory.Count > MaxClosedTabs)
-            _closedTabHistory.RemoveRange(MaxClosedTabs, _closedTabHistory.Count - MaxClosedTabs);
-
         SaveClosedTabHistory();
+    }
+
+    private static int NormalizeClosedTabsMaxCount(int? maxCount)
+    {
+        var value = maxCount ?? DefaultClosedTabsMaxCount;
+        return Math.Clamp(value, MinClosedTabsMaxCount, MaxClosedTabsMaxCount);
+    }
+
+    private static int NormalizeClosedTabsRetentionDays(int? retentionDays)
+    {
+        var value = retentionDays ?? DefaultClosedTabsRetentionDays;
+        return Math.Clamp(value, MinClosedTabsRetentionDays, MaxClosedTabsRetentionDays);
+    }
+
+    private void NormalizeClosedTabHistory()
+    {
+        var normalized = _closedTabsService.NormalizeHistory(
+            _closedTabHistory,
+            _closedTabsMaxCount,
+            _closedTabsRetentionDays);
+        _closedTabHistory.Clear();
+        _closedTabHistory.AddRange(normalized);
     }
 
     private void SaveClosedTabHistory()
     {
         try
         {
+            NormalizeClosedTabHistory();
             _closedTabsService.SaveHistory(_backupFolder, ClosedTabsFileName, _closedTabHistory);
         }
         catch
@@ -4255,7 +4283,8 @@ public partial class MainWindow : Window
             if (parsed == null)
                 return;
 
-            _closedTabHistory.AddRange(_closedTabsService.NormalizeHistory(parsed, MaxClosedTabs));
+            _closedTabHistory.AddRange(_closedTabsService.NormalizeHistory(parsed, _closedTabsMaxCount, _closedTabsRetentionDays));
+            SaveClosedTabHistory();
         }
         catch
         {
