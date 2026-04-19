@@ -26,6 +26,7 @@
                 BorderThickness="0,0,1,0"
                 Background="#FAFAFA"
                 Focusable="True"
+                FocusVisualStyle="{x:Null}"
                 PreviewKeyDown="TodoPanelBorder_PreviewKeyDown"
                 MouseDown="TodoPanelBorder_MouseDown">
             <DockPanel Margin="10">

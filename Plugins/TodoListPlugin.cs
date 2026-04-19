@@ -923,11 +923,16 @@ public partial class MainWindow
             Keyboard.Focus(textBox);
         };
 
-        if (dialog.ShowDialog() != true)
-            return;
+        var wasAdded = dialog.ShowDialog() == true;
+        if (wasAdded)
+        {
+            RenderTodoLists();
+            SaveWindowSettings();
+        }
 
-        RenderTodoLists();
-        SaveWindowSettings();
+        // Keep focus behavior identical to clicking inside the task panel.
+        TodoPanelBorder?.Focus();
+        Keyboard.Focus(TodoPanelBorder);
     }
 
     private void RenameTodoItem(TodoItemState item)
