@@ -162,6 +162,8 @@ public sealed class WindowSettings
     public bool ShowSmileys { get; set; } = true;
     /// <summary>When null (older settings files), styled tag badges stay enabled.</summary>
     public bool? RenderStyledTags { get; set; }
+    /// <summary>When null (older settings files), line assignment badges stay enabled.</summary>
+    public bool? ShowLineAssignments { get; set; }
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;
     public string FancyBulletStyle { get; set; } = "dot";

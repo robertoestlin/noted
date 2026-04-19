@@ -18,6 +18,7 @@ public partial class MainWindow
         bool originalWrapLongLinesVisually = _wrapLongLinesVisually;
         int originalVisualLineWrapColumn = _visualLineWrapColumn;
         bool originalShowHorizontalRuler = _showHorizontalRuler;
+        bool originalShowLineAssignments = _showLineAssignments;
         bool originalShowInlineImages = _showInlineImages;
         var originalFancyBulletStyle = _fancyBulletStyle;
         bool viewPreviewCommitted = false;
@@ -397,10 +398,17 @@ public partial class MainWindow
             IsChecked = _showInlineImages,
             Margin = new Thickness(0, 0, 0, 10)
         };
+        var chkShowLineAssignments = new CheckBox
+        {
+            Content = "Show line assignment badges (Tools → Users)",
+            IsChecked = _showLineAssignments,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
         viewPanel.Children.Add(chkStyledBullets);
         viewPanel.Children.Add(chkWrapLongLinesVisually);
         viewPanel.Children.Add(visualWrapColumnRow);
         viewPanel.Children.Add(chkShowHorizontalRuler);
+        viewPanel.Children.Add(chkShowLineAssignments);
         viewPanel.Children.Add(chkShowInlineImages);
         viewPanel.Children.Add(new TextBlock
         {
@@ -568,6 +576,7 @@ public partial class MainWindow
             if (int.TryParse(txtVisualWrapColumn.Text, out var visualWrapColumn))
                 _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
             _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
+            _showLineAssignments = chkShowLineAssignments.IsChecked == true;
             _showInlineImages = chkShowInlineImages.IsChecked == true;
             if (cmbBulletStyle.SelectedItem is ComboBoxItem selectedStyleItem
                 && selectedStyleItem.Tag is FancyBulletStyle selectedStyle)
@@ -587,6 +596,8 @@ public partial class MainWindow
         txtVisualWrapColumn.TextChanged += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowHorizontalRuler.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowHorizontalRuler.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowLineAssignments.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
+        chkShowLineAssignments.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowInlineImages.Checked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         chkShowInlineImages.Unchecked += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
         cmbBulletStyle.SelectionChanged += (_, _) => ApplyLiveViewPreviewFromSettingsControls();
@@ -933,6 +944,7 @@ public partial class MainWindow
                 _wrapLongLinesVisually = chkWrapLongLinesVisually.IsChecked == true;
                 _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
                 _showHorizontalRuler = chkShowHorizontalRuler.IsChecked == true;
+                _showLineAssignments = chkShowLineAssignments.IsChecked == true;
                 _showInlineImages = chkShowInlineImages.IsChecked == true;
                 _fancyBulletStyle = selectedFancyBulletStyle;
                 _tabCleanupStaleDays = staleDays;
@@ -973,6 +985,7 @@ public partial class MainWindow
             _wrapLongLinesVisually = originalWrapLongLinesVisually;
             _visualLineWrapColumn = originalVisualLineWrapColumn;
             _showHorizontalRuler = originalShowHorizontalRuler;
+            _showLineAssignments = originalShowLineAssignments;
             _showInlineImages = originalShowInlineImages;
             _fancyBulletStyle = originalFancyBulletStyle;
             ApplyViewRenderingSettings();

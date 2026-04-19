@@ -142,6 +142,10 @@
                               Header="Styled _Tags"
                               IsCheckable="True"
                               Click="MenuRenderStyledTags_Click"/>
+                    <MenuItem x:Name="MenuItemShowLineAssignments"
+                              Header="Show line _assignments"
+                              IsCheckable="True"
+                              Click="MenuShowLineAssignments_Click"/>
                     <MenuItem x:Name="MenuItemShowHorizontalRuler"
                               Header="Render Horizontal _Dividers"
                               IsCheckable="True"

@@ -201,6 +201,7 @@ public partial class MainWindow : Window
     private int _visualLineWrapColumn = DefaultVisualLineWrapColumn;
     private bool _showSmileys = true;
     private bool _renderStyledTags = true;
+    private bool _showLineAssignments = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -337,6 +338,7 @@ public partial class MainWindow : Window
         private readonly Func<bool> _showSmileysProvider;
         private readonly Func<FancyBulletStyle> _fancyBulletStyleProvider;
         private readonly Func<bool> _showStyledTagsProvider;
+        private readonly Func<bool> _showLineAssignmentsProvider;
         private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
         private static readonly Pen CaretLineBorderPen = CreateFrozenPen(Color.FromArgb(70, 60, 160, 80), 1.5);
         private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
@@ -387,7 +389,8 @@ public partial class MainWindow : Window
             Func<bool> fancyBulletsEnabledProvider,
             Func<bool> showSmileysProvider,
             Func<FancyBulletStyle> fancyBulletStyleProvider,
-            Func<bool> showStyledTagsProvider)
+            Func<bool> showStyledTagsProvider,
+            Func<bool> showLineAssignmentsProvider)
         {
             _lineProvider = lineProvider;
             _assigneeProvider = assigneeProvider;
@@ -402,6 +405,7 @@ public partial class MainWindow : Window
             _showSmileysProvider = showSmileysProvider;
             _fancyBulletStyleProvider = fancyBulletStyleProvider;
             _showStyledTagsProvider = showStyledTagsProvider;
+            _showLineAssignmentsProvider = showLineAssignmentsProvider;
         }
 
         private static Color ContrastTextColor(Color background)
@@ -618,6 +622,9 @@ public partial class MainWindow : Window
                     }
                 }
             }
+
+            if (!_showLineAssignmentsProvider())
+                return;
 
             var assignments = _assigneeProvider();
             if (assignments.Count == 0)
@@ -1177,7 +1184,8 @@ public partial class MainWindow : Window
             () => _fancyBulletsEnabled,
             () => _showSmileys,
             () => _fancyBulletStyle,
-            () => _renderStyledTags);
+            () => _renderStyledTags,
+            () => _showLineAssignments);
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
@@ -5204,6 +5212,7 @@ public partial class MainWindow : Window
         MenuItemStyledBullets.IsChecked = _fancyBulletsEnabled;
         MenuItemShowSmileys.IsChecked = _showSmileys;
         MenuItemRenderStyledTags.IsChecked = _renderStyledTags;
+        MenuItemShowLineAssignments.IsChecked = _showLineAssignments;
         MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
         MenuItemShowInlineImages.IsChecked = _showInlineImages;
     }
@@ -5300,6 +5309,12 @@ public partial class MainWindow : Window
     private void MenuRenderStyledTags_Click(object sender, RoutedEventArgs e)
     {
         _renderStyledTags = MenuItemRenderStyledTags.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+    private void MenuShowLineAssignments_Click(object sender, RoutedEventArgs e)
+    {
+        _showLineAssignments = MenuItemShowLineAssignments.IsChecked;
         ApplyViewRenderingSettings();
         SaveWindowSettings();
     }
