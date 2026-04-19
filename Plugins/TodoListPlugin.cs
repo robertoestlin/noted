@@ -300,9 +300,21 @@ public partial class MainWindow
 
     private UIElement BuildGroupSection(TaskAreaState area, TaskGroupState group)
     {
-        var wrapper = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var groupTag = new TodoGroupPanelTag { AreaId = area.Id, GroupId = group.Id };
+        var wrapper = new StackPanel
+        {
+            Margin = new Thickness(0, 0, 0, 10),
+            AllowDrop = true,
+            Tag = groupTag
+        };
+        wrapper.DragOver += TodoGroupPanel_DragOver;
+        wrapper.Drop += TodoGroupPanel_Drop;
 
         var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        headerRow.AllowDrop = true;
+        headerRow.Tag = groupTag;
+        headerRow.DragOver += TodoGroupPanel_DragOver;
+        headerRow.Drop += TodoGroupPanel_Drop;
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var headerText = new TextBlock
@@ -339,7 +351,7 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 0),
             MinHeight = 18
         };
-        itemsPanel.Tag = new TodoGroupPanelTag { AreaId = area.Id, GroupId = group.Id };
+        itemsPanel.Tag = groupTag;
         itemsPanel.DragOver += TodoGroupPanel_DragOver;
         itemsPanel.Drop += TodoGroupPanel_Drop;
 
@@ -408,7 +420,7 @@ public partial class MainWindow
                 _todoDragStartPoint = e.GetPosition(row);
             };
 
-            row.MouseMove += (_, e) =>
+            row.PreviewMouseMove += (_, e) =>
             {
                 if (e.LeftButton != MouseButtonState.Pressed
                     || string.IsNullOrWhiteSpace(_todoDragSourceItemId)
@@ -428,6 +440,7 @@ public partial class MainWindow
                 data.SetData(TodoDragDataFormat, item.Id);
                 DragDrop.DoDragDrop(row, data, DragDropEffects.Move);
                 _todoDragSourceItemId = null;
+                e.Handled = true;
             };
 
             row.MouseLeftButtonUp += (_, _) => _todoDragSourceItemId = null;
