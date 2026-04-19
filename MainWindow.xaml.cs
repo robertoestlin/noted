@@ -73,6 +73,9 @@ public partial class MainWindow : Window
     private List<UserProfile> _users = [];
     private readonly Dictionary<string, TimeReportMonthState> _timeReports = new(StringComparer.OrdinalIgnoreCase);
     private List<PluginAlarmSettings> _pluginAlarms = [];
+    private string _taskPanelTitle = DefaultTaskPanelTitle;
+    private List<TaskAreaState> _taskAreas = [];
+    private string _currentTaskAreaId = DefaultTaskAreaId;
     private bool _pluginAlarmsEnabled = true;
     private DateTime? _pluginAlarmsSnoozedUntilLocal;
     private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
@@ -92,6 +95,15 @@ public partial class MainWindow : Window
     private const string TodoItemsFileName = "todo-items.json";
     private const string UptimeHeartbeatFileNamePrefix = "uptime-heartbeat-";
     private const string AppLogFileName = "noted.log";
+    private const string DefaultTaskPanelTitle = "Task Panel";
+    private const string DefaultTaskAreaId = "main";
+    private const string DefaultTaskAreaName = "Main";
+    private static readonly (string Id, string Name)[] DefaultTaskGroups =
+    [
+        ("today", "Today"),
+        ("this-week", "This Week"),
+        ("this-month", "This Month")
+    ];
     private const int DefaultClosedTabsMaxCount = 10;
     private const int MinClosedTabsMaxCount = 1;
     private const int MaxClosedTabsMaxCount = 500;

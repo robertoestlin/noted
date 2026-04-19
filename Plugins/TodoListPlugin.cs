@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -12,15 +14,18 @@ public partial class MainWindow
     private const string DefaultShortcutToggleTodoPanel = "F3";
     private const double TodoPanelOpenWidth = 330;
     private const string TodoDragDataFormat = "Noted.TodoItemId";
+    private const string TodoClosedAreaId = "__closed__";
+    private const string TodoClosedGroupId = "__closed__";
     private readonly List<TodoItemState> _todoItems = [];
     private bool _todoPanelVisible;
     private Point _todoDragStartPoint;
     private string? _todoDragSourceItemId;
+    private bool _suppressTaskAreaSelectionChanged;
 
     private void InitializeTodoPanel()
     {
-        ConfigureTodoSectionDropTarget(TodoTodayItemsPanel, TodoBucket.Today);
-        ConfigureTodoSectionDropTarget(TodoThisWeekItemsPanel, TodoBucket.ThisWeek);
+        RefreshTodoAreaSelector();
+        UpdateTodoPanelTitleText();
         UpdateTodoPanelVisibility();
         RenderTodoLists();
     }
@@ -33,6 +38,8 @@ public partial class MainWindow
             Id = item.Id,
             Text = item.Text,
             Bucket = item.Bucket,
+            AreaId = item.AreaId,
+            GroupId = item.GroupId,
             SortOrder = item.SortOrder,
             CreatedUtc = item.CreatedUtc,
             CompletedAtUtc = item.CompletedAtUtc
@@ -55,6 +62,8 @@ public partial class MainWindow
                     Id = string.IsNullOrWhiteSpace(rawItem.Id) ? Guid.NewGuid().ToString("N") : rawItem.Id,
                     Text = text,
                     Bucket = rawItem.Bucket,
+                    AreaId = rawItem.AreaId,
+                    GroupId = rawItem.GroupId,
                     SortOrder = rawItem.SortOrder,
                     CreatedUtc = rawItem.CreatedUtc == default ? DateTime.UtcNow : rawItem.CreatedUtc,
                     CompletedAtUtc = rawItem.CompletedAtUtc
@@ -62,14 +71,117 @@ public partial class MainWindow
             }
         }
 
+        MigrateLegacyTodoItemsToGroups();
+
         // Always start with the todo panel collapsed on app launch.
         _todoPanelVisible = false;
         NormalizeTodoSortOrders();
         PruneCompletedTodoItems();
         if (TodoPanelColumn != null)
             UpdateTodoPanelVisibility();
-        if (TodoTodayItemsPanel != null)
+        if (TodoGroupsContainer != null)
+        {
+            RefreshTodoAreaSelector();
+            UpdateTodoPanelTitleText();
             RenderTodoLists();
+        }
+    }
+
+    private void MigrateLegacyTodoItemsToGroups()
+    {
+        if (_taskAreas == null || _taskAreas.Count == 0)
+            return;
+
+        var mainArea = _taskAreas.FirstOrDefault(area => string.Equals(area.Id, DefaultTaskAreaId, StringComparison.OrdinalIgnoreCase))
+            ?? _taskAreas[0];
+        var firstGroupId = mainArea.Groups.Count > 0 ? mainArea.Groups[0].Id : DefaultTaskGroups[0].Id;
+
+        foreach (var item in _todoItems)
+        {
+            var areaExists = !string.IsNullOrWhiteSpace(item.AreaId)
+                && _taskAreas.Any(area => string.Equals(area.Id, item.AreaId, StringComparison.OrdinalIgnoreCase));
+            if (!areaExists)
+                item.AreaId = mainArea.Id;
+
+            var ownerArea = _taskAreas.FirstOrDefault(area => string.Equals(area.Id, item.AreaId, StringComparison.OrdinalIgnoreCase))
+                ?? mainArea;
+            var groupExists = !string.IsNullOrWhiteSpace(item.GroupId)
+                && ownerArea.Groups.Any(group => string.Equals(group.Id, item.GroupId, StringComparison.OrdinalIgnoreCase));
+
+            if (!groupExists)
+            {
+                // Map from legacy Bucket into the default Main area groups.
+                item.AreaId = mainArea.Id;
+                item.GroupId = item.Bucket switch
+                {
+                    TodoBucket.ThisWeek => mainArea.Groups.FirstOrDefault(g => string.Equals(g.Id, "this-week", StringComparison.OrdinalIgnoreCase))?.Id
+                        ?? firstGroupId,
+                    _ => mainArea.Groups.FirstOrDefault(g => string.Equals(g.Id, "today", StringComparison.OrdinalIgnoreCase))?.Id
+                        ?? firstGroupId
+                };
+            }
+        }
+    }
+
+    private TaskAreaState? GetCurrentTaskArea()
+    {
+        if (_taskAreas == null || _taskAreas.Count == 0)
+            return null;
+        return _taskAreas.FirstOrDefault(area => string.Equals(area.Id, _currentTaskAreaId, StringComparison.OrdinalIgnoreCase))
+            ?? _taskAreas[0];
+    }
+
+    private void UpdateTodoPanelTitleText()
+    {
+        if (TodoPanelTitleText != null)
+            TodoPanelTitleText.Text = string.IsNullOrWhiteSpace(_taskPanelTitle) ? DefaultTaskPanelTitle : _taskPanelTitle;
+    }
+
+    private void RefreshTodoAreaSelector()
+    {
+        if (TodoAreaComboBox == null)
+            return;
+
+        _suppressTaskAreaSelectionChanged = true;
+        try
+        {
+            TodoAreaComboBox.Items.Clear();
+            if (_taskAreas != null)
+            {
+                foreach (var area in _taskAreas)
+                {
+                    var item = new ComboBoxItem
+                    {
+                        Content = area.Name,
+                        Tag = area.Id
+                    };
+                    TodoAreaComboBox.Items.Add(item);
+                    if (string.Equals(area.Id, _currentTaskAreaId, StringComparison.OrdinalIgnoreCase))
+                        TodoAreaComboBox.SelectedItem = item;
+                }
+            }
+
+            if (TodoAreaComboBox.SelectedItem == null && TodoAreaComboBox.Items.Count > 0)
+                TodoAreaComboBox.SelectedIndex = 0;
+        }
+        finally
+        {
+            _suppressTaskAreaSelectionChanged = false;
+        }
+    }
+
+    private void TodoAreaComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTaskAreaSelectionChanged)
+            return;
+        if (TodoAreaComboBox?.SelectedItem is not ComboBoxItem selected || selected.Tag is not string areaId)
+            return;
+        if (string.Equals(_currentTaskAreaId, areaId, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _currentTaskAreaId = areaId;
+        RenderTodoLists();
+        SaveWindowSettings();
     }
 
     private void ExecuteToggleTodoPanel()
@@ -106,6 +218,7 @@ public partial class MainWindow
     {
         var today = DateTime.Today;
         var currentWeekStart = StartOfWeekMonday(today);
+        var currentMonthStart = new DateTime(today.Year, today.Month, 1);
 
         _todoItems.RemoveAll(item =>
         {
@@ -113,50 +226,116 @@ public partial class MainWindow
                 return false;
 
             var completedDate = item.CompletedAtUtc.Value.ToLocalTime().Date;
-            if (item.Bucket == TodoBucket.Today)
-                return completedDate < today;
+            var groupId = (item.GroupId ?? string.Empty).ToLowerInvariant();
 
-            var completedWeekStart = StartOfWeekMonday(completedDate);
-            return completedWeekStart < currentWeekStart;
+            return groupId switch
+            {
+                "today" => completedDate < today,
+                "this-week" => StartOfWeekMonday(completedDate) < currentWeekStart,
+                "this-month" => new DateTime(completedDate.Year, completedDate.Month, 1) < currentMonthStart,
+                _ => false
+            };
         });
         NormalizeTodoSortOrders();
     }
 
     private void RenderTodoLists()
     {
-        if (TodoTodayItemsPanel == null || TodoThisWeekItemsPanel == null || TodoCompletedToggleButton == null)
+        if (TodoGroupsContainer == null || TodoCompletedToggleButton == null)
             return;
 
         PruneCompletedTodoItems();
-        TodoTodayItemsPanel.Children.Clear();
-        TodoThisWeekItemsPanel.Children.Clear();
+        TodoGroupsContainer.Children.Clear();
 
-        var activeToday = _todoItems
-            .Where(item => item.Bucket == TodoBucket.Today)
+        var area = GetCurrentTaskArea();
+        if (area == null || area.Groups.Count == 0)
+        {
+            TodoGroupsContainer.Children.Add(BuildEmptyHint("No groups in this area. Configure them in Tools → Settings → Task Panel."));
+        }
+        else
+        {
+            foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
+                TodoGroupsContainer.Children.Add(BuildGroupSection(area, group));
+        }
+
+        var completedCount = _todoItems.Count(item => item.CompletedAtUtc != null);
+        TodoCompletedToggleButton.ToolTip = $"Recently Completed ({completedCount})";
+        TodoCompletedToggleButton.Content = "\u2713";
+    }
+
+    private UIElement BuildGroupSection(TaskAreaState area, TaskGroupState group)
+    {
+        var wrapper = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+
+        var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headerText = new TextBlock
+        {
+            Text = group.Name,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(headerText, 0);
+        headerRow.Children.Add(headerText);
+
+        var addButton = new Button
+        {
+            Content = "+",
+            Width = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            ToolTip = $"Add task to {group.Name}",
+            Background = Brushes.Transparent,
+            BorderBrush = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = Brushes.Gray
+        };
+        addButton.Click += (_, _) => ShowAddTodoDialog(area.Id, group.Id);
+        Grid.SetColumn(addButton, 1);
+        headerRow.Children.Add(addButton);
+        wrapper.Children.Add(headerRow);
+
+        var itemsPanel = new StackPanel
+        {
+            AllowDrop = true,
+            Margin = new Thickness(0, 0, 0, 0),
+            MinHeight = 18
+        };
+        itemsPanel.Tag = new TodoGroupPanelTag { AreaId = area.Id, GroupId = group.Id };
+        itemsPanel.DragOver += TodoGroupPanel_DragOver;
+        itemsPanel.Drop += TodoGroupPanel_Drop;
+
+        var activeItems = _todoItems
+            .Where(item => !item.CompletedAtUtc.HasValue
+                && string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.SortOrder)
             .ThenBy(item => item.CreatedUtc)
             .ToList();
-        var activeThisWeek = _todoItems
-            .Where(item => item.Bucket == TodoBucket.ThisWeek)
+        var completedItems = _todoItems
+            .Where(item => item.CompletedAtUtc.HasValue
+                && string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.SortOrder)
             .ThenBy(item => item.CreatedUtc)
             .ToList();
-        var completed = _todoItems
-            .Where(item => item.CompletedAtUtc != null)
-            .OrderByDescending(item => item.CompletedAtUtc)
-            .Take(100)
-            .ToList();
 
-        AddTodoSectionRows(TodoTodayItemsPanel, activeToday, TodoBucket.Today);
-        AddTodoSectionRows(TodoThisWeekItemsPanel, activeThisWeek, TodoBucket.ThisWeek);
+        AddTodoSectionRows(itemsPanel, activeItems.Concat(completedItems), area.Id, group.Id);
 
-        if (activeToday.Count == 0)
-            TodoTodayItemsPanel.Children.Add(BuildEmptyHint("No tasks for today."));
-        if (activeThisWeek.Count == 0)
-            TodoThisWeekItemsPanel.Children.Add(BuildEmptyHint("No tasks for this week."));
+        if (activeItems.Count == 0 && completedItems.Count == 0)
+            itemsPanel.Children.Add(BuildEmptyHint($"No tasks for {group.Name.ToLower(CultureInfo.CurrentCulture)}."));
 
-        TodoCompletedToggleButton.ToolTip = $"Recently Completed ({completed.Count})";
-        TodoCompletedToggleButton.Content = "✓";
+        wrapper.Children.Add(itemsPanel);
+        return wrapper;
+    }
+
+    private sealed class TodoGroupPanelTag
+    {
+        public string AreaId { get; set; } = string.Empty;
+        public string GroupId { get; set; } = string.Empty;
     }
 
     private static TextBlock BuildEmptyHint(string text)
@@ -168,12 +347,17 @@ public partial class MainWindow
             FontStyle = FontStyles.Italic
         };
 
-    private void AddTodoSectionRows(Panel panel, IEnumerable<TodoItemState> items, TodoBucket bucket)
+    private void AddTodoSectionRows(Panel panel, IEnumerable<TodoItemState> items, string areaId, string groupId)
     {
         foreach (var item in items)
         {
             bool isCompleted = item.CompletedAtUtc.HasValue;
-            var row = new Grid { Margin = new Thickness(0, 0, 0, 6), Tag = item.Id, AllowDrop = true };
+            var row = new Grid
+            {
+                Margin = new Thickness(0, 0, 0, 6),
+                Tag = new TodoRowTag { ItemId = item.Id, AreaId = areaId, GroupId = groupId },
+                AllowDrop = true
+            };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -215,7 +399,7 @@ public partial class MainWindow
 
             row.DragOver += (_, e) =>
             {
-                if (!TryGetDraggedTodoItem(e.Data, out var draggedItem) || draggedItem.Bucket != bucket)
+                if (!TryGetDraggedTodoItem(e.Data, out TodoItemState _))
                 {
                     e.Effects = DragDropEffects.None;
                     e.Handled = true;
@@ -228,14 +412,15 @@ public partial class MainWindow
 
             row.Drop += (_, e) =>
             {
-                if (!TryGetDraggedTodoItem(e.Data, out var draggedItem))
+                if (row.Tag is not TodoRowTag tag)
                     return;
-                if (draggedItem.Bucket != bucket)
+                if (!TryGetDraggedTodoItem(e.Data, out var draggedItem))
                     return;
 
                 var dropPos = e.GetPosition(row);
                 bool insertBefore = dropPos.Y <= (row.ActualHeight / 2.0);
-                ReorderTodoItemWithinBucket(draggedItem.Id, item.Id, bucket, insertBefore);
+                MoveTodoItem(draggedItem.Id, tag.AreaId, tag.GroupId, tag.ItemId, insertBefore);
+                e.Handled = true;
             };
 
             var rowContextMenu = new ContextMenu();
@@ -280,7 +465,7 @@ public partial class MainWindow
 
             var removeButton = new Button
             {
-                Content = "×",
+                Content = "\u00D7",
                 Width = 20,
                 Height = 20,
                 Margin = new Thickness(8, 0, 0, 0),
@@ -306,9 +491,17 @@ public partial class MainWindow
             };
             removeButton.Click += (_, _) =>
             {
-                // Completed items stay visible in both the todo panel and Recently Completed.
                 if (item.CompletedAtUtc.HasValue)
+                {
+                    // Keep completed tasks in Recently Completed, but hide them from the panel.
+                    item.AreaId = TodoClosedAreaId;
+                    item.GroupId = TodoClosedGroupId;
+                    RenderTodoLists();
+                    SaveWindowSettings();
+                    TodoPanelBorder?.Focus();
+                    Keyboard.Focus(TodoPanelBorder);
                     return;
+                }
 
                 _todoItems.RemoveAll(existing => string.Equals(existing.Id, item.Id, StringComparison.OrdinalIgnoreCase));
                 RenderTodoLists();
@@ -323,17 +516,24 @@ public partial class MainWindow
         }
     }
 
+    private sealed class TodoRowTag
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public string AreaId { get; set; } = string.Empty;
+        public string GroupId { get; set; } = string.Empty;
+    }
+
     private UIElement BuildCompletedRow(TodoItemState item)
     {
         var completedAt = item.CompletedAtUtc?.ToLocalTime() ?? DateTime.Now;
-        
+
         var grid = new Grid { Margin = new Thickness(4, 4, 4, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var checkIcon = new TextBlock
         {
-            Text = "✓",
+            Text = "\u2713",
             Foreground = Brushes.MediumSeaGreen,
             FontSize = 18,
             FontWeight = FontWeights.Bold,
@@ -359,7 +559,7 @@ public partial class MainWindow
 
         var detailsText = new TextBlock
         {
-            Text = $"Completed at {completedAt.ToString("g", CultureInfo.CurrentCulture)} • {GetTodoBucketLabel(item.Bucket)}",
+            Text = $"Completed at {completedAt.ToString("g", CultureInfo.CurrentCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
             Foreground = Brushes.Gray,
             FontSize = 12
         };
@@ -380,26 +580,18 @@ public partial class MainWindow
         return border;
     }
 
-    private static string GetTodoBucketLabel(TodoBucket bucket)
-        => bucket == TodoBucket.ThisWeek ? "This Week" : "Today";
-
-    private void ConfigureTodoSectionDropTarget(Panel? panel, TodoBucket bucket)
+    private string GetTodoItemLocationLabel(TodoItemState item)
     {
-        if (panel == null)
-            return;
-
-        panel.AllowDrop = true;
-        panel.Tag = bucket;
-        panel.DragOver += TodoSectionPanel_DragOver;
-        panel.Drop += TodoSectionPanel_Drop;
+        var area = _taskAreas.FirstOrDefault(a => string.Equals(a.Id, item.AreaId, StringComparison.OrdinalIgnoreCase));
+        var group = area?.Groups.FirstOrDefault(g => string.Equals(g.Id, item.GroupId, StringComparison.OrdinalIgnoreCase));
+        if (area == null || group == null)
+            return item.Bucket == TodoBucket.ThisWeek ? "This Week" : "Today";
+        return $"{area.Name} \u203A {group.Name}";
     }
 
-    private void TodoSectionPanel_DragOver(object sender, DragEventArgs e)
+    private void TodoGroupPanel_DragOver(object sender, DragEventArgs e)
     {
-        if (sender is not Panel panel
-            || panel.Tag is not TodoBucket bucket
-            || !TryGetDraggedTodoItem(e.Data, out var draggedItem)
-            || draggedItem.Bucket != bucket)
+        if (sender is not Panel { Tag: TodoGroupPanelTag } || !TryGetDraggedTodoItem(e.Data, out TodoItemState _))
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
@@ -410,35 +602,32 @@ public partial class MainWindow
         e.Handled = true;
     }
 
-    private void TodoSectionPanel_Drop(object sender, DragEventArgs e)
+    private void TodoGroupPanel_Drop(object sender, DragEventArgs e)
     {
-        if (sender is not Panel panel
-            || panel.Tag is not TodoBucket bucket
-            || !TryGetDraggedTodoItem(e.Data, out var draggedItem)
-            || draggedItem.Bucket != bucket)
-        {
+        if (sender is not Panel panel || panel.Tag is not TodoGroupPanelTag tag)
             return;
-        }
+        if (!TryGetDraggedTodoItem(e.Data, out var draggedItem))
+            return;
 
-        ReorderTodoItemWithinBucket(draggedItem.Id, targetItemId: null, bucket, insertBeforeTarget: false);
+        MoveTodoItem(draggedItem.Id, tag.AreaId, tag.GroupId, targetItemId: null, insertBeforeTarget: false);
+        e.Handled = true;
     }
 
     private void NormalizeTodoSortOrders()
     {
-        foreach (var group in _todoItems.GroupBy(item => item.Bucket))
+        foreach (var group in _todoItems.GroupBy(item => new { Area = item.AreaId ?? string.Empty, Group = item.GroupId ?? string.Empty }))
         {
             int order = 1;
             foreach (var item in group.OrderBy(item => item.SortOrder).ThenBy(item => item.CreatedUtc))
-            {
                 item.SortOrder = order++;
-            }
         }
     }
 
-    private int NextTodoSortOrder(TodoBucket bucket)
+    private int NextTodoSortOrder(string areaId, string groupId)
     {
         var max = _todoItems
-            .Where(item => item.Bucket == bucket)
+            .Where(item => string.Equals(item.AreaId, areaId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.GroupId, groupId, StringComparison.OrdinalIgnoreCase))
             .Select(item => (int?)item.SortOrder)
             .Max() ?? 0;
         return max + 1;
@@ -462,42 +651,44 @@ public partial class MainWindow
         return true;
     }
 
-    private void ReorderTodoItemWithinBucket(string draggedItemId, string? targetItemId, TodoBucket bucket, bool insertBeforeTarget)
+    private void MoveTodoItem(string draggedItemId, string targetAreaId, string targetGroupId, string? targetItemId, bool insertBeforeTarget)
     {
-        var orderedBucketItems = _todoItems
-            .Where(item => item.Bucket == bucket)
+        var draggedItem = _todoItems.FirstOrDefault(item => string.Equals(item.Id, draggedItemId, StringComparison.OrdinalIgnoreCase));
+        if (draggedItem == null)
+            return;
+
+        draggedItem.AreaId = targetAreaId;
+        draggedItem.GroupId = targetGroupId;
+
+        var targetGroupItems = _todoItems
+            .Where(item => string.Equals(item.AreaId, targetAreaId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.GroupId, targetGroupId, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(item.Id, draggedItem.Id, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.SortOrder)
             .ThenBy(item => item.CreatedUtc)
             .ToList();
 
-        if (orderedBucketItems.Count <= 1)
-            return;
-
-        var draggedItem = orderedBucketItems.FirstOrDefault(item => string.Equals(item.Id, draggedItemId, StringComparison.OrdinalIgnoreCase));
-        if (draggedItem == null)
-            return;
-
-        orderedBucketItems.Remove(draggedItem);
         int targetIndex;
         if (string.IsNullOrWhiteSpace(targetItemId))
         {
-            targetIndex = orderedBucketItems.Count;
+            targetIndex = targetGroupItems.Count;
         }
         else
         {
-            var locatedTargetIndex = orderedBucketItems.FindIndex(item => string.Equals(item.Id, targetItemId, StringComparison.OrdinalIgnoreCase));
+            var locatedTargetIndex = targetGroupItems.FindIndex(item => string.Equals(item.Id, targetItemId, StringComparison.OrdinalIgnoreCase));
             if (locatedTargetIndex < 0)
-                targetIndex = orderedBucketItems.Count;
+                targetIndex = targetGroupItems.Count;
             else
                 targetIndex = insertBeforeTarget ? locatedTargetIndex : locatedTargetIndex + 1;
         }
 
-        targetIndex = Math.Max(0, Math.Min(targetIndex, orderedBucketItems.Count));
-        orderedBucketItems.Insert(targetIndex, draggedItem);
+        targetIndex = Math.Max(0, Math.Min(targetIndex, targetGroupItems.Count));
+        targetGroupItems.Insert(targetIndex, draggedItem);
 
-        for (int i = 0; i < orderedBucketItems.Count; i++)
-            orderedBucketItems[i].SortOrder = i + 1;
+        for (int i = 0; i < targetGroupItems.Count; i++)
+            targetGroupItems[i].SortOrder = i + 1;
 
+        NormalizeTodoSortOrders();
         RenderTodoLists();
         SaveWindowSettings();
     }
@@ -516,10 +707,12 @@ public partial class MainWindow
     }
 
     private void TodoAddTodayButton_Click(object sender, RoutedEventArgs e)
-        => ShowAddTodoDialog(TodoBucket.Today);
-
-    private void TodoAddThisWeekButton_Click(object sender, RoutedEventArgs e)
-        => ShowAddTodoDialog(TodoBucket.ThisWeek);
+    {
+        var area = GetCurrentTaskArea();
+        if (area == null || area.Groups.Count == 0)
+            return;
+        ShowAddTodoDialog(area.Id, area.Groups.OrderBy(g => g.SortOrder).First().Id);
+    }
 
     private void TodoCompletedToggleButton_Click(object sender, RoutedEventArgs e)
     {
@@ -550,14 +743,7 @@ public partial class MainWindow
         if (key == Key.OemPlus || key == Key.Add)
         {
             e.Handled = true;
-            ShowAddTodoDialog(TodoBucket.Today);
-            return;
-        }
-
-        if (key == Key.W)
-        {
-            e.Handled = true;
-            ShowAddTodoDialog(TodoBucket.ThisWeek);
+            TodoAddTodayButton_Click(sender, new RoutedEventArgs());
             return;
         }
 
@@ -622,18 +808,22 @@ public partial class MainWindow
         if (e.Key == Key.Enter)
         {
             e.Handled = true;
-            ShowAddTodoDialog(TodoBucket.Today);
+            TodoAddTodayButton_Click(sender, new RoutedEventArgs());
         }
     }
 
     private void MenuTodoList_Click(object sender, RoutedEventArgs e)
         => ExecuteToggleTodoPanel();
 
-    private void ShowAddTodoDialog(TodoBucket bucket)
+    private void ShowAddTodoDialog(string areaId, string groupId)
     {
+        var area = _taskAreas.FirstOrDefault(a => string.Equals(a.Id, areaId, StringComparison.OrdinalIgnoreCase));
+        var group = area?.Groups.FirstOrDefault(g => string.Equals(g.Id, groupId, StringComparison.OrdinalIgnoreCase));
+        var groupLabel = group?.Name ?? groupId;
+
         var dialog = new Window
         {
-            Title = bucket == TodoBucket.ThisWeek ? "Add This Week Task" : "Add Today Task",
+            Title = $"Add task to {groupLabel}",
             Width = 440,
             Height = 170,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -673,8 +863,10 @@ public partial class MainWindow
             {
                 Id = Guid.NewGuid().ToString("N"),
                 Text = text,
-                Bucket = bucket,
-                SortOrder = NextTodoSortOrder(bucket),
+                AreaId = areaId,
+                GroupId = groupId,
+                Bucket = string.Equals(groupId, "this-week", StringComparison.OrdinalIgnoreCase) ? TodoBucket.ThisWeek : TodoBucket.Today,
+                SortOrder = NextTodoSortOrder(areaId, groupId),
                 CreatedUtc = DateTime.UtcNow
             });
 

@@ -59,10 +59,33 @@ public sealed class TodoItemState
 {
     public string Id { get; set; } = string.Empty;
     public string Text { get; set; } = string.Empty;
+
+    /// <summary>Legacy bucket kept for backward compatibility. New items use <see cref="GroupId"/>.</summary>
     public TodoBucket Bucket { get; set; } = TodoBucket.Today;
+
+    /// <summary>Owning area for this task. May be null/empty for legacy items.</summary>
+    public string? AreaId { get; set; }
+
+    /// <summary>Owning group for this task. May be null/empty for legacy items.</summary>
+    public string? GroupId { get; set; }
+
     public int SortOrder { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
+}
+
+public sealed class TaskGroupState
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int SortOrder { get; set; }
+}
+
+public sealed class TaskAreaState
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public List<TaskGroupState> Groups { get; set; } = [];
 }
 
 public sealed class PluginAlarmSettings
@@ -193,4 +216,7 @@ public sealed class WindowSettings
     public string? MessageOverlayBlinkMode { get; set; }
     public List<SafePasteKeyRecord>? SafePasteKeyRecords { get; set; }
     public List<string>? SafePasteKeys { get; set; }
+    public string? TaskPanelTitle { get; set; }
+    public List<TaskAreaState>? TaskAreas { get; set; }
+    public string? CurrentTaskAreaId { get; set; }
 }

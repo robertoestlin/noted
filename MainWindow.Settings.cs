@@ -112,7 +112,10 @@ public partial class MainWindow
             MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
             MessageOverlayFadeMs = _messageOverlayFadeMs,
             MessageOverlayBlinkMode = _messageOverlayBlinkMode,
-            SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot()
+            SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot(),
+            TaskPanelTitle = _taskPanelTitle,
+            TaskAreas = BuildTaskAreasSnapshot(),
+            CurrentTaskAreaId = _currentTaskAreaId
         };
 
     private void LoadWindowSettings()
@@ -233,6 +236,9 @@ public partial class MainWindow
         _closedTabsMaxCount = DefaultClosedTabsMaxCount;
         _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
         _todoItems.Clear();
+        _taskPanelTitle = DefaultTaskPanelTitle;
+        _taskAreas = BuildDefaultTaskAreas();
+        _currentTaskAreaId = DefaultTaskAreaId;
         _safePasteSavedEntries.Clear();
         _todoPanelVisible = false;
         ResetQuickMessageOverlaySettings();
@@ -330,6 +336,7 @@ public partial class MainWindow
         _closedTabsMaxCount = NormalizeClosedTabsMaxCount(state.ClosedTabsMaxCount);
         _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
         ApplyQuickMessageOverlaySettings(state);
+        ApplyTaskPanelSettings(state);
 
         ApplyThemeColorsFromSettings(state);
         _startMaximized = state.Maximized;
@@ -367,6 +374,96 @@ public partial class MainWindow
             _highlightedLineColor = MigrateHighlightedLineColor(highlightedLineColor);
         if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
             _selectedHighlightedLineColor = MigrateSelectedHighlightedLineColor(selectedHighlightedLineColor);
+    }
+
+    private List<TaskAreaState> BuildDefaultTaskAreas()
+    {
+        var area = new TaskAreaState
+        {
+            Id = DefaultTaskAreaId,
+            Name = DefaultTaskAreaName,
+            Groups = []
+        };
+        for (int i = 0; i < DefaultTaskGroups.Length; i++)
+        {
+            area.Groups.Add(new TaskGroupState
+            {
+                Id = DefaultTaskGroups[i].Id,
+                Name = DefaultTaskGroups[i].Name,
+                SortOrder = i + 1
+            });
+        }
+        return [area];
+    }
+
+    private List<TaskAreaState> BuildTaskAreasSnapshot()
+        => _taskAreas
+            .Where(area => area != null && !string.IsNullOrWhiteSpace(area.Id))
+            .Select(area => new TaskAreaState
+            {
+                Id = area.Id,
+                Name = string.IsNullOrWhiteSpace(area.Name) ? area.Id : area.Name,
+                Groups = (area.Groups ?? [])
+                    .Where(group => group != null && !string.IsNullOrWhiteSpace(group.Id))
+                    .Select((group, index) => new TaskGroupState
+                    {
+                        Id = group.Id,
+                        Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id : group.Name,
+                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
+                    })
+                    .ToList()
+            })
+            .ToList();
+
+    private void ApplyTaskPanelSettings(WindowSettings state)
+    {
+        _taskPanelTitle = string.IsNullOrWhiteSpace(state.TaskPanelTitle)
+            ? DefaultTaskPanelTitle
+            : state.TaskPanelTitle!.Trim();
+
+        var areas = (state.TaskAreas ?? [])
+            .Where(area => area != null && !string.IsNullOrWhiteSpace(area.Id))
+            .Select(area => new TaskAreaState
+            {
+                Id = area.Id.Trim(),
+                Name = string.IsNullOrWhiteSpace(area.Name) ? area.Id.Trim() : area.Name.Trim(),
+                Groups = (area.Groups ?? [])
+                    .Where(group => group != null && !string.IsNullOrWhiteSpace(group.Id))
+                    .Select((group, index) => new TaskGroupState
+                    {
+                        Id = group.Id.Trim(),
+                        Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id.Trim() : group.Name.Trim(),
+                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
+                    })
+                    .ToList()
+            })
+            .ToList();
+
+        if (areas.Count == 0)
+        {
+            areas = BuildDefaultTaskAreas();
+        }
+        else
+        {
+            // Ensure the default Main area exists, and that it has the 3 default groups.
+            var mainArea = areas.FirstOrDefault(a => string.Equals(a.Id, DefaultTaskAreaId, StringComparison.OrdinalIgnoreCase));
+            if (mainArea == null)
+            {
+                areas.Insert(0, BuildDefaultTaskAreas()[0]);
+            }
+            else if (mainArea.Groups.Count == 0)
+            {
+                var defaults = BuildDefaultTaskAreas()[0];
+                mainArea.Groups = defaults.Groups;
+            }
+        }
+
+        _taskAreas = areas;
+
+        var desiredCurrent = (state.CurrentTaskAreaId ?? string.Empty).Trim();
+        _currentTaskAreaId = _taskAreas.Any(area => string.Equals(area.Id, desiredCurrent, StringComparison.OrdinalIgnoreCase))
+            ? desiredCurrent
+            : _taskAreas[0].Id;
     }
 
     private Color MigrateHighlightedLineColor(Color color)

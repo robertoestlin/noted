@@ -12,6 +12,71 @@ namespace Noted;
 
 public partial class MainWindow
 {
+    private static List<TaskAreaState> CloneTaskAreas(IEnumerable<TaskAreaState>? source)
+    {
+        if (source == null)
+            return [];
+        return source.Select(area => new TaskAreaState
+        {
+            Id = area.Id,
+            Name = area.Name,
+            Groups = (area.Groups ?? []).Select(group => new TaskGroupState
+            {
+                Id = group.Id,
+                Name = group.Name,
+                SortOrder = group.SortOrder
+            }).ToList()
+        }).ToList();
+    }
+
+    private string? PromptForText(string title, string label, string initialValue)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 420,
+            Height = 170,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize
+        };
+        var root = new DockPanel { Margin = new Thickness(12) };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        var okBtn = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancelBtn = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        buttons.Children.Add(okBtn);
+        buttons.Children.Add(cancelBtn);
+        root.Children.Add(buttons);
+
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 4) });
+        var txt = new TextBox { Text = initialValue, Height = 28, VerticalContentAlignment = VerticalAlignment.Center };
+        content.Children.Add(txt);
+        root.Children.Add(content);
+
+        string? result = null;
+        okBtn.Click += (_, _) =>
+        {
+            result = txt.Text ?? string.Empty;
+            dialog.DialogResult = true;
+        };
+        dialog.Content = root;
+        dialog.Loaded += (_, _) =>
+        {
+            txt.Focus();
+            System.Windows.Input.Keyboard.Focus(txt);
+            txt.SelectAll();
+        };
+
+        return dialog.ShowDialog() == true ? result : null;
+    }
+
     private void ShowSettingsDialog()
     {
         bool originalFancyBulletsEnabled = _fancyBulletsEnabled;
@@ -694,6 +759,228 @@ public partial class MainWindow
             Content = new ScrollViewer { Content = tabsSettingsPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
         });
 
+        // --- Task Panel tab ---
+        var workingTaskAreas = CloneTaskAreas(_taskAreas);
+        if (workingTaskAreas.Count == 0)
+            workingTaskAreas = BuildDefaultTaskAreas();
+
+        var taskPanelTab = new Grid { Margin = new Thickness(12) };
+        taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var titleRow = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        titleRow.Children.Add(new TextBlock { Text = "Task Panel title:", Margin = new Thickness(0, 0, 0, 4) });
+        var txtTaskPanelTitle = new TextBox { Text = _taskPanelTitle };
+        titleRow.Children.Add(txtTaskPanelTitle);
+        Grid.SetRow(titleRow, 0);
+        taskPanelTab.Children.Add(titleRow);
+
+        var bodyGrid = new Grid { Margin = new Thickness(0, 0, 0, 0) };
+        Grid.SetRow(bodyGrid, 2);
+        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        bodyGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        taskPanelTab.Children.Add(bodyGrid);
+
+        var areasPanel = new DockPanel { Margin = new Thickness(0, 0, 8, 0) };
+        Grid.SetColumn(areasPanel, 0);
+        bodyGrid.Children.Add(areasPanel);
+        var areasHeader = new TextBlock { Text = "Areas", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(areasHeader, Dock.Top);
+        areasPanel.Children.Add(areasHeader);
+        var areasButtonRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        DockPanel.SetDock(areasButtonRow, Dock.Bottom);
+        var btnAddArea = new Button { Content = "Add", Width = 70, Margin = new Thickness(0, 0, 6, 0) };
+        var btnRenameArea = new Button { Content = "Rename", Width = 80, Margin = new Thickness(0, 0, 6, 0) };
+        var btnRemoveArea = new Button { Content = "Remove", Width = 80 };
+        areasButtonRow.Children.Add(btnAddArea);
+        areasButtonRow.Children.Add(btnRenameArea);
+        areasButtonRow.Children.Add(btnRemoveArea);
+        areasPanel.Children.Add(areasButtonRow);
+        var areasList = new ListBox();
+        areasPanel.Children.Add(areasList);
+
+        var groupsPanel = new DockPanel { Margin = new Thickness(8, 0, 0, 0) };
+        Grid.SetColumn(groupsPanel, 1);
+        bodyGrid.Children.Add(groupsPanel);
+        var groupsHeader = new TextBlock { Text = "Groups", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 6) };
+        DockPanel.SetDock(groupsHeader, Dock.Top);
+        groupsPanel.Children.Add(groupsHeader);
+        var groupsButtonRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        DockPanel.SetDock(groupsButtonRow, Dock.Bottom);
+        var btnAddGroup = new Button { Content = "Add", Width = 60, Margin = new Thickness(0, 0, 6, 0) };
+        var btnRenameGroup = new Button { Content = "Rename", Width = 70, Margin = new Thickness(0, 0, 6, 0) };
+        var btnRemoveGroup = new Button { Content = "Remove", Width = 70, Margin = new Thickness(0, 0, 6, 0) };
+        var btnMoveGroupUp = new Button { Content = "Up", Width = 50, Margin = new Thickness(0, 0, 6, 0) };
+        var btnMoveGroupDown = new Button { Content = "Down", Width = 60 };
+        groupsButtonRow.Children.Add(btnAddGroup);
+        groupsButtonRow.Children.Add(btnRenameGroup);
+        groupsButtonRow.Children.Add(btnRemoveGroup);
+        groupsButtonRow.Children.Add(btnMoveGroupUp);
+        groupsButtonRow.Children.Add(btnMoveGroupDown);
+        groupsPanel.Children.Add(groupsButtonRow);
+        var groupsList = new ListBox();
+        groupsPanel.Children.Add(groupsList);
+
+        void RefreshAreasList(string? selectedAreaId = null)
+        {
+            areasList.Items.Clear();
+            foreach (var area in workingTaskAreas)
+                areasList.Items.Add(area);
+
+            TaskAreaState? toSelect = null;
+            if (!string.IsNullOrWhiteSpace(selectedAreaId))
+                toSelect = workingTaskAreas.FirstOrDefault(a => string.Equals(a.Id, selectedAreaId, StringComparison.OrdinalIgnoreCase));
+            toSelect ??= workingTaskAreas.FirstOrDefault();
+            if (toSelect != null)
+                areasList.SelectedItem = toSelect;
+        }
+
+        void RefreshGroupsList(string? selectedGroupId = null)
+        {
+            groupsList.Items.Clear();
+            if (areasList.SelectedItem is not TaskAreaState area)
+                return;
+            foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
+                groupsList.Items.Add(group);
+
+            TaskGroupState? toSelect = null;
+            if (!string.IsNullOrWhiteSpace(selectedGroupId))
+                toSelect = area.Groups.FirstOrDefault(g => string.Equals(g.Id, selectedGroupId, StringComparison.OrdinalIgnoreCase));
+            toSelect ??= area.Groups.OrderBy(g => g.SortOrder).FirstOrDefault();
+            if (toSelect != null)
+                groupsList.SelectedItem = toSelect;
+        }
+
+        areasList.DisplayMemberPath = nameof(TaskAreaState.Name);
+        groupsList.DisplayMemberPath = nameof(TaskGroupState.Name);
+        areasList.SelectionChanged += (_, _) => RefreshGroupsList();
+
+        btnAddArea.Click += (_, _) =>
+        {
+            var name = PromptForText("Add Area", "Area name:", string.Empty);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            var newArea = new TaskAreaState
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = name.Trim(),
+                Groups = []
+            };
+            workingTaskAreas.Add(newArea);
+            RefreshAreasList(newArea.Id);
+            RefreshGroupsList();
+        };
+        btnRenameArea.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area)
+                return;
+            var name = PromptForText("Rename Area", "Area name:", area.Name);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            area.Name = name.Trim();
+            RefreshAreasList(area.Id);
+        };
+        btnRemoveArea.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area)
+                return;
+            if (workingTaskAreas.Count <= 1)
+            {
+                MessageBox.Show("At least one area must exist.", "Task Panel", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var confirm = MessageBox.Show($"Remove area '{area.Name}'? All tasks in this area will be moved to the '{DefaultTaskAreaName}' area.",
+                "Remove Area", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.OK)
+                return;
+            workingTaskAreas.Remove(area);
+            RefreshAreasList();
+            RefreshGroupsList();
+        };
+
+        btnAddGroup.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area)
+                return;
+            var name = PromptForText("Add Group", "Group name:", string.Empty);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            var newGroup = new TaskGroupState
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = name.Trim(),
+                SortOrder = (area.Groups.Count == 0 ? 0 : area.Groups.Max(g => g.SortOrder)) + 1
+            };
+            area.Groups.Add(newGroup);
+            RefreshGroupsList(newGroup.Id);
+        };
+        btnRenameGroup.Click += (_, _) =>
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            var name = PromptForText("Rename Group", "Group name:", group.Name);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            group.Name = name.Trim();
+            RefreshGroupsList(group.Id);
+        };
+        btnRemoveGroup.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area || groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            if (area.Groups.Count <= 1)
+            {
+                MessageBox.Show("An area must contain at least one group.", "Task Panel", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var confirm = MessageBox.Show($"Remove group '{group.Name}'? Tasks in it will be moved to the first remaining group in this area.",
+                "Remove Group", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.OK)
+                return;
+            area.Groups.Remove(group);
+            int i = 1;
+            foreach (var g in area.Groups.OrderBy(g => g.SortOrder))
+                g.SortOrder = i++;
+            RefreshGroupsList();
+        };
+        btnMoveGroupUp.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area || groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            var ordered = area.Groups.OrderBy(g => g.SortOrder).ToList();
+            int idx = ordered.IndexOf(group);
+            if (idx <= 0)
+                return;
+            ordered.RemoveAt(idx);
+            ordered.Insert(idx - 1, group);
+            for (int i = 0; i < ordered.Count; i++)
+                ordered[i].SortOrder = i + 1;
+            RefreshGroupsList(group.Id);
+        };
+        btnMoveGroupDown.Click += (_, _) =>
+        {
+            if (areasList.SelectedItem is not TaskAreaState area || groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            var ordered = area.Groups.OrderBy(g => g.SortOrder).ToList();
+            int idx = ordered.IndexOf(group);
+            if (idx < 0 || idx >= ordered.Count - 1)
+                return;
+            ordered.RemoveAt(idx);
+            ordered.Insert(idx + 1, group);
+            for (int i = 0; i < ordered.Count; i++)
+                ordered[i].SortOrder = i + 1;
+            RefreshGroupsList(group.Id);
+        };
+
+        RefreshAreasList(_currentTaskAreaId);
+
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Task Panel",
+            Content = new ScrollViewer { Content = taskPanelTab, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
+
         var btnOk = new Button { Content = "OK", Width = 80, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
         var btnCancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -947,6 +1234,18 @@ public partial class MainWindow
                 _showLineAssignments = chkShowLineAssignments.IsChecked == true;
                 _showInlineImages = chkShowInlineImages.IsChecked == true;
                 _fancyBulletStyle = selectedFancyBulletStyle;
+
+                // Task Panel settings
+                var newTitle = (txtTaskPanelTitle.Text ?? string.Empty).Trim();
+                _taskPanelTitle = string.IsNullOrWhiteSpace(newTitle) ? DefaultTaskPanelTitle : newTitle;
+                _taskAreas = workingTaskAreas;
+                if (!_taskAreas.Any(a => string.Equals(a.Id, _currentTaskAreaId, StringComparison.OrdinalIgnoreCase)))
+                    _currentTaskAreaId = _taskAreas.Count > 0 ? _taskAreas[0].Id : DefaultTaskAreaId;
+                MigrateLegacyTodoItemsToGroups();
+                UpdateTodoPanelTitleText();
+                RefreshTodoAreaSelector();
+                RenderTodoLists();
+
                 _tabCleanupStaleDays = staleDays;
                 _closedTabsMaxCount = closedTabsMaxCount;
                 _closedTabsRetentionDays = closedTabsRetentionDays;
