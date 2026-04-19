@@ -4835,12 +4835,22 @@ public partial class MainWindow : Window
             {
                 var originalText = doc.Editor.Text;
                 int preservedLineNumber = doc == activeDoc ? doc.Editor.TextArea.Caret.Line : 0;
+                // Replacing Editor.Text creates a new document and invalidates TextAnchors.
+                // Snapshot line-based state first so assignees/highlights survive normalization.
+                var assigneeSnapshot = GetLineAssignments(doc)
+                    .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value))
+                    .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
+                    .ToList();
+                var highlightSnapshot = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
+
                 var normalizedText = RemoveTrailingWhitespacesExceptLine(originalText, preservedLineNumber);
                 if (!string.Equals(originalText, normalizedText, StringComparison.Ordinal))
                 {
                     int caretOffset = Math.Min(doc.Editor.CaretOffset, normalizedText.Length);
                     doc.Editor.Text = normalizedText;
                     doc.Editor.CaretOffset = caretOffset;
+                    SetHighlightedLines(doc, highlightSnapshot.Count > 0 ? highlightSnapshot : null, markDirty: false);
+                    SetLineAssignments(doc, assigneeSnapshot.Count > 0 ? assigneeSnapshot : null, markDirty: false);
                 }
 
                 doc.CachedText = normalizedText;
