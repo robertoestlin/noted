@@ -24,6 +24,7 @@ public partial class MainWindow
             {
                 Id = group.Id,
                 Name = group.Name,
+                ShortcutKey = group.ShortcutKey,
                 SortOrder = group.SortOrder
             }).ToList()
         }).ToList();
@@ -821,6 +822,15 @@ public partial class MainWindow
         groupsPanel.Children.Add(groupsButtonRow);
         var groupsList = new ListBox();
         groupsPanel.Children.Add(groupsList);
+        var groupShortcutRow = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        groupShortcutRow.Children.Add(new TextBlock
+        {
+            Text = "Selected group shortcut key (single key, e.g. +, W, M):",
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var txtGroupShortcut = new TextBox { IsEnabled = false };
+        groupShortcutRow.Children.Add(txtGroupShortcut);
+        groupsPanel.Children.Add(groupShortcutRow);
 
         void RefreshAreasList(string? selectedAreaId = null)
         {
@@ -840,7 +850,11 @@ public partial class MainWindow
         {
             groupsList.Items.Clear();
             if (areasList.SelectedItem is not TaskAreaState area)
+            {
+                txtGroupShortcut.Text = string.Empty;
+                txtGroupShortcut.IsEnabled = false;
                 return;
+            }
             foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
                 groupsList.Items.Add(group);
 
@@ -852,9 +866,57 @@ public partial class MainWindow
                 groupsList.SelectedItem = toSelect;
         }
 
+        void UpdateGroupShortcutEditor()
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+            {
+                txtGroupShortcut.Text = string.Empty;
+                txtGroupShortcut.IsEnabled = false;
+                return;
+            }
+
+            txtGroupShortcut.IsEnabled = true;
+            txtGroupShortcut.Text = group.ShortcutKey ?? string.Empty;
+        }
+
+        bool ApplySelectedGroupShortcut()
+        {
+            if (areasList.SelectedItem is not TaskAreaState area || groupsList.SelectedItem is not TaskGroupState group)
+                return true;
+
+            var normalizedShortcut = NormalizeTaskGroupShortcutKey(txtGroupShortcut.Text);
+            var raw = (txtGroupShortcut.Text ?? string.Empty).Trim();
+            if (raw.Length > 0 && normalizedShortcut.Length == 0)
+            {
+                MessageBox.Show("Shortcut must be a single key (for example: +, W, M) or blank.", "Task Panel",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                txtGroupShortcut.Text = group.ShortcutKey ?? string.Empty;
+                return false;
+            }
+
+            if (normalizedShortcut.Length > 0
+                && area.Groups.Any(other => !ReferenceEquals(other, group)
+                    && string.Equals(other.ShortcutKey, normalizedShortcut, StringComparison.OrdinalIgnoreCase)))
+            {
+                MessageBox.Show($"Shortcut '{normalizedShortcut}' is already used by another group in this area.", "Task Panel",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                txtGroupShortcut.Text = group.ShortcutKey ?? string.Empty;
+                return false;
+            }
+
+            group.ShortcutKey = normalizedShortcut;
+            txtGroupShortcut.Text = normalizedShortcut;
+            return true;
+        }
+
         areasList.DisplayMemberPath = nameof(TaskAreaState.Name);
         groupsList.DisplayMemberPath = nameof(TaskGroupState.Name);
-        areasList.SelectionChanged += (_, _) => RefreshGroupsList();
+        areasList.SelectionChanged += (_, _) =>
+        {
+            RefreshGroupsList();
+            UpdateGroupShortcutEditor();
+        };
+        groupsList.SelectionChanged += (_, _) => UpdateGroupShortcutEditor();
 
         btnAddArea.Click += (_, _) =>
         {
@@ -971,6 +1033,15 @@ public partial class MainWindow
             for (int i = 0; i < ordered.Count; i++)
                 ordered[i].SortOrder = i + 1;
             RefreshGroupsList(group.Id);
+        };
+        txtGroupShortcut.LostFocus += (_, _) => ApplySelectedGroupShortcut();
+        txtGroupShortcut.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                ApplySelectedGroupShortcut();
+            }
         };
 
         RefreshAreasList(_currentTaskAreaId);
@@ -1154,6 +1225,26 @@ public partial class MainWindow
                 MessageBox.Show("Shortcut keys must be unique across actions (Ctrl+S is reserved and does not save your work).", "Invalid settings",
                     MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
+            }
+
+            if (!ApplySelectedGroupShortcut())
+                return;
+
+            foreach (var area in workingTaskAreas)
+            {
+                foreach (var group in area.Groups)
+                    group.ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey);
+
+                var usedShortcuts = area.Groups
+                    .Select(group => group.ShortcutKey ?? string.Empty)
+                    .Where(shortcut => shortcut.Length > 0)
+                    .ToList();
+                if (usedShortcuts.Count != usedShortcuts.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+                {
+                    MessageBox.Show($"Area '{area.Name}' has duplicate group shortcut keys. Each group in an area must have a unique shortcut.",
+                        "Task Panel", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
             }
 
             var selectedFancyBulletStyle = FancyBulletStyle.Dot;

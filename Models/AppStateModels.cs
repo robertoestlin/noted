@@ -78,6 +78,7 @@ public sealed class TaskGroupState
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string? ShortcutKey { get; set; }
     public int SortOrder { get; set; }
 }
 

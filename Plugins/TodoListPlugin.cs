@@ -131,6 +131,41 @@ public partial class MainWindow
             ?? _taskAreas[0];
     }
 
+    private static bool TryGetTaskPanelShortcutToken(Key key, out string token)
+    {
+        token = string.Empty;
+        if (key == Key.OemPlus || key == Key.Add)
+        {
+            token = "+";
+            return true;
+        }
+
+        if (key is >= Key.A and <= Key.Z)
+        {
+            token = key.ToString().ToUpperInvariant();
+            return true;
+        }
+
+        if (key is >= Key.D0 and <= Key.D9)
+        {
+            token = ((char)('0' + (key - Key.D0))).ToString();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static TaskGroupState? FindGroupByShortcut(TaskAreaState area, string shortcutToken)
+        => area.Groups
+            .FirstOrDefault(group => string.Equals(
+                NormalizeTaskGroupShortcutKey(group.ShortcutKey),
+                shortcutToken,
+                StringComparison.OrdinalIgnoreCase));
+
+    private static TaskGroupState? GetDefaultAddGroup(TaskAreaState area)
+        => FindGroupByShortcut(area, "+")
+           ?? area.Groups.OrderBy(g => g.SortOrder).FirstOrDefault();
+
     private void UpdateTodoPanelTitleText()
     {
         if (TodoPanelTitleText != null)
@@ -711,7 +746,10 @@ public partial class MainWindow
         var area = GetCurrentTaskArea();
         if (area == null || area.Groups.Count == 0)
             return;
-        ShowAddTodoDialog(area.Id, area.Groups.OrderBy(g => g.SortOrder).First().Id);
+        var targetGroup = GetDefaultAddGroup(area);
+        if (targetGroup == null)
+            return;
+        ShowAddTodoDialog(area.Id, targetGroup.Id);
     }
 
     private void TodoCompletedToggleButton_Click(object sender, RoutedEventArgs e)
@@ -740,11 +778,16 @@ public partial class MainWindow
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (key == Key.OemPlus || key == Key.Add)
+        if (TryGetTaskPanelShortcutToken(key, out var shortcutToken))
         {
-            e.Handled = true;
-            TodoAddTodayButton_Click(sender, new RoutedEventArgs());
-            return;
+            var area = GetCurrentTaskArea();
+            var shortcutGroup = area == null ? null : FindGroupByShortcut(area, shortcutToken);
+            if (shortcutGroup != null)
+            {
+                e.Handled = true;
+                ShowAddTodoDialog(area!.Id, shortcutGroup.Id);
+                return;
+            }
         }
 
         if (key == Key.C)

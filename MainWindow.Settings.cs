@@ -390,10 +390,31 @@ public partial class MainWindow
             {
                 Id = DefaultTaskGroups[i].Id,
                 Name = DefaultTaskGroups[i].Name,
+                ShortcutKey = DefaultTaskGroups[i].ShortcutKey,
                 SortOrder = i + 1
             });
         }
         return [area];
+    }
+
+    private static string NormalizeTaskGroupShortcutKey(string? rawShortcut)
+    {
+        var shortcut = (rawShortcut ?? string.Empty).Trim();
+        if (shortcut.Length == 0)
+            return string.Empty;
+        if (shortcut == "+")
+            return "+";
+        return shortcut.Length == 1 ? shortcut.ToUpperInvariant() : string.Empty;
+    }
+
+    private static string DefaultTaskGroupShortcutById(string groupId)
+    {
+        foreach (var entry in DefaultTaskGroups)
+        {
+            if (string.Equals(entry.Id, groupId, StringComparison.OrdinalIgnoreCase))
+                return entry.ShortcutKey;
+        }
+        return string.Empty;
     }
 
     private List<TaskAreaState> BuildTaskAreasSnapshot()
@@ -409,6 +430,7 @@ public partial class MainWindow
                     {
                         Id = group.Id,
                         Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id : group.Name,
+                        ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
                         SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
                     })
                     .ToList()
@@ -433,6 +455,7 @@ public partial class MainWindow
                     {
                         Id = group.Id.Trim(),
                         Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id.Trim() : group.Name.Trim(),
+                        ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
                         SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
                     })
                     .ToList()
@@ -459,6 +482,16 @@ public partial class MainWindow
         }
 
         _taskAreas = areas;
+        foreach (var area in _taskAreas)
+        {
+            foreach (var group in area.Groups)
+            {
+                var shortcut = NormalizeTaskGroupShortcutKey(group.ShortcutKey);
+                if (shortcut.Length == 0)
+                    shortcut = DefaultTaskGroupShortcutById(group.Id);
+                group.ShortcutKey = shortcut;
+            }
+        }
 
         var desiredCurrent = (state.CurrentTaskAreaId ?? string.Empty).Trim();
         _currentTaskAreaId = _taskAreas.Any(area => string.Equals(area.Id, desiredCurrent, StringComparison.OrdinalIgnoreCase))

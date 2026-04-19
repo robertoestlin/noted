@@ -98,11 +98,11 @@ public partial class MainWindow : Window
     private const string DefaultTaskPanelTitle = "Task Panel";
     private const string DefaultTaskAreaId = "main";
     private const string DefaultTaskAreaName = "Main";
-    private static readonly (string Id, string Name)[] DefaultTaskGroups =
+    private static readonly (string Id, string Name, string ShortcutKey)[] DefaultTaskGroups =
     [
-        ("today", "Today"),
-        ("this-week", "This Week"),
-        ("this-month", "This Month")
+        ("today", "Today", "+"),
+        ("this-week", "This Week", "W"),
+        ("this-month", "This Month", "M")
     ];
     private const int DefaultClosedTabsMaxCount = 10;
     private const int MinClosedTabsMaxCount = 1;
