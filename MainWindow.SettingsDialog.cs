@@ -210,13 +210,25 @@ public partial class MainWindow
         backupPanel.Children.Add(new TextBlock { Text = "Auto-save interval (seconds):" });
         var txtAutoSave = new TextBox { Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(), Margin = new Thickness(0, 4, 0, 10) };
         backupPanel.Children.Add(txtAutoSave);
-        backupPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval (seconds):" });
-        var txtUptimeHeartbeat = new TextBox { Text = _uptimeHeartbeatSeconds.ToString(), Margin = new Thickness(0, 4, 0, 10) };
-        backupPanel.Children.Add(txtUptimeHeartbeat);
         backupPanel.Children.Add(new TextBlock { Text = "Initial lines per new tab:" });
         var txtLines = new TextBox { Text = _initialLines.ToString(), Margin = new Thickness(0, 4, 0, 0) };
         backupPanel.Children.Add(txtLines);
         tabControl.Items.Add(new TabItem { Header = "Backup", Content = new ScrollViewer { Content = backupPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
+
+        var heartbeatPanel = new StackPanel { Margin = new Thickness(12) };
+        heartbeatPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval (seconds):" });
+        var txtUptimeHeartbeat = new TextBox { Text = _uptimeHeartbeatSeconds.ToString(), Margin = new Thickness(0, 4, 0, 8) };
+        heartbeatPanel.Children.Add(txtUptimeHeartbeat);
+        heartbeatPanel.Children.Add(new TextBlock
+        {
+            Text = "Allowed values: 60-3600, and must divide evenly into 3600.",
+            Foreground = Brushes.DimGray
+        });
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Heartbeat",
+            Content = new ScrollViewer { Content = heartbeatPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
 
         var fontPanel = new StackPanel { Margin = new Thickness(12) };
         fontPanel.Children.Add(new TextBlock { Text = "Font family:" });
