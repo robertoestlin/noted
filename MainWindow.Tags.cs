@@ -174,7 +174,9 @@ public partial class MainWindow
 
     /// <summary>
     /// Space/tab after # becomes '-' so multi-word tags can be typed with the spacebar (#Do Later → #Do-Later).
-    /// Literal space is kept when the fragment is already a completed multi-word tag, or a longer single-word tag.
+    /// Literal space ends the tag when the fragment is a finished multi-word body (#Foo-Bar), matches an existing
+    /// tag name exactly (#Later when Later exists), or is a short new word (≤3 letters, not a prefix of a longer
+    /// known tag) so space does not insert a lone '-' that sits outside the tag token until more text is typed.
     /// </summary>
     private void HandleTagWhitespaceInputAsHyphen(TabDocument doc, TextCompositionEventArgs e)
     {
@@ -216,8 +218,22 @@ public partial class MainWindow
 
             bool complete = TagNameBodyCompleteRegex.IsMatch(afterHash);
             bool hasHyphen = afterHash.Contains('-');
-            // Let space through after e.g. #Do-Later (done) or a longer single token like #Later.
-            if (complete && (hasHyphen || afterHash.Length > 3))
+            // After #Foo-Bar, space ends the tag (do not append another '-').
+            if (complete && hasHyphen)
+                return;
+
+            var tags = GetDistinctTagNamesAcrossTabs(onlyFromTab: null);
+            bool typingTowardLongerExistingTag = tags.Exists(t =>
+                t.StartsWith(afterHash, StringComparison.OrdinalIgnoreCase) && t.Length > afterHash.Length);
+            bool exactExistingTag = tags.Exists(t =>
+                string.Equals(t, afterHash, StringComparison.OrdinalIgnoreCase));
+
+            // Short new word, not continuing a longer known tag: space ends tag (avoids #ab- outside highlight).
+            if (complete && !hasHyphen && afterHash.Length <= 3 && !typingTowardLongerExistingTag)
+                return;
+
+            // Same name as an existing tag: space ends tag (#Later when Later already exists).
+            if (complete && !hasHyphen && exactExistingTag)
                 return;
 
             document.Insert(caret, "-");
