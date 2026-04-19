@@ -90,6 +90,8 @@ public partial class MainWindow
             ShowInlineImages = _showInlineImages,
             FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
             UptimeHeartbeatSeconds = _uptimeHeartbeatSeconds,
+            WriteUptimeHeartbeatInNoted = _writeUptimeHeartbeatInNoted,
+            UseStandaloneHeartbeatApp = _useStandaloneHeartbeatApp,
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
             PluginAlarms = BuildPluginAlarmsSnapshot(),
@@ -207,6 +209,8 @@ public partial class MainWindow
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _shortcutGoToTab = DefaultShortcutGoToTab;
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
+        _writeUptimeHeartbeatInNoted = true;
+        _useStandaloneHeartbeatApp = false;
         _isFridayFeelingEnabled = true;
         _fancyBulletsEnabled = false;
         _wrapLongLinesVisually = true;
@@ -283,6 +287,8 @@ public partial class MainWindow
             _cloudSaveIntervalMinutes = cloudMinutes;
         if (_windowSettingsService.TryGetValidUptimeHeartbeatSeconds(state.UptimeHeartbeatSeconds, out var uptimeHeartbeatSeconds))
             _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
+        _writeUptimeHeartbeatInNoted = state.WriteUptimeHeartbeatInNoted;
+        _useStandaloneHeartbeatApp = state.UseStandaloneHeartbeatApp;
         if (_windowSettingsService.TryGetNormalizedUtc(state.LastCloudCopyUtc, out var cloudCopyUtc))
             _lastCloudSaveUtc = cloudCopyUtc;
         if (state.ActiveTabIndex >= 0)

@@ -93,7 +93,6 @@ public partial class MainWindow : Window
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string TodoItemsFileName = "todo-items.json";
-    private const string UptimeHeartbeatFileNamePrefix = "uptime-heartbeat-";
     private const string AppLogFileName = "noted.log";
     private const string DefaultTaskPanelTitle = "Task Panel";
     private const string DefaultTaskAreaId = "main";
@@ -181,9 +180,10 @@ public partial class MainWindow : Window
     private static readonly Regex SmileyTokenRegex =
         new(@":\)|;\)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
-    private static readonly Mutex HeartbeatFileMutex = new(initiallyOwned: false, name: @"Global\Noted.UptimeHeartbeat");
     private int _initialLines = DefaultInitialLines;
     private int _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
+    private bool _writeUptimeHeartbeatInNoted = true;
+    private bool _useStandaloneHeartbeatApp = false;
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
     private int _closedTabsMaxCount = DefaultClosedTabsMaxCount;
     private int _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
@@ -234,16 +234,6 @@ public partial class MainWindow : Window
     private int _inlineImageResizeCurrentScalePercent;
     private bool _isSelectionCursorClipActive;
     private TextEditor? _selectionCursorClipEditor;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct LastInputInfo
-    {
-        public uint cbSize;
-        public uint dwTime;
-    }
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool GetLastInputInfo(ref LastInputInfo plii);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct CursorClipRect
@@ -5001,28 +4991,17 @@ public partial class MainWindow : Window
     private void StartBackupHeartbeatTimer()
     {
         _backupHeartbeatTimer.Stop();
+        if (!_writeUptimeHeartbeatInNoted)
+            return;
+
         if (!string.IsNullOrWhiteSpace(_backupFolder))
-        {
-            var path = GetUptimeHeartbeatFilePath(DateTimeOffset.Now);
-            _lastBackupHeartbeatAtLocal = ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
-        }
+            _lastBackupHeartbeatAtLocal = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(GetUptimeHeartbeatFilePath(DateTimeOffset.Now)) ?? DateTimeOffset.MinValue;
 
         ScheduleNextBackupHeartbeatTick();
     }
 
     private DateTimeOffset GetNextBackupHeartbeatAtLocal(DateTimeOffset nowLocal)
-    {
-        var now = nowLocal.LocalDateTime;
-        var hourStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Local);
-        var elapsedSeconds = (now - hourStart).TotalSeconds;
-        var slotsPassed = (int)Math.Floor(elapsedSeconds / _uptimeHeartbeatSeconds);
-        var nextLocal = hourStart.AddSeconds((slotsPassed + 1) * _uptimeHeartbeatSeconds);
-        var next = new DateTimeOffset(nextLocal);
-        if (_lastBackupHeartbeatAtLocal != DateTimeOffset.MinValue && next <= _lastBackupHeartbeatAtLocal)
-            return _lastBackupHeartbeatAtLocal.AddSeconds(_uptimeHeartbeatSeconds);
-
-        return next;
-    }
+        => UptimeHeartbeatService.GetNextHeartbeatAtLocal(nowLocal, _uptimeHeartbeatSeconds, _lastBackupHeartbeatAtLocal);
 
     private void ScheduleNextBackupHeartbeatTick()
     {
@@ -5037,6 +5016,9 @@ public partial class MainWindow : Window
 
     private void HandleBackupHeartbeatTick()
     {
+        if (!_writeUptimeHeartbeatInNoted)
+            return;
+
         try
         {
             AppendBackupHeartbeatTimestamp(_nextBackupHeartbeatAtLocal);
@@ -5053,97 +5035,16 @@ public partial class MainWindow : Window
 
     private void AppendBackupHeartbeatTimestamp(DateTimeOffset timestampLocal)
     {
-        if (string.IsNullOrWhiteSpace(_backupFolder))
-            return;
-
-        Directory.CreateDirectory(_backupFolder);
-        var path = GetUptimeHeartbeatFilePath(timestampLocal);
-        var lockTaken = false;
-        try
-        {
-            try
-            {
-                lockTaken = HeartbeatFileMutex.WaitOne(TimeSpan.FromSeconds(2));
-            }
-            catch (AbandonedMutexException)
-            {
-                // Another process died while holding the mutex; treat lock as acquired.
-                lockTaken = true;
-            }
-
-            if (!lockTaken)
-                return;
-
-            var lastTimestamp = ReadLastHeartbeatTimestamp(path);
-            var latestKnown = _lastBackupHeartbeatAtLocal;
-            if (lastTimestamp.HasValue && (latestKnown == DateTimeOffset.MinValue || lastTimestamp.Value > latestKnown))
-                latestKnown = lastTimestamp.Value;
-
-            if (latestKnown != DateTimeOffset.MinValue && timestampLocal <= latestKnown)
-                return;
-
-            var timestamp = timestampLocal.ToString("O", CultureInfo.InvariantCulture);
-            var writtenAtLocal = DateTimeOffset.Now;
-            var isDelayed = (writtenAtLocal - timestampLocal) > TimeSpan.FromMinutes(1);
-            var idleSeconds = GetSystemIdleSeconds();
-            var audioSummary = _audioSessionSnapshotService.CaptureOutputAudioSummary();
-            var delayedFlag = isDelayed ? ",delayed=1" : string.Empty;
-            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary}{delayedFlag}{Environment.NewLine}");
-            _lastBackupHeartbeatAtLocal = timestampLocal;
-        }
-        finally
-        {
-            if (lockTaken)
-                HeartbeatFileMutex.ReleaseMutex();
-        }
+        UptimeHeartbeatService.AppendHeartbeatTimestamp(
+            _backupFolder,
+            timestampLocal,
+            _audioSessionSnapshotService.CaptureOutputAudioSummary,
+            "n",
+            ref _lastBackupHeartbeatAtLocal);
     }
 
     private string GetUptimeHeartbeatFilePath(DateTimeOffset timestampLocal)
-    {
-        var fileName = $"{UptimeHeartbeatFileNamePrefix}{timestampLocal:yyyy-MM}.log";
-        return Path.Combine(_backupFolder, fileName);
-    }
-
-    private static DateTimeOffset? ReadLastHeartbeatTimestamp(string path)
-    {
-        if (!File.Exists(path))
-            return null;
-
-        var lastLine = File.ReadLines(path)
-            .Select(line => line.Trim())
-            .LastOrDefault(line => !string.IsNullOrWhiteSpace(line));
-        if (string.IsNullOrWhiteSpace(lastLine))
-            return null;
-
-        var timestampPart = lastLine.Split(',', 2)[0].Trim();
-        if (!DateTimeOffset.TryParseExact(timestampPart, "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
-            return null;
-
-        return parsed;
-    }
-
-    private static long GetSystemIdleSeconds()
-    {
-        try
-        {
-            LastInputInfo info = new()
-            {
-                cbSize = (uint)Marshal.SizeOf<LastInputInfo>()
-            };
-
-            if (!GetLastInputInfo(ref info))
-                return -1;
-
-            var nowTick = unchecked((uint)Environment.TickCount);
-            var elapsedMs = unchecked(nowTick - info.dwTime);
-
-            return elapsedMs / 1000;
-        }
-        catch
-        {
-            return -1;
-        }
-    }
+        => UptimeHeartbeatService.GetHeartbeatFilePath(_backupFolder, timestampLocal);
 
     /// <summary>Deletes the oldest backups when more than MaxBackups files exist.</summary>
     private void PruneBackups()

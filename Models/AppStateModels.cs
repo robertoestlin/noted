@@ -157,6 +157,8 @@ public sealed class WindowSettings
     public bool Maximized { get; set; }
     public int AutoSaveSeconds { get; set; } = 30;
     public int UptimeHeartbeatSeconds { get; set; } = 300;
+    public bool WriteUptimeHeartbeatInNoted { get; set; } = true;
+    public bool UseStandaloneHeartbeatApp { get; set; } = false;
     public int InitialLines { get; set; } = 50;
     public string FontFamily { get; set; } = "Consolas, Courier New";
     public double FontSize { get; set; } = 13;

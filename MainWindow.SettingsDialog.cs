@@ -216,6 +216,27 @@ public partial class MainWindow
         tabControl.Items.Add(new TabItem { Header = "Backup", Content = new ScrollViewer { Content = backupPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
 
         var heartbeatPanel = new StackPanel { Margin = new Thickness(12) };
+        heartbeatPanel.Children.Add(new TextBlock
+        {
+            Text = "Heartbeat writes periodic uptime markers to the backup folder (uptime-heartbeat-YYYY-MM.log). You can write from Noted, from the standalone Heartbeat app, or both.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+        var chkWriteUptimeHeartbeatInNoted = new CheckBox
+        {
+            Content = "Write uptime heartbeat from Noted",
+            IsChecked = _writeUptimeHeartbeatInNoted,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var chkUseStandaloneHeartbeatApp = new CheckBox
+        {
+            Content = "Using standalone Heartbeat application",
+            IsChecked = _useStandaloneHeartbeatApp,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        heartbeatPanel.Children.Add(chkWriteUptimeHeartbeatInNoted);
+        heartbeatPanel.Children.Add(chkUseStandaloneHeartbeatApp);
         heartbeatPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval (seconds):" });
         var txtUptimeHeartbeat = new TextBox { Text = _uptimeHeartbeatSeconds.ToString(), Margin = new Thickness(0, 4, 0, 8) };
         heartbeatPanel.Children.Add(txtUptimeHeartbeat);
@@ -1311,6 +1332,8 @@ public partial class MainWindow
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
                 _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
+                _writeUptimeHeartbeatInNoted = chkWriteUptimeHeartbeatInNoted.IsChecked == true;
+                _useStandaloneHeartbeatApp = chkUseStandaloneHeartbeatApp.IsChecked == true;
                 StartBackupHeartbeatTimer();
                 _initialLines = lines;
                 _fontFamily = cmbFont.Text.Trim();
