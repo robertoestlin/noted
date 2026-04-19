@@ -574,6 +574,14 @@ public partial class MainWindow
                 colorPreview.Background = Brushes.Transparent;
         }
 
+        void RefreshUserColorPreview()
+        {
+            if (list.SelectedItem is not UserProfile)
+                return;
+            if (TryParseColor(cmbUserColor.Text ?? string.Empty, out var color))
+                colorPreview.Background = new SolidColorBrush(color);
+        }
+
         void ApplyColorToSelectedUser(bool randomize)
         {
             if (list.SelectedItem is not UserProfile selectedUser)
@@ -641,6 +649,9 @@ public partial class MainWindow
             }
         };
 
+        cmbUserColor.SelectionChanged += (_, _) => RefreshUserColorPreview();
+        cmbUserColor.LostFocus += (_, _) => RefreshUserColorPreview();
+
         list.SelectionChanged += (_, _) =>
         {
             if (list.SelectedItem is UserProfile selected)
@@ -661,6 +672,9 @@ public partial class MainWindow
             txtUser.Focus();
             Keyboard.Focus(txtUser);
             UpdateSelectedColorEditor();
+            cmbUserColor.ApplyTemplate();
+            if (cmbUserColor.Template.FindName("PART_EditableTextBox", cmbUserColor) is TextBox editableColorText)
+                editableColorText.TextChanged += (_, _) => RefreshUserColorPreview();
         };
 
         if (dlg.ShowDialog() != true)
