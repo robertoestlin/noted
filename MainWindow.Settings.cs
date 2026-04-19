@@ -84,6 +84,7 @@ public partial class MainWindow
             WrapLongLinesVisually = _wrapLongLinesVisually,
             VisualLineWrapColumn = _visualLineWrapColumn,
             ShowSmileys = _showSmileys,
+            RenderStyledTags = _renderStyledTags,
             ShowHorizontalRuler = _showHorizontalRuler,
             ShowInlineImages = _showInlineImages,
             FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
@@ -207,6 +208,7 @@ public partial class MainWindow
         _wrapLongLinesVisually = true;
         _visualLineWrapColumn = DefaultVisualLineWrapColumn;
         _showSmileys = true;
+        _renderStyledTags = true;
         _showHorizontalRuler = true;
         _showInlineImages = true;
         _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -282,6 +284,7 @@ public partial class MainWindow
         _wrapLongLinesVisually = state.WrapLongLinesVisually;
         _visualLineWrapColumn = NormalizeVisualLineWrapColumn(state.VisualLineWrapColumn);
         _showSmileys = state.ShowSmileys;
+        _renderStyledTags = state.RenderStyledTags ?? true;
         _showHorizontalRuler = state.ShowHorizontalRuler;
         _showInlineImages = state.ShowInlineImages;
         _fancyBulletStyle = ParseFancyBulletStyle(state.FancyBulletStyle);

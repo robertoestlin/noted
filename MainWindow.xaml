@@ -138,6 +138,10 @@
                               Header="Render _Smileys"
                               IsCheckable="True"
                               Click="MenuShowSmileys_Click"/>
+                    <MenuItem x:Name="MenuItemRenderStyledTags"
+                              Header="Styled _Tags"
+                              IsCheckable="True"
+                              Click="MenuRenderStyledTags_Click"/>
                     <MenuItem x:Name="MenuItemShowHorizontalRuler"
                               Header="Render Horizontal _Dividers"
                               IsCheckable="True"
@@ -149,6 +153,7 @@
                 </MenuItem>
                 <MenuItem Header="_Tools">
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
+                    <MenuItem Header="_Tags" Click="MenuTags_Click"/>
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
                     <MenuItem Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
                     <MenuItem Header="_Recover Tabs" Click="MenuRecoverTabs_Click"/>

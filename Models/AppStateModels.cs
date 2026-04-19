@@ -160,6 +160,8 @@ public sealed class WindowSettings
     public bool WrapLongLinesVisually { get; set; } = true;
     public int VisualLineWrapColumn { get; set; } = 150;
     public bool ShowSmileys { get; set; } = true;
+    /// <summary>When null (older settings files), styled tag badges stay enabled.</summary>
+    public bool? RenderStyledTags { get; set; }
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;
     public string FancyBulletStyle { get; set; } = "dot";

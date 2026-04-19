@@ -200,6 +200,7 @@ public partial class MainWindow : Window
     private bool _wrapLongLinesVisually = true;
     private int _visualLineWrapColumn = DefaultVisualLineWrapColumn;
     private bool _showSmileys = true;
+    private bool _renderStyledTags = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -335,6 +336,7 @@ public partial class MainWindow : Window
         private readonly Func<bool> _fancyBulletsEnabledProvider;
         private readonly Func<bool> _showSmileysProvider;
         private readonly Func<FancyBulletStyle> _fancyBulletStyleProvider;
+        private readonly Func<bool> _showStyledTagsProvider;
         private static readonly Brush HorizontalRuleSelectedBandBrush = CreateFrozenBrush(Color.FromArgb(96, 198, 235, 255));
         private static readonly Pen CaretLineBorderPen = CreateFrozenPen(Color.FromArgb(70, 60, 160, 80), 1.5);
         private static readonly Pen HorizontalRulePen = CreateFrozenPen(Color.FromRgb(184, 193, 204), 1.2);
@@ -352,6 +354,25 @@ public partial class MainWindow : Window
         private static readonly Brush SmileyTeethBrush = CreateFrozenBrush(Color.FromRgb(250, 250, 246));
         private static readonly Brush SmileyTearBrush = CreateFrozenBrush(Color.FromRgb(76, 182, 255));
         private static readonly Pen SmileyTearPen = CreateFrozenPen(Color.FromRgb(41, 132, 196), 0.85);
+        private static readonly Brush TagPillFillBrush = CreateTagPillFillBrush();
+        private static readonly Pen TagPillBorderPen = CreateFrozenPen(Color.FromRgb(92, 148, 206), 1.05);
+        private static readonly Brush TagPillHashBrush = CreateFrozenBrush(Color.FromRgb(88, 118, 158));
+        private static readonly Brush TagPillNameBrush = CreateFrozenBrush(Color.FromRgb(18, 58, 102));
+
+        private static Brush CreateTagPillFillBrush()
+        {
+            var brush = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+                MappingMode = BrushMappingMode.RelativeToBoundingBox
+            };
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(252, 254, 255), 0));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(232, 244, 255), 0.45));
+            brush.GradientStops.Add(new GradientStop(Color.FromRgb(214, 232, 252), 1));
+            brush.Freeze();
+            return brush;
+        }
 
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
@@ -365,7 +386,8 @@ public partial class MainWindow : Window
             Func<bool> showHorizontalRuleProvider,
             Func<bool> fancyBulletsEnabledProvider,
             Func<bool> showSmileysProvider,
-            Func<FancyBulletStyle> fancyBulletStyleProvider)
+            Func<FancyBulletStyle> fancyBulletStyleProvider,
+            Func<bool> showStyledTagsProvider)
         {
             _lineProvider = lineProvider;
             _assigneeProvider = assigneeProvider;
@@ -379,6 +401,7 @@ public partial class MainWindow : Window
             _fancyBulletsEnabledProvider = fancyBulletsEnabledProvider;
             _showSmileysProvider = showSmileysProvider;
             _fancyBulletStyleProvider = fancyBulletStyleProvider;
+            _showStyledTagsProvider = showStyledTagsProvider;
         }
 
         private static Color ContrastTextColor(Color background)
@@ -570,6 +593,32 @@ public partial class MainWindow : Window
                 }
             }
 
+            if (_showStyledTagsProvider())
+            {
+                double tagPixelsPerDip = VisualTreeHelper.GetDpi(textView).PixelsPerDip;
+                foreach (var visualLine in textView.VisualLines)
+                {
+                    var line = visualLine.FirstDocumentLine;
+                    if (line == null || line.Length <= 0)
+                        continue;
+
+                    var lineText = textView.Document.GetText(line.Offset, line.Length);
+                    foreach (var token in EnumerateTagTokens(lineText))
+                    {
+                        var segment = new TextSegment
+                        {
+                            StartOffset = line.Offset + token.StartIndex,
+                            EndOffset = line.Offset + token.StartIndex + token.Length
+                        };
+                        var rects = BackgroundGeometryBuilder.GetRectsForSegment(textView, segment).ToList();
+                        if (rects.Count == 0)
+                            continue;
+
+                        DrawTagPill(drawingContext, rects[0], token.Name, tagPixelsPerDip);
+                    }
+                }
+            }
+
             var assignments = _assigneeProvider();
             if (assignments.Count == 0)
                 return;
@@ -681,6 +730,63 @@ public partial class MainWindow : Window
                     drawingContext.DrawEllipse(bulletFillBrush, null, new Point(centerX, centerY), radius, radius);
                     break;
             }
+        }
+
+        private static void DrawTagPill(DrawingContext drawingContext, Rect tokenRect, string tagName, double pixelsPerDip)
+        {
+            string label = FormatTagLabelForDisplay(tagName);
+            var typeface = new Typeface(
+                new FontFamily("Segoe UI"),
+                FontStyles.Normal,
+                FontWeights.SemiBold,
+                FontStretches.Normal);
+
+            // Match assignee badges: stay within the visual line (line height minus small inset).
+            double lineH = Math.Max(1, tokenRect.Height);
+            double pillHeight = Math.Max(2, lineH - 2);
+            double yLine = tokenRect.Top + Math.Max(0, (lineH - pillHeight) / 2);
+
+            const double padX = 6;
+            string namePortion = label.Length > 1 ? label[1..] : string.Empty;
+
+            double fontSize = Math.Min(11, Math.Max(6.5, pillHeight * 0.72));
+            FormattedText ftHash;
+            FormattedText ftName;
+            double textHeight;
+            while (true)
+            {
+                ftHash = new FormattedText(
+                    "#",
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    typeface,
+                    fontSize,
+                    TagPillHashBrush,
+                    pixelsPerDip);
+                ftName = new FormattedText(
+                    namePortion,
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    typeface,
+                    fontSize,
+                    TagPillNameBrush,
+                    pixelsPerDip);
+                textHeight = Math.Max(ftHash.Height, ftName.Height);
+                if (textHeight <= pillHeight - 1 || fontSize <= 6)
+                    break;
+                fontSize = Math.Max(6, fontSize - 0.35);
+            }
+
+            double textWidth = ftHash.WidthIncludingTrailingWhitespace + ftName.WidthIncludingTrailingWhitespace;
+            double width = textWidth + (padX * 2);
+            double x = tokenRect.Left;
+            var pill = new Rect(x, yLine, width, pillHeight);
+            double corner = Math.Min(4, Math.Max(2, pillHeight * 0.22));
+            drawingContext.DrawRoundedRectangle(TagPillFillBrush, TagPillBorderPen, pill, corner, corner);
+
+            double textY = yLine + Math.Max(0, (pillHeight - textHeight) / 2);
+            drawingContext.DrawText(ftHash, new Point(x + padX, textY));
+            drawingContext.DrawText(ftName, new Point(x + padX + ftHash.WidthIncludingTrailingWhitespace, textY));
         }
 
         private static void DrawSmileyIcon(DrawingContext drawingContext, Rect tokenRect, string glyph)
@@ -1070,7 +1176,8 @@ public partial class MainWindow : Window
             () => _showHorizontalRuler,
             () => _fancyBulletsEnabled,
             () => _showSmileys,
-            () => _fancyBulletStyle);
+            () => _fancyBulletStyle,
+            () => _renderStyledTags);
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
@@ -1094,6 +1201,8 @@ public partial class MainWindow : Window
         editor.PreviewMouseMove += (_, e) => UpdateSelectionCursorClip(editor, e);
         editor.PreviewMouseLeftButtonUp += (_, _) => EndSelectionCursorClip(editor);
         editor.LostMouseCapture += (_, _) => EndSelectionCursorClip(editor);
+        editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
+        editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
 
         // Build tab header
         var headerLabel = new TextBlock
@@ -1146,6 +1255,7 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
         editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
         editor.TextArea.TextView.LineTransformers.Add(new SmileyTextMaskingTransformer(() => _showSmileys));
+        editor.TextArea.TextView.LineTransformers.Add(new TagTextMaskingTransformer(() => _renderStyledTags));
         // AvalonEdit enables hyperlinks by default (Ctrl+click). Intercept before it uses Process.Start with an arbitrary URI.
         editor.AddHandler(Hyperlink.RequestNavigateEvent, (RequestNavigateEventHandler)((_, e) =>
         {
@@ -2727,6 +2837,9 @@ public partial class MainWindow : Window
 
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
+        if (TryInsertNewlineClosingTagCompletion(doc, e))
+            return;
+
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
 
         if (key == Key.Back
@@ -5080,6 +5193,7 @@ public partial class MainWindow : Window
         MenuItemWrapLongLinesVisually.IsChecked = _wrapLongLinesVisually;
         MenuItemStyledBullets.IsChecked = _fancyBulletsEnabled;
         MenuItemShowSmileys.IsChecked = _showSmileys;
+        MenuItemRenderStyledTags.IsChecked = _renderStyledTags;
         MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
         MenuItemShowInlineImages.IsChecked = _showInlineImages;
     }
@@ -5098,6 +5212,7 @@ public partial class MainWindow : Window
 
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        CloseTagCompletionIfAny();
         var doc = CurrentDoc();
         if (doc != null) UpdateStatusBar(doc);
     }
@@ -5172,6 +5287,12 @@ public partial class MainWindow : Window
         ApplyViewRenderingSettings();
         SaveWindowSettings();
     }
+    private void MenuRenderStyledTags_Click(object sender, RoutedEventArgs e)
+    {
+        _renderStyledTags = MenuItemRenderStyledTags.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
     private void MenuShowHorizontalRuler_Click(object sender, RoutedEventArgs e)
     {
         _showHorizontalRuler = MenuItemShowHorizontalRuler.IsChecked;
@@ -5185,6 +5306,7 @@ public partial class MainWindow : Window
         SaveWindowSettings();
     }
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
+    private void MenuTags_Click(object sender, RoutedEventArgs e) => ShowTagsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuRecoverTabs_Click(object sender, RoutedEventArgs e) => ShowRecoverTabsDialog();
