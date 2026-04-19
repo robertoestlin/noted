@@ -5,25 +5,12 @@ const string SettingsFileName = "settings.json";
 const int DefaultUptimeHeartbeatSeconds = 300;
 
 var runtime = LoadRuntimeSettings();
-if (runtime.UseStandaloneHeartbeatApp == false)
-{
-    Console.WriteLine("Note: 'Using standalone Heartbeat application' is not enabled in Noted settings.");
-}
-
-Console.WriteLine($"Heartbeat started. Folder='{runtime.BackupFolder}', Interval={runtime.UptimeHeartbeatSeconds}s");
-
 var audioSnapshotService = new AudioSessionSnapshotService();
-var cancellation = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) =>
-{
-    e.Cancel = true;
-    cancellation.Cancel();
-};
 
 var path = UptimeHeartbeatService.GetHeartbeatFilePath(runtime.BackupFolder, DateTimeOffset.Now);
 var lastHeartbeatAtLocal = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
 
-while (!cancellation.Token.IsCancellationRequested)
+while (true)
 {
     var nextHeartbeatAtLocal = UptimeHeartbeatService.GetNextHeartbeatAtLocal(
         DateTimeOffset.Now,
@@ -34,14 +21,7 @@ while (!cancellation.Token.IsCancellationRequested)
     if (wait <= TimeSpan.Zero)
         wait = TimeSpan.FromMilliseconds(200);
 
-    try
-    {
-        await Task.Delay(wait, cancellation.Token);
-    }
-    catch (OperationCanceledException)
-    {
-        break;
-    }
+    await Task.Delay(wait);
 
     try
     {
@@ -57,8 +37,6 @@ while (!cancellation.Token.IsCancellationRequested)
         // Best-effort activity marker; ignore failures and continue.
     }
 }
-
-Console.WriteLine("Heartbeat stopped.");
 
 static RuntimeSettings LoadRuntimeSettings()
 {
