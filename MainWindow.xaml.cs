@@ -225,6 +225,8 @@ public partial class MainWindow : Window
     private HashSet<string> _referencedInlineImagesSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<TabDocument, Stack<LineAssigneeUndoRecord>> _pendingShiftDeleteAssigneeUndo = [];
     private readonly Dictionary<TabDocument, Stack<HighlightLineUndoRecord>> _pendingShiftDeleteHighlightUndo = [];
+    private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeUndoHistory = [];
+    private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeRedoHistory = [];
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -254,6 +256,18 @@ public partial class MainWindow : Window
         public required int LineNumber { get; init; }
         public required string Person { get; init; }
         public required string LineText { get; init; }
+    }
+
+    private sealed class LineAssigneeChangeRecord
+    {
+        public required IReadOnlyList<LineAssigneeChangeEntry> Entries { get; init; }
+    }
+
+    private sealed class LineAssigneeChangeEntry
+    {
+        public required int LineNumber { get; init; }
+        public string? BeforePerson { get; init; }
+        public string? AfterPerson { get; init; }
     }
 
     private sealed class HighlightLineUndoRecord
@@ -2899,9 +2913,24 @@ public partial class MainWindow : Window
 
         if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.Z)
         {
+            if (TryUndoLineAssigneeChange(doc))
+            {
+                e.Handled = true;
+                return;
+            }
+
             QueueTryRestoreShiftDeleteAssigneesOnUndo(doc);
             QueueTryRestoreShiftDeleteHighlightsOnUndo(doc);
             return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.Y)
+        {
+            if (TryRedoLineAssigneeChange(doc))
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         if (e.Key != Key.Delete || (Keyboard.Modifiers & ModifierKeys.Shift) == 0)
@@ -3208,6 +3237,91 @@ public partial class MainWindow : Window
         RedrawHighlight(doc);
     }
 
+    private void PushLineAssigneeUndoRecord(TabDocument doc, IReadOnlyList<LineAssigneeChangeEntry> entries)
+    {
+        if (entries.Count == 0)
+            return;
+
+        if (!_lineAssigneeUndoHistory.TryGetValue(doc, out var undoStack))
+        {
+            undoStack = new Stack<LineAssigneeChangeRecord>();
+            _lineAssigneeUndoHistory[doc] = undoStack;
+        }
+
+        undoStack.Push(new LineAssigneeChangeRecord { Entries = entries });
+
+        if (!_lineAssigneeRedoHistory.TryGetValue(doc, out var redoStack))
+        {
+            redoStack = new Stack<LineAssigneeChangeRecord>();
+            _lineAssigneeRedoHistory[doc] = redoStack;
+        }
+        else
+        {
+            redoStack.Clear();
+        }
+    }
+
+    private bool ApplyLineAssigneeRecord(TabDocument doc, LineAssigneeChangeRecord record, bool useBeforeState)
+    {
+        bool changed = false;
+        foreach (var entry in record.Entries)
+        {
+            var targetPerson = useBeforeState ? entry.BeforePerson : entry.AfterPerson;
+            if (string.IsNullOrWhiteSpace(targetPerson))
+                changed |= RemoveLineAssignee(doc, entry.LineNumber, markDirty: false, redraw: false);
+            else
+                changed |= SetLineAssignee(doc, entry.LineNumber, targetPerson, markDirty: false, redraw: false);
+        }
+
+        if (changed)
+        {
+            MarkDirty(doc);
+            RedrawHighlight(doc);
+        }
+
+        return changed;
+    }
+
+    private bool TryUndoLineAssigneeChange(TabDocument doc)
+    {
+        if (!_lineAssigneeUndoHistory.TryGetValue(doc, out var undoStack) || undoStack.Count == 0)
+            return false;
+
+        var record = undoStack.Pop();
+        bool changed = ApplyLineAssigneeRecord(doc, record, useBeforeState: true);
+        if (!changed)
+            return false;
+
+        if (!_lineAssigneeRedoHistory.TryGetValue(doc, out var redoStack))
+        {
+            redoStack = new Stack<LineAssigneeChangeRecord>();
+            _lineAssigneeRedoHistory[doc] = redoStack;
+        }
+
+        redoStack.Push(record);
+        return true;
+    }
+
+    private bool TryRedoLineAssigneeChange(TabDocument doc)
+    {
+        if (!_lineAssigneeRedoHistory.TryGetValue(doc, out var redoStack) || redoStack.Count == 0)
+            return false;
+
+        var record = redoStack.Pop();
+        bool changed = ApplyLineAssigneeRecord(doc, record, useBeforeState: false);
+        if (!changed)
+            return false;
+
+        if (!_lineAssigneeUndoHistory.TryGetValue(doc, out var undoStack))
+        {
+            undoStack = new Stack<LineAssigneeChangeRecord>();
+            _lineAssigneeUndoHistory[doc] = undoStack;
+        }
+
+        undoStack.Push(record);
+        return true;
+    }
+
     private void AssignSelectedLines(TextEditor editor)
     {
         var doc = FindDocByEditor(editor);
@@ -3255,11 +3369,25 @@ public partial class MainWindow : Window
         }
 
         bool changed = false;
+        var undoEntries = new List<LineAssigneeChangeEntry>();
         foreach (var line in lines)
-            changed |= SetLineAssignee(doc, line, cleaned, markDirty: false, redraw: false);
+        {
+            string? beforePerson = TryGetLineAssignee(doc, line, out var owner) ? owner : null;
+            if (SetLineAssignee(doc, line, cleaned, markDirty: false, redraw: false))
+            {
+                changed = true;
+                undoEntries.Add(new LineAssigneeChangeEntry
+                {
+                    LineNumber = line,
+                    BeforePerson = beforePerson,
+                    AfterPerson = cleaned
+                });
+            }
+        }
 
         if (changed)
         {
+            PushLineAssigneeUndoRecord(doc, undoEntries);
             MarkDirty(doc);
             RedrawHighlight(doc);
         }
@@ -3273,11 +3401,27 @@ public partial class MainWindow : Window
 
         var lines = GetSelectedOrCaretLineNumbers(doc);
         bool changed = false;
+        var undoEntries = new List<LineAssigneeChangeEntry>();
         foreach (var line in lines)
-            changed |= RemoveLineAssignee(doc, line, markDirty: false, redraw: false);
+        {
+            if (!TryGetLineAssignee(doc, line, out var beforePerson))
+                continue;
+
+            if (RemoveLineAssignee(doc, line, markDirty: false, redraw: false))
+            {
+                changed = true;
+                undoEntries.Add(new LineAssigneeChangeEntry
+                {
+                    LineNumber = line,
+                    BeforePerson = beforePerson,
+                    AfterPerson = null
+                });
+            }
+        }
 
         if (changed)
         {
+            PushLineAssigneeUndoRecord(doc, undoEntries);
             MarkDirty(doc);
             RedrawHighlight(doc);
         }
