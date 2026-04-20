@@ -3568,11 +3568,16 @@ public partial class MainWindow : Window
             return;
 
         var editor = doc.Editor;
+        const double compactFindDialogWidth = 520;
+        const double expandedFindDialogWidth = 760;
+        const double compactFindDialogHeight = 340;
+        const double expandedFindDialogHeight = 470;
+
         var dlg = new Window
         {
             Title = "Find + Replace",
-            Width = 520,
-            Height = 340,
+            Width = compactFindDialogWidth,
+            Height = compactFindDialogHeight,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
@@ -3631,17 +3636,17 @@ public partial class MainWindow : Window
         Grid.SetColumn(status, 1);
         root.Children.Add(status);
 
-        var tabMatchesWrap = new WrapPanel
+        var tabMatchesPanel = new StackPanel
         {
-            Orientation = Orientation.Horizontal
+            Orientation = Orientation.Vertical
         };
         var tabMatchesScroll = new ScrollViewer
         {
-            Content = tabMatchesWrap,
+            Content = tabMatchesPanel,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             MinHeight = 62,
-            MaxHeight = 90
+            MaxHeight = 180
         };
         var tabMatchesBorder = new Border
         {
@@ -3687,9 +3692,74 @@ public partial class MainWindow : Window
             return true;
         }
 
+        List<int> GetMatchOffsets(string text, string findText, StringComparison comparison, bool wholeWord)
+        {
+            var offsets = new List<int>();
+            if (string.IsNullOrEmpty(findText))
+                return offsets;
+
+            int scanIndex = 0;
+            while (TryFindNextIndex(text, findText, scanIndex, comparison, wholeWord, out var found))
+            {
+                offsets.Add(found);
+                scanIndex = found + findText.Length;
+            }
+
+            return offsets;
+        }
+
+        void AppendHighlightedLineRuns(InlineCollection inlines, string lineText, string findText, StringComparison comparison, bool wholeWord)
+        {
+            if (string.IsNullOrEmpty(findText))
+            {
+                inlines.Add(new Run(lineText));
+                return;
+            }
+
+            int scanIndex = 0;
+            while (TryFindNextIndex(lineText, findText, scanIndex, comparison, wholeWord, out var found))
+            {
+                if (found > scanIndex)
+                    inlines.Add(new Run(lineText.Substring(scanIndex, found - scanIndex)));
+
+                inlines.Add(new Run(lineText.Substring(found, findText.Length))
+                {
+                    Background = SystemColors.HighlightBrush,
+                    Foreground = SystemColors.HighlightTextBrush,
+                    FontWeight = FontWeights.SemiBold
+                });
+
+                scanIndex = found + findText.Length;
+            }
+
+            if (scanIndex < lineText.Length)
+                inlines.Add(new Run(lineText.Substring(scanIndex)));
+        }
+
+        Border CreateResultRow(TextBlock content, Action onClick)
+        {
+            var row = new Border
+            {
+                Margin = new Thickness(0, 0, 0, 4),
+                Padding = new Thickness(8, 4, 8, 4),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = Brushes.White,
+                BorderBrush = Brushes.Gainsboro,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(3),
+                Cursor = Cursors.Hand,
+                Child = content
+            };
+
+            row.MouseEnter += (_, _) => row.Background = Brushes.AliceBlue;
+            row.MouseLeave += (_, _) => row.Background = Brushes.White;
+            row.MouseLeftButtonUp += (_, _) => onClick();
+            return row;
+        }
+
         void RefreshTabMatchButtons()
         {
-            tabMatchesWrap.Children.Clear();
+            tabMatchesPanel.Children.Clear();
 
             var needle = txtFind.Text ?? string.Empty;
             if (chkAllTabs.IsChecked != true || string.IsNullOrEmpty(needle))
@@ -3700,15 +3770,34 @@ public partial class MainWindow : Window
 
             var comparison = GetComparison();
             bool wholeWord = chkWholeWord.IsChecked == true;
-            var matches = new List<(TabItem Tab, TabDocument Doc, int Count)>();
+            bool supportsLinePreview = !needle.Contains('\n') && !needle.Contains('\r');
+            var matches = new List<(TabItem Tab, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
             foreach (var tab in MainTabControl.Items.OfType<TabItem>())
             {
                 if (!_docs.TryGetValue(tab, out var tabDoc))
                     continue;
 
-                int count = CountMatches(tabDoc.Editor.Text, needle, comparison, wholeWord);
-                if (count > 0)
-                    matches.Add((tab, tabDoc, count));
+                var offsets = GetMatchOffsets(tabDoc.Editor.Text, needle, comparison, wholeWord);
+                if (offsets.Count == 0)
+                    continue;
+
+                var lineMatches = new List<(int LineNumber, string Text, int FirstOffset)>();
+                var addedLines = new HashSet<int>();
+                if (supportsLinePreview)
+                {
+                    var document = tabDoc.Editor.Document;
+                    foreach (var offset in offsets)
+                    {
+                        var line = document.GetLineByOffset(offset);
+                        if (!addedLines.Add(line.LineNumber))
+                            continue;
+
+                        string lineText = document.GetText(line).TrimEnd('\r', '\n');
+                        lineMatches.Add((line.LineNumber, lineText, offset));
+                    }
+                }
+
+                matches.Add((tab, tabDoc, offsets.Count, offsets[0], lineMatches));
             }
 
             if (matches.Count == 0)
@@ -3722,26 +3811,42 @@ public partial class MainWindow : Window
             {
                 var targetTab = item.Tab;
                 var targetDoc = item.Doc;
-                var targetButton = new Button
+                if (item.Lines.Count == 0)
                 {
-                    Content = $"{targetDoc.DisplayHeader} ({item.Count})",
-                    Margin = new Thickness(0, 0, 6, 6),
-                    Padding = new Thickness(8, 2, 8, 2),
-                    MinHeight = 24
-                };
-                targetButton.Click += (_, _) =>
+                    var fallbackText = new TextBlock
+                    {
+                        TextWrapping = TextWrapping.NoWrap
+                    };
+                    fallbackText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}): ")
+                    {
+                        Foreground = Brushes.DimGray,
+                        FontWeight = FontWeights.SemiBold
+                    });
+                    fallbackText.Inlines.Add(new Run("jump to first match"));
+                    var fallbackRow = CreateResultRow(fallbackText, () => JumpToMatch(targetTab, item.FirstOffset, needle.Length));
+                    tabMatchesPanel.Children.Add(fallbackRow);
+                    continue;
+                }
+
+                foreach (var line in item.Lines)
                 {
-                    var targetComparison = GetComparison();
-                    bool targetWholeWord = chkWholeWord.IsChecked == true;
-                    if (!_docs.TryGetValue(targetTab, out var currentDoc))
-                        return;
-
-                    if (TryFindNextIndex(currentDoc.Editor.Text, needle, 0, targetComparison, targetWholeWord, out var foundAt))
-                        JumpToMatch(targetTab, foundAt, needle.Length);
-                };
-
-                tabMatchesWrap.Children.Add(targetButton);
+                    var lineText = new TextBlock
+                    {
+                        TextWrapping = TextWrapping.NoWrap
+                    };
+                    lineText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}) - {line.LineNumber}: ")
+                    {
+                        Foreground = Brushes.DimGray
+                    });
+                    AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
+                    int lineOffset = line.FirstOffset;
+                    var lineRow = CreateResultRow(lineText, () => JumpToMatch(targetTab, lineOffset, needle.Length));
+                    tabMatchesPanel.Children.Add(lineRow);
+                }
             }
+
+            if (!supportsLinePreview)
+                status.Text = "Line previews are shown only for single-line find text.";
         }
 
         bool FindNext(bool wrap)
@@ -3902,8 +4007,18 @@ public partial class MainWindow : Window
         btnFindNext.Click += (_, _) => FindNext(wrap: true);
         btnReplace.Click += (_, _) => ReplaceCurrentSelection();
         btnReplaceAll.Click += (_, _) => ReplaceAll();
-        chkAllTabs.Checked += (_, _) => RefreshTabMatchButtons();
-        chkAllTabs.Unchecked += (_, _) => RefreshTabMatchButtons();
+        chkAllTabs.Checked += (_, _) =>
+        {
+            dlg.Width = expandedFindDialogWidth;
+            dlg.Height = expandedFindDialogHeight;
+            RefreshTabMatchButtons();
+        };
+        chkAllTabs.Unchecked += (_, _) =>
+        {
+            dlg.Width = compactFindDialogWidth;
+            dlg.Height = compactFindDialogHeight;
+            RefreshTabMatchButtons();
+        };
         chkMatchCase.Checked += (_, _) => RefreshTabMatchButtons();
         chkMatchCase.Unchecked += (_, _) => RefreshTabMatchButtons();
         chkWholeWord.Checked += (_, _) => RefreshTabMatchButtons();
