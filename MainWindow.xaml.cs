@@ -670,6 +670,12 @@ public partial class MainWindow : Window
                 if (lineRects.Count == 0)
                     continue;
 
+                // For wrapped/multiline content, keep the assignee badge on the last visual line.
+                var targetRect = lineRects
+                    .OrderBy(rect => rect.Top)
+                    .ThenBy(rect => rect.Left)
+                    .Last();
+
                 var label = person;
                 var formattedText = new FormattedText(
                     label,
@@ -681,11 +687,11 @@ public partial class MainWindow : Window
                     pixelsPerDip);
 
                 double paddingX = 6;
-                double badgeHeight = Math.Max(16, lineRects[0].Height - 2);
+                double badgeHeight = Math.Max(16, targetRect.Height - 2);
                 double badgeWidth = formattedText.WidthIncludingTrailingWhitespace + (paddingX * 2);
-                double lineEndX = lineRects.Max(rect => rect.Right);
+                double lineEndX = targetRect.Right;
                 double x = Math.Max(0, Math.Min(drawWidth - badgeWidth - 4, lineEndX + 14));
-                double y = lineRects[0].Top + Math.Max(0, (lineRects[0].Height - badgeHeight) / 2);
+                double y = targetRect.Top + Math.Max(0, (targetRect.Height - badgeHeight) / 2);
 
                 var badgeRect = new Rect(x, y, badgeWidth, badgeHeight);
                 drawingContext.DrawRoundedRectangle(style.Background, style.Border, badgeRect, 4, 4);
