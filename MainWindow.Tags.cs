@@ -48,8 +48,47 @@ public partial class MainWindow
         if (string.IsNullOrEmpty(lineText))
             yield break;
 
-        foreach (Match match in TagTokenRegex.Matches(lineText))
+        var matches = TagTokenRegex.Matches(lineText);
+        if (matches.Count == 0)
+            yield break;
+
+        static bool IsWhitespaceOnly(string text, int startInclusive, int endExclusive)
         {
+            for (int i = startInclusive; i < endExclusive; i++)
+            {
+                if (!char.IsWhiteSpace(text[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        var trailing = new List<Match>();
+        int index = matches.Count - 1;
+        var current = matches[index];
+        if (!IsWhitespaceOnly(lineText, current.Index + current.Length, lineText.Length))
+            yield break;
+        trailing.Add(current);
+
+        while (index > 0)
+        {
+            var previous = matches[index - 1];
+            int gapStart = previous.Index + previous.Length;
+            int gapEnd = current.Index;
+            if (gapEnd <= gapStart || !IsWhitespaceOnly(lineText, gapStart, gapEnd))
+                break;
+
+            trailing.Add(previous);
+            current = previous;
+            index--;
+        }
+
+        if (current.Index > 0 && !char.IsWhiteSpace(lineText[current.Index - 1]))
+            yield break;
+
+        for (int i = trailing.Count - 1; i >= 0; i--)
+        {
+            var match = trailing[i];
             var name = match.Groups["name"].Value;
             if (name.Length == 0)
                 continue;
