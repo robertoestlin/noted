@@ -5418,8 +5418,32 @@ public partial class MainWindow : Window
     {
         if (CurrentDoc() != doc) return;
         var caret = doc.Editor.TextArea.Caret;
+        int bulletCount = CountBulletsAtLineStart(doc.CachedText);
         StatusLine.Text = $"Ln {caret.Line}";
         StatusColumn.Text = $"Col {caret.Column}";
+        StatusBullets.Text = $"B {bulletCount}";
+    }
+
+    private static int CountBulletsAtLineStart(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return 0;
+
+        int count = 0;
+        int lineStart = 0;
+        while (lineStart < text.Length)
+        {
+            if (text[lineStart] == '-' && lineStart + 1 < text.Length && text[lineStart + 1] == ' ')
+                count++;
+
+            int nextLineBreak = text.IndexOf('\n', lineStart);
+            if (nextLineBreak < 0)
+                break;
+
+            lineStart = nextLineBreak + 1;
+        }
+
+        return count;
     }
 
     private void UpdateViewMenuChecks()

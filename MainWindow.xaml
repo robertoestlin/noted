@@ -207,6 +207,10 @@
                 </StatusBarItem>
                 <Separator/>
                 <StatusBarItem>
+                    <TextBlock x:Name="StatusBullets" Text="B 0"/>
+                </StatusBarItem>
+                <Separator/>
+                <StatusBarItem>
                     <TextBlock x:Name="StatusUnsavedDot" Text=""/>
                 </StatusBarItem>
                 <Separator/>
