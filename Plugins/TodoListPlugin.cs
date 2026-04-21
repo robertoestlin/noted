@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -787,6 +788,16 @@ public partial class MainWindow
         if (!_todoPanelVisible)
             return;
 
+        // Ctrl+E opens the export dialog before the generic Ctrl/Alt early-return.
+        if ((Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control
+            && (Keyboard.Modifiers & ModifierKeys.Alt) == 0
+            && e.Key == Key.E)
+        {
+            e.Handled = true;
+            ShowExportTasksDialog();
+            return;
+        }
+
         if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0)
             return;
 
@@ -1019,5 +1030,349 @@ public partial class MainWindow
         };
 
         return dialog.ShowDialog() == true ? updatedText : null;
+    }
+
+    private void ShowExportTasksDialog()
+    {
+        var area = GetCurrentTaskArea();
+        if (area == null || area.Groups.Count == 0)
+            return;
+
+        var dialog = new Window
+        {
+            Title = $"Export Tasks - {area.Name}",
+            Width = 560,
+            Height = 620,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var header = new TextBlock
+        {
+            Text = area.Name,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        DockPanel.SetDock(header, Dock.Top);
+        root.Children.Add(header);
+
+        var includeFinishedCheck = new CheckBox
+        {
+            Content = "Include finished items",
+            IsChecked = true,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+
+        var copyChecklistButton = new Button
+        {
+            Content = "Export as Teams Loop",
+            Width = 170,
+            IsDefault = true,
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "Copy as markdown checklist (pastes nicely into Teams)"
+        };
+        var copyRawButton = new Button
+        {
+            Content = "Export",
+            Width = 100,
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "Copy plain text grouped by section"
+        };
+        var closeButton = new Button
+        {
+            Content = "Close",
+            Width = 80,
+            IsCancel = true
+        };
+        buttons.Children.Add(copyChecklistButton);
+        buttons.Children.Add(copyRawButton);
+        buttons.Children.Add(closeButton);
+        root.Children.Add(buttons);
+
+        var statusText = new TextBlock
+        {
+            Foreground = Brushes.MediumSeaGreen,
+            Margin = new Thickness(0, 6, 0, 0),
+            Text = string.Empty
+        };
+        DockPanel.SetDock(statusText, Dock.Bottom);
+        root.Children.Add(statusText);
+
+        DockPanel.SetDock(includeFinishedCheck, Dock.Bottom);
+        root.Children.Add(includeFinishedCheck);
+
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        var listPanel = new StackPanel();
+        scroll.Content = listPanel;
+        root.Children.Add(scroll);
+
+        // Tracks whether each task id should be included in the copy output.
+        // Absent = included (default); explicit false = user excluded it.
+        var itemIncludes = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        void RebuildList()
+        {
+            listPanel.Children.Clear();
+            bool showFinished = includeFinishedCheck.IsChecked == true;
+
+            bool renderedAnything = false;
+            foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
+            {
+                var groupItems = _todoItems
+                    .Where(item => string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase)
+                        && (showFinished || !item.CompletedAtUtc.HasValue))
+                    .OrderBy(item => item.SortOrder)
+                    .ThenBy(item => item.CreatedUtc)
+                    .ToList();
+
+                if (groupItems.Count == 0)
+                    continue;
+
+                renderedAnything = true;
+                var groupBlock = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+
+                var groupCheck = new CheckBox
+                {
+                    IsThreeState = true,
+                    Content = new TextBlock
+                    {
+                        Text = group.Name,
+                        FontWeight = FontWeights.SemiBold
+                    },
+                    Margin = new Thickness(0, 0, 0, 4)
+                };
+                groupBlock.Children.Add(groupCheck);
+
+                var childPanel = new StackPanel { Margin = new Thickness(20, 0, 0, 0) };
+                var itemCheckBoxes = new List<CheckBox>();
+                bool suppressSync = false;
+
+                void UpdateGroupState()
+                {
+                    if (suppressSync) return;
+                    suppressSync = true;
+                    bool all = itemCheckBoxes.Count > 0 && itemCheckBoxes.All(cb => cb.IsChecked == true);
+                    bool any = itemCheckBoxes.Any(cb => cb.IsChecked == true);
+                    groupCheck.IsChecked = all ? true : (any ? (bool?)null : false);
+                    suppressSync = false;
+                }
+
+                foreach (var item in groupItems)
+                {
+                    bool included = !itemIncludes.TryGetValue(item.Id, out var value) || value;
+
+                    var itemRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+                    itemRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    itemRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                    var itemCheck = new CheckBox
+                    {
+                        IsChecked = included,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    var textBlock = new TextBlock
+                    {
+                        Text = item.Text,
+                        TextWrapping = TextWrapping.Wrap
+                    };
+                    if (item.CompletedAtUtc.HasValue)
+                    {
+                        textBlock.TextDecorations = TextDecorations.Strikethrough;
+                        textBlock.Opacity = 0.75;
+                    }
+                    itemCheck.Content = textBlock;
+
+                    var capturedItem = item;
+                    itemCheck.Checked += (_, _) =>
+                    {
+                        itemIncludes[capturedItem.Id] = true;
+                        UpdateGroupState();
+                    };
+                    itemCheck.Unchecked += (_, _) =>
+                    {
+                        itemIncludes[capturedItem.Id] = false;
+                        UpdateGroupState();
+                    };
+                    Grid.SetColumn(itemCheck, 0);
+                    itemRow.Children.Add(itemCheck);
+
+                    var removeButton = new Button
+                    {
+                        Content = "\u00D7",
+                        Width = 20,
+                        Height = 20,
+                        Margin = new Thickness(8, 0, 0, 0),
+                        ToolTip = "Exclude from export",
+                        Background = Brushes.Transparent,
+                        BorderBrush = Brushes.Transparent,
+                        BorderThickness = new Thickness(0),
+                        Foreground = Brushes.Gray,
+                        FontSize = 12,
+                        Opacity = 0.55,
+                        Padding = new Thickness(0)
+                    };
+                    removeButton.MouseEnter += (_, _) =>
+                    {
+                        removeButton.Opacity = 1.0;
+                        removeButton.Foreground = Brushes.DimGray;
+                    };
+                    removeButton.MouseLeave += (_, _) =>
+                    {
+                        removeButton.Opacity = 0.55;
+                        removeButton.Foreground = Brushes.Gray;
+                    };
+                    removeButton.Click += (_, _) =>
+                    {
+                        itemIncludes[capturedItem.Id] = false;
+                        itemRow.Visibility = Visibility.Collapsed;
+                        itemCheck.IsChecked = false;
+                    };
+                    Grid.SetColumn(removeButton, 1);
+                    itemRow.Children.Add(removeButton);
+
+                    childPanel.Children.Add(itemRow);
+                    itemCheckBoxes.Add(itemCheck);
+                }
+
+                groupCheck.Checked += (_, _) =>
+                {
+                    if (suppressSync) return;
+                    suppressSync = true;
+                    foreach (var cb in itemCheckBoxes)
+                        cb.IsChecked = true;
+                    suppressSync = false;
+                };
+                groupCheck.Unchecked += (_, _) =>
+                {
+                    if (suppressSync) return;
+                    suppressSync = true;
+                    foreach (var cb in itemCheckBoxes)
+                        cb.IsChecked = false;
+                    suppressSync = false;
+                };
+
+                groupBlock.Children.Add(childPanel);
+                listPanel.Children.Add(groupBlock);
+
+                UpdateGroupState();
+            }
+
+            if (!renderedAnything)
+                listPanel.Children.Add(BuildEmptyHint("No tasks to export."));
+        }
+
+        includeFinishedCheck.Checked += (_, _) => RebuildList();
+        includeFinishedCheck.Unchecked += (_, _) => RebuildList();
+
+        RebuildList();
+
+        bool ShouldIncludeItem(TodoItemState item, bool includeFinished)
+        {
+            if (!string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!includeFinished && item.CompletedAtUtc.HasValue)
+                return false;
+            if (itemIncludes.TryGetValue(item.Id, out var included) && !included)
+                return false;
+            return true;
+        }
+
+        void ShowStatus(string message)
+        {
+            statusText.Text = message;
+        }
+
+        copyChecklistButton.Click += (_, _) =>
+        {
+            var text = BuildChecklistExport(area, ShouldIncludeItem, includeFinishedCheck.IsChecked == true);
+            if (string.IsNullOrEmpty(text))
+            {
+                ShowStatus("Nothing selected to copy.");
+                return;
+            }
+            Clipboard.SetText(text);
+            ShowStatus("Teams Loop checklist copied to clipboard.");
+        };
+        copyRawButton.Click += (_, _) =>
+        {
+            var text = BuildRawExport(area, ShouldIncludeItem, includeFinishedCheck.IsChecked == true);
+            if (string.IsNullOrEmpty(text))
+            {
+                ShowStatus("Nothing selected to copy.");
+                return;
+            }
+            Clipboard.SetText(text);
+            ShowStatus("Copied to clipboard.");
+        };
+        closeButton.Click += (_, _) => dialog.Close();
+
+        dialog.Content = root;
+        dialog.ShowDialog();
+
+        TodoPanelBorder?.Focus();
+        Keyboard.Focus(TodoPanelBorder);
+    }
+
+    private string BuildChecklistExport(TaskAreaState area, Func<TodoItemState, bool, bool> shouldInclude, bool includeFinished)
+    {
+        var sb = new StringBuilder();
+        foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
+        {
+            var items = _todoItems
+                .Where(item => string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase)
+                    && shouldInclude(item, includeFinished))
+                .OrderBy(item => item.SortOrder)
+                .ThenBy(item => item.CreatedUtc);
+
+            foreach (var item in items)
+            {
+                var box = item.CompletedAtUtc.HasValue ? "- [x]" : "- [ ]";
+                sb.Append(box).Append(' ').AppendLine(item.Text);
+            }
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private string BuildRawExport(TaskAreaState area, Func<TodoItemState, bool, bool> shouldInclude, bool includeFinished)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(area.Name);
+
+        foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
+        {
+            var items = _todoItems
+                .Where(item => string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase)
+                    && shouldInclude(item, includeFinished))
+                .OrderBy(item => item.SortOrder)
+                .ThenBy(item => item.CreatedUtc)
+                .ToList();
+
+            if (items.Count == 0)
+                continue;
+
+            sb.AppendLine();
+            sb.Append(group.Name).AppendLine(":");
+            foreach (var item in items)
+            {
+                var suffix = item.CompletedAtUtc.HasValue ? " (done)" : string.Empty;
+                sb.Append("  - ").Append(item.Text).AppendLine(suffix);
+            }
+        }
+        return sb.ToString().TrimEnd();
     }
 }
