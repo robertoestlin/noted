@@ -5213,13 +5213,15 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(cloudFolder)) return;
         if (!forceCloudBackup && !ShouldSaveCloudBackup()) return;
 
+        long sourceSizeBytes = GetFileSizeBytesOrZero(justSavedBackupPath);
         AppendAppLog($"Cloud copy started. source='{justSavedBackupPath}', target='{cloudFolder}', manualCloudSave={forceCloudBackup}");
         var cloudCopyStopwatch = Stopwatch.StartNew();
 
         if (!_backupService.TryCopyBackupToFolder(justSavedBackupPath, cloudFolder))
         {
             cloudCopyStopwatch.Stop();
-            AppendAppLog($"Cloud copy completed with failure in {cloudCopyStopwatch.ElapsedMilliseconds} ms. source='{justSavedBackupPath}', target='{cloudFolder}'");
+            AppendAppLog(
+                $"Cloud copy completed with failure in {cloudCopyStopwatch.ElapsedMilliseconds} ms. size={FormatSizeForLog(sourceSizeBytes)}, throughput={FormatThroughputForLog(sourceSizeBytes, cloudCopyStopwatch.Elapsed)}. source='{justSavedBackupPath}', target='{cloudFolder}'");
             return;
         }
 
@@ -5229,7 +5231,43 @@ public partial class MainWindow : Window
             SaveWindowSettings();
 
         cloudCopyStopwatch.Stop();
-        AppendAppLog($"Cloud copy completed successfully in {cloudCopyStopwatch.ElapsedMilliseconds} ms. source='{justSavedBackupPath}', target='{cloudFolder}'");
+        AppendAppLog(
+            $"Cloud copy completed successfully in {cloudCopyStopwatch.ElapsedMilliseconds} ms. size={FormatSizeForLog(sourceSizeBytes)}, throughput={FormatThroughputForLog(sourceSizeBytes, cloudCopyStopwatch.Elapsed)}. source='{justSavedBackupPath}', target='{cloudFolder}'");
+    }
+
+    private static long GetFileSizeBytesOrZero(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return 0;
+
+            return new FileInfo(path).Length;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static string FormatSizeForLog(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} bytes";
+
+        var kilobytes = bytes / 1024d;
+        return $"{kilobytes:F2} KB ({bytes} bytes)";
+    }
+
+    private static string FormatThroughputForLog(long bytes, TimeSpan elapsed)
+    {
+        var seconds = Math.Max(elapsed.TotalSeconds, 0.001d);
+        var bytesPerSecond = bytes / seconds;
+
+        if (bytesPerSecond < 1024d)
+            return $"{bytesPerSecond:F2} bytes/s";
+
+        return $"{(bytesPerSecond / 1024d):F2} KB/s";
     }
 
     private void AppendAppLog(string message)
