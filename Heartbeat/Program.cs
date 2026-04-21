@@ -1,11 +1,17 @@
+using System.Globalization;
 using System.Text.Json;
 using Noted.Services;
 
 const string SettingsFileName = "settings.json";
 const int DefaultUptimeHeartbeatSeconds = 300;
+const string AppLogFileName = "noted.log";
 
 var runtime = LoadRuntimeSettings();
 var audioSnapshotService = new AudioSessionSnapshotService();
+var startupMessage = "Heartbeat started. Version=0.5";
+
+Console.WriteLine(startupMessage);
+AppendAppLog(runtime.BackupFolder, startupMessage);
 
 var path = UptimeHeartbeatService.GetHeartbeatFilePath(runtime.BackupFolder, DateTimeOffset.Now);
 var lastHeartbeatAtLocal = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
@@ -101,6 +107,24 @@ static string NormalizePathOrFallback(string? configuredPath, string fallbackPat
 }
 
 static string DefaultBackupFolder() => @"c:\tools\backup\noted";
+
+static void AppendAppLog(string backupFolder, string message)
+{
+    if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(backupFolder))
+        return;
+
+    try
+    {
+        Directory.CreateDirectory(backupFolder);
+        var logPath = Path.Combine(backupFolder, AppLogFileName);
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+        File.AppendAllText(logPath, $"[{timestamp}] {message}{Environment.NewLine}");
+    }
+    catch
+    {
+        // Logging is best effort; never block heartbeat loop.
+    }
+}
 
 file sealed class RuntimeSettings
 {
