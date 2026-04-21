@@ -1331,14 +1331,22 @@ public partial class MainWindow
     private string BuildChecklistExport(TaskAreaState area, Func<TodoItemState, bool, bool> shouldInclude, bool includeFinished)
     {
         var sb = new StringBuilder();
+        sb.Append("# ").AppendLine(area.Name);
+
         foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
         {
             var items = _todoItems
                 .Where(item => string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase)
                     && shouldInclude(item, includeFinished))
                 .OrderBy(item => item.SortOrder)
-                .ThenBy(item => item.CreatedUtc);
+                .ThenBy(item => item.CreatedUtc)
+                .ToList();
 
+            if (items.Count == 0)
+                continue;
+
+            sb.AppendLine();
+            sb.Append("## ").AppendLine(group.Name);
             foreach (var item in items)
             {
                 var box = item.CompletedAtUtc.HasValue ? "- [x]" : "- [ ]";
