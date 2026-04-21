@@ -4330,6 +4330,20 @@ public partial class MainWindow : Window
             dlg.DialogResult = true;
         }
 
+        static bool HeaderMatchesFilter(string header, string filter)
+        {
+            if (string.IsNullOrWhiteSpace(filter))
+                return true;
+
+            var tokens = filter
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (tokens.Length == 0)
+                return true;
+
+            return tokens.All(token => header.Contains(token, StringComparison.OrdinalIgnoreCase));
+        }
+
         void RefreshList()
         {
             var filter = (input.Text ?? string.Empty).Trim();
@@ -4337,8 +4351,7 @@ public partial class MainWindow : Window
                 .Where(tab =>
                 {
                     var header = (tab.Tag as TabDocument)?.Header ?? tab.Header?.ToString() ?? string.Empty;
-                    return filter.Length == 0
-                        || header.Contains(filter, StringComparison.OrdinalIgnoreCase);
+                    return HeaderMatchesFilter(header, filter);
                 })
                 .Select(tab => new GoToTabOption
                 {
