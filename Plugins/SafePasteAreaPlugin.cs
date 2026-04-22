@@ -419,12 +419,26 @@ public partial class MainWindow
         var secretHeader = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         secretHeader.Children.Add(new TextBlock
         {
             Text = "Secret Paste Area (masked)",
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center
         });
+        var btnOpenContainsCheck = new Button
+        {
+            Content = "⊂",
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            Margin = new Thickness(8, 0, 0, 0),
+            FontSize = 11,
+            FontWeight = FontWeights.Bold,
+            ToolTip = "Open contains check"
+        };
+        Grid.SetColumn(btnOpenContainsCheck, 1);
+        secretHeader.Children.Add(btnOpenContainsCheck);
         var btnToggleSecretVisible = new Button
         {
             Width = 28,
@@ -436,7 +450,7 @@ public partial class MainWindow
             FontSize = 14,
             Content = "🙈"
         };
-        Grid.SetColumn(btnToggleSecretVisible, 1);
+        Grid.SetColumn(btnToggleSecretVisible, 2);
         secretHeader.Children.Add(btnToggleSecretVisible);
         secretPanel.Children.Add(secretHeader);
         var txtSecretMasked = new TextBox
@@ -680,6 +694,123 @@ public partial class MainWindow
             }
         }
 
+        void ShowContainsCheckDialog()
+        {
+            var containsWindow = new Window
+            {
+                Title = "Contains check",
+                Width = 460,
+                Height = 240,
+                MinWidth = 430,
+                MinHeight = 220,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = dlg
+            };
+
+            var panel = new StackPanel { Margin = new Thickness(12) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Type text to check if it exists in the secret area.",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            var txtContainsNeedle = new TextBox
+            {
+                Text = plainValue,
+                AcceptsReturn = false,
+                MinHeight = 28,
+                FontFamily = new FontFamily("Consolas, Courier New")
+            };
+            panel.Children.Add(txtContainsNeedle);
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = $"Secret length: {secretValue.Length} characters",
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(0, 6, 0, 0)
+            });
+
+            var resultRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 10, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var txtContainsResultIcon = new TextBlock
+            {
+                Text = "•",
+                FontSize = 20,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.DimGray,
+                Width = 26,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var txtContainsResult = new TextBlock
+            {
+                Text = "Enter text to check.",
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+            resultRow.Children.Add(txtContainsResultIcon);
+            resultRow.Children.Add(txtContainsResult);
+            panel.Children.Add(resultRow);
+
+            var closeRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 14, 0, 0)
+            };
+            var btnCloseContainsWindow = new Button
+            {
+                Content = "Close",
+                IsCancel = true,
+                Width = 90
+            };
+            closeRow.Children.Add(btnCloseContainsWindow);
+            panel.Children.Add(closeRow);
+
+            void UpdateContainsResult()
+            {
+                var valueToCheck = txtContainsNeedle.Text ?? string.Empty;
+                if (secretValue.Length == 0)
+                {
+                    txtContainsResultIcon.Text = "•";
+                    txtContainsResultIcon.Foreground = Brushes.DimGray;
+                    txtContainsResult.Text = "Paste a secret first.";
+                    return;
+                }
+
+                if (valueToCheck.Length == 0)
+                {
+                    txtContainsResultIcon.Text = "•";
+                    txtContainsResultIcon.Foreground = Brushes.DimGray;
+                    txtContainsResult.Text = "Enter text to check.";
+                    return;
+                }
+
+                var contains = secretValue.Contains(valueToCheck, StringComparison.Ordinal);
+                txtContainsResultIcon.Text = contains ? "✔" : "✖";
+                txtContainsResultIcon.Foreground = contains ? Brushes.ForestGreen : Brushes.IndianRed;
+                txtContainsResult.Text = contains
+                    ? "The text is contained in the secret."
+                    : "The text is not contained in the secret.";
+            }
+
+            txtContainsNeedle.TextChanged += (_, _) => UpdateContainsResult();
+            btnCloseContainsWindow.Click += (_, _) => containsWindow.Close();
+            containsWindow.Loaded += (_, _) =>
+            {
+                txtContainsNeedle.Focus();
+                txtContainsNeedle.SelectAll();
+            };
+            containsWindow.Content = panel;
+            UpdateContainsResult();
+            containsWindow.ShowDialog();
+        }
+
         void RefreshSavedSecretsList()
         {
             lstSavedSecrets.Items.Clear();
@@ -803,6 +934,7 @@ public partial class MainWindow
             secretVisible = !secretVisible;
             ApplySecretVisibility();
         };
+        btnOpenContainsCheck.Click += (_, _) => ShowContainsCheckDialog();
 
         lstSavedSecrets.SelectionChanged += (_, _) =>
         {
