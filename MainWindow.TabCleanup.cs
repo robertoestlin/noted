@@ -53,8 +53,11 @@ public partial class MainWindow
 
             void AddRow(TabItem tab, TabDocument doc, bool isStaleRow)
             {
+                var age = now - doc.LastChangedUtc;
+                var ageDays = Math.Max(0, (int)Math.Floor(age.TotalDays));
                 var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -72,15 +75,29 @@ public partial class MainWindow
                 };
                 Grid.SetColumn(nameBlock, 0);
 
+                var daysBlock = new TextBlock
+                {
+                    Text = ageDays == 0
+                        ? "Today"
+                        : ageDays == 1
+                            ? "1 day"
+                            : $"{ageDays} days",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, 10, 0),
+                    Foreground = fgDate,
+                    FontSize = 12
+                };
+                Grid.SetColumn(daysBlock, 1);
+
                 var dateBlock = new TextBlock
                 {
-                    Text = doc.LastChangedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                    Text = $"{doc.LastChangedUtc.ToLocalTime():yyyy-MM-dd HH:mm}",
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 8, 0),
                     Foreground = fgDate,
                     FontSize = 12
                 };
-                Grid.SetColumn(dateBlock, 1);
+                Grid.SetColumn(dateBlock, 2);
 
                 var btnGoTo = new Button
                 {
@@ -93,7 +110,7 @@ public partial class MainWindow
                 {
                     MainTabControl.SelectedItem = tab;
                 };
-                Grid.SetColumn(btnGoTo, 2);
+                Grid.SetColumn(btnGoTo, 3);
 
                 var btnRemove = new Button
                 {
@@ -106,9 +123,10 @@ public partial class MainWindow
                     if (CloseTab(tab))
                         RefreshList();
                 };
-                Grid.SetColumn(btnRemove, 3);
+                Grid.SetColumn(btnRemove, 4);
 
                 row.Children.Add(nameBlock);
+                row.Children.Add(daysBlock);
                 row.Children.Add(dateBlock);
                 row.Children.Add(btnGoTo);
                 row.Children.Add(btnRemove);
@@ -132,6 +150,17 @@ public partial class MainWindow
             foreach (var kv in fresh)
                 AddRow(kv.Key, kv.Value, isStaleRow: false);
         }
+
+        var staleSettingsPanel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        staleSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = _tabCleanupStaleDays == 1
+                ? "Stale after: 1 day"
+                : $"Stale after: {_tabCleanupStaleDays} days",
+            Foreground = Brushes.DimGray
+        });
+        DockPanel.SetDock(staleSettingsPanel, Dock.Top);
+        root.Children.Add(staleSettingsPanel);
 
         RefreshList();
 
