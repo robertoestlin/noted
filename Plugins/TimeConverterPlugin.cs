@@ -281,11 +281,15 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 8),
             TextWrapping = TextWrapping.Wrap
         };
-        var closeRow = new StackPanel
+        var closeRow = new DockPanel { LastChildFill = false };
+        var btnMap = new Button
         {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right
+            Content = "\uD83D\uDDFA Map",
+            ToolTip = "Show world time zone map for the current time",
+            Padding = new Thickness(10, 4, 10, 4),
+            MinWidth = 90
         };
+        DockPanel.SetDock(btnMap, Dock.Left);
         var btnClose = new Button
         {
             Content = "Close",
@@ -293,6 +297,8 @@ public partial class MainWindow
             IsDefault = true,
             IsCancel = true
         };
+        DockPanel.SetDock(btnClose, Dock.Right);
+        closeRow.Children.Add(btnMap);
         closeRow.Children.Add(btnClose);
         bottom.Children.Add(status);
         bottom.Children.Add(closeRow);
@@ -394,6 +400,7 @@ public partial class MainWindow
         root.Children.Add(panel);
 
         var isUpdating = false;
+        DateTimeOffset? currentUtc = null;
 
         void ClearOutput()
         {
@@ -404,10 +411,12 @@ public partial class MainWindow
             txtUnixMilliseconds.Text = string.Empty;
             txtTimeZone.Text = string.Empty;
             txtSwedenDstPeriod.Text = BuildSwedenDstPeriodText(DateTime.UtcNow.Year);
+            currentUtc = null;
         }
 
         void PopulateFromUtc(DateTimeOffset utc, string source)
         {
+            currentUtc = utc;
             var local = utc.ToLocalTime();
             var zone = TimeZoneInfo.Local;
             var zoneOffset = zone.GetUtcOffset(local.DateTime);
@@ -498,6 +507,18 @@ public partial class MainWindow
 
         txtUtcInput.TextChanged += (_, _) => ConvertFromIsoInput();
         txtUnixInput.TextChanged += (_, _) => ConvertFromUnixInput();
+        btnMap.Click += (_, _) =>
+        {
+            try
+            {
+                var utc = currentUtc ?? DateTimeOffset.UtcNow;
+                ShowTimeZoneMapDialog(utc);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Could not open world time map: {ex.Message}", Brushes.IndianRed);
+            }
+        };
         btnClose.Click += (_, _) => dlg.Close();
 
         try
