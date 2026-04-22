@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
 namespace Noted;
@@ -94,80 +95,25 @@ public partial class MainWindow
         new() { Country = "Fiji",        City = "Suva",       Latitude = -18.14, Longitude = 178.44, TimeZoneIdCandidates = ["Fiji Standard Time", "Pacific/Fiji"] },
     ];
 
-    // Rough equirectangular continent outlines (longitude, latitude).
-    private static readonly (double Lon, double Lat)[][] TimeZoneMapContinents =
-    [
-        // North America
-        [
-            (-168, 66), (-141, 70), (-125, 72), (-100, 74), (-80, 73), (-70, 65),
-            (-60, 55), (-54, 47), (-65, 45), (-70, 43), (-76, 35), (-80, 30),
-            (-82, 25), (-85, 25), (-95, 29), (-100, 18), (-108, 16), (-115, 32),
-            (-125, 40), (-130, 55), (-150, 60), (-168, 66)
-        ],
-        // South America
-        [
-            (-80, 10), (-75, 12), (-62, 11), (-50, 5), (-40, 0), (-35, -8),
-            (-40, -22), (-50, -30), (-58, -40), (-68, -53), (-73, -50), (-74, -40),
-            (-76, -30), (-80, -20), (-80, -5), (-80, 10)
-        ],
-        // Europe (combined with Asia via land bridge, but drawn separate for visual)
-        [
-            (-10, 36), (-5, 43), (10, 43), (15, 38), (25, 36), (30, 40), (40, 42),
-            (45, 50), (60, 60), (65, 70), (30, 72), (20, 70), (10, 63), (0, 58),
-            (-5, 58), (-10, 50), (-10, 36)
-        ],
-        // Africa
-        [
-            (-17, 15), (-10, 27), (-5, 32), (10, 35), (25, 32), (34, 31), (43, 12),
-            (51, 12), (45, 4), (42, -5), (40, -15), (35, -20), (25, -34), (18, -35),
-            (12, -20), (8, -5), (-2, 5), (-8, 7), (-15, 11), (-17, 15)
-        ],
-        // Asia
-        [
-            (45, 50), (60, 60), (80, 75), (140, 75), (170, 70), (180, 65), (180, 60),
-            (160, 58), (140, 52), (135, 42), (125, 40), (120, 30), (115, 22), (108, 15),
-            (100, 5), (95, 5), (85, 20), (75, 22), (68, 22), (60, 25), (55, 28),
-            (50, 30), (42, 40), (42, 42), (45, 50)
-        ],
-        // Australia
-        [
-            (115, -12), (130, -12), (140, -10), (145, -14), (153, -25), (150, -38),
-            (140, -38), (128, -32), (115, -34), (113, -22), (115, -12)
-        ],
-        // Greenland
-        [
-            (-55, 60), (-40, 59), (-20, 62), (-15, 75), (-30, 83), (-55, 80), (-55, 60)
-        ],
-        // UK
-        [
-            (-6, 50), (-2, 50), (1, 52), (-2, 55), (-4, 59), (-6, 56), (-6, 50)
-        ],
-        // Japan
-        [
-            (130, 33), (135, 34), (140, 36), (142, 44), (140, 45), (136, 37), (133, 35), (130, 33)
-        ],
-        // Madagascar
-        [
-            (43, -14), (50, -15), (49, -25), (44, -25), (43, -14)
-        ],
-        // New Zealand (north)
-        [
-            (172, -34), (178, -37), (178, -42), (174, -42), (172, -38), (172, -34)
-        ],
-        // New Zealand (south)
-        [
-            (166, -46), (174, -46), (174, -41), (170, -41), (166, -46)
-        ],
-        // Indonesia (rough arc)
-        [
-            (95, 5), (105, 5), (116, -2), (125, -6), (140, -4), (140, -8), (120, -10),
-            (108, -8), (95, 0), (95, 5)
-        ],
-        // Antarctica strip
-        [
-            (-180, -65), (180, -65), (180, -85), (-180, -85), (-180, -65)
-        ],
-    ];
+    private static readonly Uri TimeZoneMapImageUri =
+        new("pack://application:,,,/logo/world-map-equirectangular.png", UriKind.Absolute);
+
+    private static BitmapImage? _timeZoneMapImageCache;
+
+    private static BitmapImage GetTimeZoneMapImage()
+    {
+        if (_timeZoneMapImageCache is not null)
+            return _timeZoneMapImageCache;
+
+        var bmp = new BitmapImage();
+        bmp.BeginInit();
+        bmp.UriSource = TimeZoneMapImageUri;
+        bmp.CacheOption = BitmapCacheOption.OnLoad;
+        bmp.EndInit();
+        bmp.Freeze();
+        _timeZoneMapImageCache = bmp;
+        return bmp;
+    }
 
     private static bool TryResolveTimeZoneForCity(TimeZoneMapCity city, out TimeZoneInfo timeZone)
     {
@@ -198,10 +144,16 @@ public partial class MainWindow
         return string.Create(CultureInfo.InvariantCulture, $"GMT{sign}{hours}:{absolute.Minutes:00}");
     }
 
+    // Aspect ratio of the embedded world map image (1166 x 597 after cropping to ±180 lon, ±90 lat).
+    // Not exactly 2:1 because the source SVG has slightly non-uniform scaling; using the real aspect
+    // keeps lat/lon projection accurate to within ~0.5° for every city on the map.
+    private const double TimeZoneMapImagePixelWidth = 1166.0;
+    private const double TimeZoneMapImagePixelHeight = 597.0;
+
     private void ShowTimeZoneMapDialog(DateTimeOffset referenceUtc)
     {
         const double mapWidth = 1080;
-        const double mapHeight = 540;
+        const double mapHeight = mapWidth * TimeZoneMapImagePixelHeight / TimeZoneMapImagePixelWidth;
 
         var dlg = new Window
         {
@@ -231,7 +183,7 @@ public partial class MainWindow
         });
         header.Children.Add(new TextBlock
         {
-            Text = "Vertical bands show nominal UTC offset (±N hours). Dots mark cities; hover for exact local time.",
+            Text = "Vertical bands show nominal UTC offset (±N hours). Hover a dot for exact local time; click a dot or a list entry to highlight it.",
             Foreground = Brushes.DimGray,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0)
@@ -270,8 +222,31 @@ public partial class MainWindow
             Background = new SolidColorBrush(Color.FromRgb(0xDC, 0xE9, 0xF4)) // ocean
         };
 
-        // Draw alternating UTC offset bands (24 bands of 15° each, centered on multiples of 15°).
-        var bandShade = new SolidColorBrush(Color.FromArgb(0x22, 0x1F, 0x3A, 0x68));
+        // Base map image (public domain equirectangular world map, CIA World Factbook).
+        try
+        {
+            var mapImage = new Image
+            {
+                Source = GetTimeZoneMapImage(),
+                Width = mapWidth,
+                Height = mapHeight,
+                Stretch = Stretch.Fill,
+                IsHitTestVisible = false,
+                SnapsToDevicePixels = true
+            };
+            RenderOptions.SetBitmapScalingMode(mapImage, BitmapScalingMode.HighQuality);
+            Canvas.SetLeft(mapImage, 0);
+            Canvas.SetTop(mapImage, 0);
+            mapCanvas.Children.Add(mapImage);
+        }
+        catch
+        {
+            // Image resource not available - continue without base map.
+        }
+
+        // Alternating UTC offset bands (24 bands of 15° each, centered on multiples of 15°),
+        // drawn on top of the map with low opacity so the map still shows through.
+        var bandShade = new SolidColorBrush(Color.FromArgb(0x26, 0x1F, 0x3A, 0x68));
         for (var offsetHours = -12; offsetHours <= 12; offsetHours++)
         {
             var leftLon = offsetHours * 15 - 7.5;
@@ -288,25 +263,6 @@ public partial class MainWindow
             Canvas.SetLeft(bandRect, x1);
             Canvas.SetTop(bandRect, 0);
             mapCanvas.Children.Add(bandRect);
-        }
-
-        // Draw continent polygons.
-        var landFill = new SolidColorBrush(Color.FromRgb(0xC7, 0xE3, 0xBE));
-        var landStroke = new SolidColorBrush(Color.FromRgb(0x7D, 0xAC, 0x75));
-        foreach (var continent in TimeZoneMapContinents)
-        {
-            var poly = new Polygon
-            {
-                Fill = landFill,
-                Stroke = landStroke,
-                StrokeThickness = 0.8,
-                IsHitTestVisible = false
-            };
-            var points = new PointCollection(continent.Length);
-            foreach (var (lon, lat) in continent)
-                points.Add(new Point(ProjectLongitude(lon, mapWidth), ProjectLatitude(lat, mapHeight)));
-            poly.Points = points;
-            mapCanvas.Children.Add(poly);
         }
 
         // Draw vertical band separators + top labels.
@@ -398,26 +354,88 @@ public partial class MainWindow
             resolved.Add((city, tz, offset, local));
         }
 
-        // Draw city dots with tooltips.
+        var dotsByCity = new Dictionary<TimeZoneMapCity, (Ellipse Dot, Ellipse Ring)>();
+        var listItemsByCity = new Dictionary<TimeZoneMapCity, Border>();
+        TimeZoneMapCity? selectedCity = null;
+        var selectionBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xEE, 0xB8));
+        var selectionRingBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x7A, 0x00));
+
+        void SelectCity(TimeZoneMapCity city)
+        {
+            if (selectedCity is not null)
+            {
+                if (dotsByCity.TryGetValue(selectedCity, out var prev))
+                    prev.Ring.Visibility = Visibility.Collapsed;
+                if (listItemsByCity.TryGetValue(selectedCity, out var prevItem))
+                    prevItem.Background = Brushes.Transparent;
+            }
+
+            selectedCity = city;
+
+            if (dotsByCity.TryGetValue(city, out var current))
+            {
+                current.Ring.Visibility = Visibility.Visible;
+                // Bring the selected dot and its ring to the top of the z-order.
+                mapCanvas.Children.Remove(current.Ring);
+                mapCanvas.Children.Remove(current.Dot);
+                mapCanvas.Children.Add(current.Ring);
+                mapCanvas.Children.Add(current.Dot);
+            }
+
+            if (listItemsByCity.TryGetValue(city, out var item))
+            {
+                item.Background = selectionBrush;
+                item.BringIntoView();
+            }
+        }
+
         foreach (var entry in resolved)
         {
             var x = ProjectLongitude(entry.City.Longitude, mapWidth);
             var y = ProjectLatitude(entry.City.Latitude, mapHeight);
+
+            var ring = new Ellipse
+            {
+                Width = 20,
+                Height = 20,
+                Stroke = selectionRingBrush,
+                StrokeThickness = 2.5,
+                Fill = Brushes.Transparent,
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed
+            };
+            Canvas.SetLeft(ring, x - 10);
+            Canvas.SetTop(ring, y - 10);
+            mapCanvas.Children.Add(ring);
+
+            var tooltipText = string.Create(
+                CultureInfo.InvariantCulture,
+                $"{entry.City.City}, {entry.City.Country}\n{entry.Local:yyyy-MM-dd HH:mm} ({FormatGmtOffsetShort(entry.Offset)})\n{BuildTimeZoneAbbreviation(entry.TimeZone, entry.Local)}  {entry.TimeZone.Id}");
+
             var dot = new Ellipse
             {
-                Width = 9,
-                Height = 9,
+                Width = 11,
+                Height = 11,
                 Fill = BrushForOffset(entry.Offset),
                 Stroke = Brushes.White,
                 StrokeThickness = 1.5,
-                ToolTip = string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{entry.City.City}, {entry.City.Country}\n{entry.Local:yyyy-MM-dd HH:mm} ({FormatGmtOffsetShort(entry.Offset)})\n{BuildTimeZoneAbbreviation(entry.TimeZone, entry.Local)}  {entry.TimeZone.Id}"),
+                ToolTip = tooltipText,
                 Cursor = System.Windows.Input.Cursors.Hand
             };
-            Canvas.SetLeft(dot, x - 4.5);
-            Canvas.SetTop(dot, y - 4.5);
+            ToolTipService.SetInitialShowDelay(dot, 0);
+            ToolTipService.SetBetweenShowDelay(dot, 0);
+            ToolTipService.SetShowDuration(dot, 30000);
+            var entryCaptured = entry;
+            dot.MouseLeftButtonDown += (_, e) =>
+            {
+                SelectCity(entryCaptured.City);
+                e.Handled = true;
+            };
+            Canvas.SetLeft(dot, x - 5.5);
+            Canvas.SetTop(dot, y - 5.5);
             mapCanvas.Children.Add(dot);
+
+            dotsByCity[entry.City] = (dot, ring);
         }
 
         mapScroll.Content = mapCanvas;
@@ -461,7 +479,7 @@ public partial class MainWindow
             {
                 var line = new TextBlock
                 {
-                    Margin = new Thickness(10, 2, 4, 2),
+                    Margin = new Thickness(0, 0, 0, 0),
                     TextWrapping = TextWrapping.Wrap
                 };
                 line.Inlines.Add(new Run
@@ -485,7 +503,34 @@ public partial class MainWindow
                         FontWeight = FontWeights.SemiBold
                     });
                 }
-                listStack.Children.Add(line);
+
+                var itemBorder = new Border
+                {
+                    CornerRadius = new CornerRadius(3),
+                    Padding = new Thickness(8, 3, 6, 3),
+                    Margin = new Thickness(4, 1, 4, 1),
+                    Background = Brushes.Transparent,
+                    Cursor = System.Windows.Input.Cursors.Hand,
+                    Child = line
+                };
+                var entryCaptured = entry;
+                itemBorder.MouseEnter += (_, _) =>
+                {
+                    if (!ReferenceEquals(selectedCity, entryCaptured.City))
+                        itemBorder.Background = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xEE, 0xB8));
+                };
+                itemBorder.MouseLeave += (_, _) =>
+                {
+                    if (!ReferenceEquals(selectedCity, entryCaptured.City))
+                        itemBorder.Background = Brushes.Transparent;
+                };
+                itemBorder.MouseLeftButtonDown += (_, e) =>
+                {
+                    SelectCity(entryCaptured.City);
+                    e.Handled = true;
+                };
+                listItemsByCity[entry.City] = itemBorder;
+                listStack.Children.Add(itemBorder);
             }
         }
 

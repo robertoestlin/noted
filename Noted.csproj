@@ -18,6 +18,7 @@
     <Compile Remove="Heartbeat\**\*.cs" />
     <Resource Include="logo\logo.png" />
     <Resource Include="logo\friday.png" />
+    <Resource Include="logo\world-map-equirectangular.png" />
   </ItemGroup>
 
 </Project>
