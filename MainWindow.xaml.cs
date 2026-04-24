@@ -3413,7 +3413,7 @@ public partial class MainWindow : Window
         return removed;
     }
 
-    private static bool TryMoveCurrentLine(TabDocument doc, bool moveDown)
+    private bool TryMoveCurrentLine(TabDocument doc, bool moveDown)
     {
         var editor = doc.Editor;
         var document = editor.Document;
@@ -3439,6 +3439,30 @@ public partial class MainWindow : Window
         if (targetEnd > document.TextLength)
             targetEnd = targetLine.EndOffset;
 
+        // Snapshot per-line markers before the document mutation. Replacing the
+        // entire two-line range leaves the backing TextAnchors at the replace
+        // boundary, so they no longer point to the moved content. We clear the
+        // markers first and reapply them on the swapped line numbers afterwards.
+        bool currentHighlighted = IsLineHighlighted(doc, caretLineNumber);
+        bool currentCritical = IsLineCriticalHighlighted(doc, caretLineNumber);
+        bool targetHighlighted = IsLineHighlighted(doc, targetLineNumber);
+        bool targetCritical = IsLineCriticalHighlighted(doc, targetLineNumber);
+        TryGetLineAssignee(doc, caretLineNumber, out var currentAssignee);
+        TryGetLineAssignee(doc, targetLineNumber, out var targetAssignee);
+
+        if (currentHighlighted)
+            RemoveHighlightedLine(doc, caretLineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
+        if (currentCritical)
+            RemoveHighlightedLine(doc, caretLineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
+        if (targetHighlighted)
+            RemoveHighlightedLine(doc, targetLineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
+        if (targetCritical)
+            RemoveHighlightedLine(doc, targetLineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
+        if (!string.IsNullOrEmpty(currentAssignee))
+            RemoveLineAssignee(doc, caretLineNumber, markDirty: false, redraw: false);
+        if (!string.IsNullOrEmpty(targetAssignee))
+            RemoveLineAssignee(doc, targetLineNumber, markDirty: false, redraw: false);
+
         using (document.RunUpdate())
         {
             if (moveDown)
@@ -3454,6 +3478,21 @@ public partial class MainWindow : Window
                 document.Replace(targetStart, currentEnd - targetStart, currentText + targetText);
             }
         }
+
+        if (currentHighlighted)
+            AddHighlightedLine(doc, targetLineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
+        if (currentCritical)
+            AddHighlightedLine(doc, targetLineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
+        if (targetHighlighted)
+            AddHighlightedLine(doc, caretLineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
+        if (targetCritical)
+            AddHighlightedLine(doc, caretLineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
+        if (!string.IsNullOrEmpty(currentAssignee))
+            SetLineAssignee(doc, targetLineNumber, currentAssignee, markDirty: false, redraw: false);
+        if (!string.IsNullOrEmpty(targetAssignee))
+            SetLineAssignee(doc, caretLineNumber, targetAssignee, markDirty: false, redraw: false);
+
+        RedrawHighlight(doc);
 
         var movedLine = document.GetLineByNumber(targetLineNumber);
         int movedCaretOffset = Math.Min(movedLine.EndOffset, movedLine.Offset + (caretColumn - 1));
