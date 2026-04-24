@@ -303,6 +303,8 @@ public partial class MainWindow
         colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        colorsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         string[] colorOptions =
         [
@@ -313,10 +315,14 @@ public partial class MainWindow
             "LightSkyBlue",
             "Khaki",
             "LightGreen",
+            "LightCoral",
+            "IndianRed",
             "PaleVioletRed",
             "#FFE1F0FF",
             "#FFFFF4B3",
-            "#FFFFEA80"
+            "#FFFFEA80",
+            "#FFFFCDD2",
+            "#FFFFB3BA"
         ];
 
         (ComboBox combo, Border preview) CreateColorPicker(Color initial)
@@ -350,6 +356,8 @@ public partial class MainWindow
         var (cmbSelectedLineColor, selectedLinePreview) = CreateColorPicker(_selectedLineColor);
         var (cmbHighlightedLineColor, highlightedLinePreview) = CreateColorPicker(_highlightedLineColor);
         var (cmbSelectedHighlightedLineColor, selectedHighlightedLinePreview) = CreateColorPicker(_selectedHighlightedLineColor);
+        var (cmbCriticalHighlightedLineColor, criticalHighlightedLinePreview) = CreateColorPicker(_criticalHighlightedLineColor);
+        var (cmbSelectedCriticalHighlightedLineColor, selectedCriticalHighlightedLinePreview) = CreateColorPicker(_selectedCriticalHighlightedLineColor);
 
         var lblSelectedLineColor = new TextBlock { Text = "Selected line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
         Grid.SetRow(lblSelectedLineColor, 0);
@@ -380,6 +388,26 @@ public partial class MainWindow
         Grid.SetRow(selectedHighlightedLinePreview, 2);
         Grid.SetColumn(selectedHighlightedLinePreview, 2);
         colorsPanel.Children.Add(selectedHighlightedLinePreview);
+
+        var lblCriticalHighlightedLineColor = new TextBlock { Text = "Critical highlighted line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
+        Grid.SetRow(lblCriticalHighlightedLineColor, 3);
+        colorsPanel.Children.Add(lblCriticalHighlightedLineColor);
+        Grid.SetRow(cmbCriticalHighlightedLineColor, 3);
+        Grid.SetColumn(cmbCriticalHighlightedLineColor, 1);
+        colorsPanel.Children.Add(cmbCriticalHighlightedLineColor);
+        Grid.SetRow(criticalHighlightedLinePreview, 3);
+        Grid.SetColumn(criticalHighlightedLinePreview, 2);
+        colorsPanel.Children.Add(criticalHighlightedLinePreview);
+
+        var lblSelectedCriticalHighlightedLineColor = new TextBlock { Text = "Selected critical highlighted line color:", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 8) };
+        Grid.SetRow(lblSelectedCriticalHighlightedLineColor, 4);
+        colorsPanel.Children.Add(lblSelectedCriticalHighlightedLineColor);
+        Grid.SetRow(cmbSelectedCriticalHighlightedLineColor, 4);
+        Grid.SetColumn(cmbSelectedCriticalHighlightedLineColor, 1);
+        colorsPanel.Children.Add(cmbSelectedCriticalHighlightedLineColor);
+        Grid.SetRow(selectedCriticalHighlightedLinePreview, 4);
+        Grid.SetColumn(selectedCriticalHighlightedLinePreview, 2);
+        colorsPanel.Children.Add(selectedCriticalHighlightedLinePreview);
 
         tabControl.Items.Add(new TabItem
         {
@@ -421,6 +449,10 @@ public partial class MainWindow
         shortkeysPanel.Children.Add(new TextBlock { Text = "Toggle highlight on current/selected lines:" });
         var txtShortcutToggleHighlight = new TextBox { Text = _shortcutToggleHighlight, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutToggleHighlight);
+
+        shortkeysPanel.Children.Add(new TextBlock { Text = "Toggle critical highlight on current/selected lines:" });
+        var txtShortcutToggleCriticalHighlight = new TextBox { Text = _shortcutToggleCriticalHighlight, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutToggleCriticalHighlight);
 
         shortkeysPanel.Children.Add(new TextBlock { Text = "Go to line:" });
         var txtShortcutGoToLine = new TextBox { Text = _shortcutGoToLine, Margin = new Thickness(0, 4, 0, 8) };
@@ -1207,6 +1239,7 @@ public partial class MainWindow
             var shortcutAddBlankLines = txtShortcutAddBlankLines.Text.Trim();
             var shortcutTrimTrailingEmptyLines = txtShortcutTrimTrailingEmptyLines.Text.Trim();
             var shortcutToggleHighlight = txtShortcutToggleHighlight.Text.Trim();
+            var shortcutToggleCriticalHighlight = txtShortcutToggleCriticalHighlight.Text.Trim();
             var shortcutGoToLine = txtShortcutGoToLine.Text.Trim();
             var shortcutGoToTab = txtShortcutGoToTab.Text.Trim();
 
@@ -1216,6 +1249,7 @@ public partial class MainWindow
                 || string.IsNullOrWhiteSpace(shortcutAddBlankLines)
                 || string.IsNullOrWhiteSpace(shortcutTrimTrailingEmptyLines)
                 || string.IsNullOrWhiteSpace(shortcutToggleHighlight)
+                || string.IsNullOrWhiteSpace(shortcutToggleCriticalHighlight)
                 || string.IsNullOrWhiteSpace(shortcutGoToLine)
                 || string.IsNullOrWhiteSpace(shortcutGoToTab))
             {
@@ -1231,6 +1265,7 @@ public partial class MainWindow
                 || !TryParseKeyGesture(shortcutAddBlankLines, out _)
                 || !TryParseKeyGesture(shortcutTrimTrailingEmptyLines, out _)
                 || !TryParseKeyGesture(shortcutToggleHighlight, out _)
+                || !TryParseKeyGesture(shortcutToggleCriticalHighlight, out _)
                 || !TryParseKeyGesture(shortcutGoToLine, out _)
                 || !TryParseKeyGesture(shortcutGoToTab, out _))
             {
@@ -1247,6 +1282,7 @@ public partial class MainWindow
                 shortcutAddBlankLines,
                 shortcutTrimTrailingEmptyLines,
                 shortcutToggleHighlight,
+                shortcutToggleCriticalHighlight,
                 shortcutGoToLine,
                 shortcutGoToTab
             };
@@ -1304,6 +1340,8 @@ public partial class MainWindow
                 && TryParseColor(cmbSelectedLineColor.Text, out var selectedLineColor)
                 && TryParseColor(cmbHighlightedLineColor.Text, out var highlightedLineColor)
                 && TryParseColor(cmbSelectedHighlightedLineColor.Text, out var selectedHighlightedLineColor)
+                && TryParseColor(cmbCriticalHighlightedLineColor.Text, out var criticalHighlightedLineColor)
+                && TryParseColor(cmbSelectedCriticalHighlightedLineColor.Text, out var selectedCriticalHighlightedLineColor)
                 && int.TryParse(txtTabStaleDays.Text, out int staleDays) && staleDays >= 1 && staleDays <= 3650
                 && int.TryParse(txtClosedTabsMaxCount.Text, out int closedTabsMaxCount)
                 && closedTabsMaxCount >= MinClosedTabsMaxCount && closedTabsMaxCount <= MaxClosedTabsMaxCount
@@ -1346,11 +1384,14 @@ public partial class MainWindow
                 _shortcutAddBlankLines = shortcutAddBlankLines;
                 _shortcutTrimTrailingEmptyLines = shortcutTrimTrailingEmptyLines;
                 _shortcutToggleHighlight = shortcutToggleHighlight;
+                _shortcutToggleCriticalHighlight = shortcutToggleCriticalHighlight;
                 _shortcutGoToLine = shortcutGoToLine;
                 _shortcutGoToTab = shortcutGoToTab;
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;
+                _criticalHighlightedLineColor = criticalHighlightedLineColor;
+                _selectedCriticalHighlightedLineColor = selectedCriticalHighlightedLineColor;
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
                 _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
                 _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;

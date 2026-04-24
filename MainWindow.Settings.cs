@@ -68,11 +68,14 @@ public partial class MainWindow
             ShortcutAddBlankLines = _shortcutAddBlankLines,
             ShortcutTrimTrailingEmptyLines = _shortcutTrimTrailingEmptyLines,
             ShortcutToggleHighlight = _shortcutToggleHighlight,
+            ShortcutToggleCriticalHighlight = _shortcutToggleCriticalHighlight,
             ShortcutGoToLine = _shortcutGoToLine,
             ShortcutGoToTab = _shortcutGoToTab,
             SelectedLineColor = ColorToHex(_selectedLineColor),
             HighlightedLineColor = ColorToHex(_highlightedLineColor),
             SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
+            CriticalHighlightedLineColor = ColorToHex(_criticalHighlightedLineColor),
+            SelectedCriticalHighlightedLineColor = ColorToHex(_selectedCriticalHighlightedLineColor),
             BackupFolder = _backupFolder,
             CloudBackupFolder = _cloudBackupFolder,
             CloudSaveHours = _cloudSaveIntervalHours,
@@ -199,6 +202,8 @@ public partial class MainWindow
         _selectedLineColor = DefaultSelectedLineColor;
         _highlightedLineColor = DefaultHighlightedLineColor;
         _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+        _criticalHighlightedLineColor = DefaultCriticalHighlightedLineColor;
+        _selectedCriticalHighlightedLineColor = DefaultSelectedCriticalHighlightedLineColor;
         _shortcutNewPrimary = DefaultShortcutNewPrimary;
         _shortcutNewSecondary = DefaultShortcutNewSecondary;
         _shortcutCloseTab = DefaultShortcutCloseTab;
@@ -206,6 +211,7 @@ public partial class MainWindow
         _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
         _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
         _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
+        _shortcutToggleCriticalHighlight = DefaultShortcutToggleCriticalHighlight;
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _shortcutGoToTab = DefaultShortcutGoToTab;
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
@@ -366,6 +372,8 @@ public partial class MainWindow
             _shortcutTrimTrailingEmptyLines = state.ShortcutTrimTrailingEmptyLines!.Trim();
         if (TryParseKeyGesture(state.ShortcutToggleHighlight, out _))
             _shortcutToggleHighlight = state.ShortcutToggleHighlight!.Trim();
+        if (TryParseKeyGesture(state.ShortcutToggleCriticalHighlight, out _))
+            _shortcutToggleCriticalHighlight = state.ShortcutToggleCriticalHighlight!.Trim();
         if (TryParseKeyGesture(state.ShortcutGoToLine, out _))
             _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
         if (TryParseKeyGesture(state.ShortcutGoToTab, out _))
@@ -380,6 +388,10 @@ public partial class MainWindow
             _highlightedLineColor = MigrateHighlightedLineColor(highlightedLineColor);
         if (TryParseColor(state.SelectedHighlightedLineColor, out var selectedHighlightedLineColor))
             _selectedHighlightedLineColor = MigrateSelectedHighlightedLineColor(selectedHighlightedLineColor);
+        if (TryParseColor(state.CriticalHighlightedLineColor, out var criticalHighlightedLineColor))
+            _criticalHighlightedLineColor = criticalHighlightedLineColor;
+        if (TryParseColor(state.SelectedCriticalHighlightedLineColor, out var selectedCriticalHighlightedLineColor))
+            _selectedCriticalHighlightedLineColor = selectedCriticalHighlightedLineColor;
     }
 
     private List<TaskAreaState> BuildDefaultTaskAreas()

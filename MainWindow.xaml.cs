@@ -144,6 +144,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutAddBlankLines = "Ctrl+Space";
     private const string DefaultShortcutTrimTrailingEmptyLines = "Ctrl+Shift+Space";
     private const string DefaultShortcutToggleHighlight = "Ctrl+J";
+    private const string DefaultShortcutToggleCriticalHighlight = "Ctrl+K";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private const string DefaultShortcutGoToTab = "Ctrl+P";
     private const string DefaultShortcutFakeSave = "Ctrl+S";
@@ -166,6 +167,8 @@ public partial class MainWindow : Window
     private static readonly Color DefaultSelectedLineColor = Color.FromRgb(225, 240, 255);
     private static readonly Color DefaultHighlightedLineColor = Color.FromRgb(255, 244, 179);
     private static readonly Color DefaultSelectedHighlightedLineColor = Color.FromRgb(255, 234, 128);
+    private static readonly Color DefaultCriticalHighlightedLineColor = Color.FromRgb(255, 205, 210);
+    private static readonly Color DefaultSelectedCriticalHighlightedLineColor = Color.FromRgb(255, 171, 177);
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
     private const string BackupImagesFolderName = "images";
@@ -199,14 +202,19 @@ public partial class MainWindow : Window
     private string _shortcutAddBlankLines = DefaultShortcutAddBlankLines;
     private string _shortcutTrimTrailingEmptyLines = DefaultShortcutTrimTrailingEmptyLines;
     private string _shortcutToggleHighlight = DefaultShortcutToggleHighlight;
+    private string _shortcutToggleCriticalHighlight = DefaultShortcutToggleCriticalHighlight;
     private string _shortcutGoToLine = DefaultShortcutGoToLine;
     private string _shortcutGoToTab = DefaultShortcutGoToTab;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
+    private Color _criticalHighlightedLineColor = DefaultCriticalHighlightedLineColor;
+    private Color _selectedCriticalHighlightedLineColor = DefaultSelectedCriticalHighlightedLineColor;
     private Brush _selectedLineBrush = CreateFrozenBrush(DefaultSelectedLineColor);
     private Brush _highlightedLineBrush = CreateFrozenBrush(DefaultHighlightedLineColor);
     private Brush _selectedHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedHighlightedLineColor);
+    private Brush _criticalHighlightedLineBrush = CreateFrozenBrush(DefaultCriticalHighlightedLineColor);
+    private Brush _selectedCriticalHighlightedLineBrush = CreateFrozenBrush(DefaultSelectedCriticalHighlightedLineColor);
     private bool _isFridayFeelingEnabled = true;
     private bool _fancyBulletsEnabled;
     private bool _wrapLongLinesVisually = true;
@@ -278,7 +286,14 @@ public partial class MainWindow : Window
     private sealed class HighlightLineUndoEntry
     {
         public required int LineNumber { get; init; }
+        public bool IsCritical { get; init; }
         public required string LineText { get; init; }
+    }
+
+    private enum HighlightKind
+    {
+        Normal = 0,
+        Critical = 1
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -292,6 +307,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand AddBlankLinesCommand = new("Add Blank Lines", nameof(AddBlankLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand TrimTrailingEmptyLinesCommand = new("Trim Trailing Empty Lines", nameof(TrimTrailingEmptyLinesCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleHighlightCommand = new("Toggle Highlight", nameof(ToggleHighlightCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand ToggleCriticalHighlightCommand = new("Toggle Critical Highlight", nameof(ToggleCriticalHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleTodoPanelCommand = new("Toggle Todo Panel", nameof(ToggleTodoPanelCommand), typeof(MainWindow));
@@ -342,6 +358,7 @@ public partial class MainWindow : Window
     private sealed class HighlightLineRenderer : IBackgroundRenderer
     {
         private readonly Func<IReadOnlyCollection<int>> _lineProvider;
+        private readonly Func<IReadOnlyCollection<int>> _criticalLineProvider;
         private readonly Func<IReadOnlyDictionary<int, string>> _assigneeProvider;
         private readonly Func<string, Color> _assigneeColorProvider;
         private readonly Func<int, bool> _lineSelectionProvider;
@@ -349,6 +366,8 @@ public partial class MainWindow : Window
         private readonly Func<Brush> _selectedLineBrushProvider;
         private readonly Func<Brush> _normalBrushProvider;
         private readonly Func<Brush> _selectedBrushProvider;
+        private readonly Func<Brush> _criticalBrushProvider;
+        private readonly Func<Brush> _selectedCriticalBrushProvider;
         private readonly Func<bool> _showHorizontalRuleProvider;
         private readonly Func<bool> _fancyBulletsEnabledProvider;
         private readonly Func<bool> _showSmileysProvider;
@@ -394,6 +413,7 @@ public partial class MainWindow : Window
 
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
+            Func<IReadOnlyCollection<int>> criticalLineProvider,
             Func<IReadOnlyDictionary<int, string>> assigneeProvider,
             Func<string, Color> assigneeColorProvider,
             Func<int, bool> lineSelectionProvider,
@@ -401,6 +421,8 @@ public partial class MainWindow : Window
             Func<Brush> selectedLineBrushProvider,
             Func<Brush> normalBrushProvider,
             Func<Brush> selectedBrushProvider,
+            Func<Brush> criticalBrushProvider,
+            Func<Brush> selectedCriticalBrushProvider,
             Func<bool> showHorizontalRuleProvider,
             Func<bool> fancyBulletsEnabledProvider,
             Func<bool> showSmileysProvider,
@@ -409,6 +431,7 @@ public partial class MainWindow : Window
             Func<bool> showLineAssignmentsProvider)
         {
             _lineProvider = lineProvider;
+            _criticalLineProvider = criticalLineProvider;
             _assigneeProvider = assigneeProvider;
             _assigneeColorProvider = assigneeColorProvider;
             _lineSelectionProvider = lineSelectionProvider;
@@ -416,6 +439,8 @@ public partial class MainWindow : Window
             _selectedLineBrushProvider = selectedLineBrushProvider;
             _normalBrushProvider = normalBrushProvider;
             _selectedBrushProvider = selectedBrushProvider;
+            _criticalBrushProvider = criticalBrushProvider;
+            _selectedCriticalBrushProvider = selectedCriticalBrushProvider;
             _showHorizontalRuleProvider = showHorizontalRuleProvider;
             _fancyBulletsEnabledProvider = fancyBulletsEnabledProvider;
             _showSmileysProvider = showSmileysProvider;
@@ -468,6 +493,10 @@ public partial class MainWindow : Window
             var highlightedLineSet = highlightedLines.Count > 0
                 ? new HashSet<int>(highlightedLines)
                 : [];
+            var criticalHighlightedLines = _criticalLineProvider();
+            var criticalHighlightedLineSet = criticalHighlightedLines.Count > 0
+                ? new HashSet<int>(criticalHighlightedLines)
+                : [];
 
             // Paint selected/caret and highlighted rows using full editor width so the
             // background remains consistent even when line content is short.
@@ -478,8 +507,9 @@ public partial class MainWindow : Window
                     continue;
 
                 bool isHighlighted = highlightedLineSet.Contains(line.LineNumber);
+                bool isCriticalHighlighted = criticalHighlightedLineSet.Contains(line.LineNumber);
                 bool isSelected = _lineSelectionProvider(line.LineNumber);
-                if (!isHighlighted && !isSelected)
+                if (!isHighlighted && !isCriticalHighlighted && !isSelected)
                     continue;
 
                 var segment = new TextSegment
@@ -492,9 +522,11 @@ public partial class MainWindow : Window
                 if (lineRects.Count == 0)
                     continue;
 
-                var brush = isHighlighted
-                    ? (isSelected ? _selectedBrushProvider() : _normalBrushProvider())
-                    : _selectedLineBrushProvider();
+                var brush = isCriticalHighlighted
+                    ? (isSelected ? _selectedCriticalBrushProvider() : _criticalBrushProvider())
+                    : isHighlighted
+                        ? (isSelected ? _selectedBrushProvider() : _normalBrushProvider())
+                        : _selectedLineBrushProvider();
 
                 bool isCaretLine = line.LineNumber == _caretLineProvider();
 
@@ -1115,6 +1147,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(AddBlankLinesCommand, (_, _) => ExecuteAddBlankLines()));
         CommandBindings.Add(new CommandBinding(TrimTrailingEmptyLinesCommand, (_, _) => ExecuteTrimTrailingEmptyLines()));
         CommandBindings.Add(new CommandBinding(ToggleHighlightCommand, (_, _) => ExecuteToggleHighlight()));
+        CommandBindings.Add(new CommandBinding(ToggleCriticalHighlightCommand, (_, _) => ExecuteToggleCriticalHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
         CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
         CommandBindings.Add(new CommandBinding(ToggleTodoPanelCommand, (_, _) => ExecuteToggleTodoPanel()));
@@ -1195,6 +1228,7 @@ public partial class MainWindow : Window
 
         var highlightRenderer = new HighlightLineRenderer(
             () => GetHighlightedLineNumbers(doc),
+            () => GetCriticalHighlightedLineNumbers(doc),
             () => GetLineAssignments(doc),
             person => GetUserColor(person),
             line => IsLineSelected(doc.Editor, line),
@@ -1202,6 +1236,8 @@ public partial class MainWindow : Window
             () => _selectedLineBrush,
             () => _highlightedLineBrush,
             () => _selectedHighlightedLineBrush,
+            () => _criticalHighlightedLineBrush,
+            () => _selectedCriticalHighlightedLineBrush,
             () => _showHorizontalRuler,
             () => _fancyBulletsEnabled,
             () => _showSmileys,
@@ -2550,6 +2586,8 @@ public partial class MainWindow : Window
         _selectedLineBrush = CreateFrozenBrush(_selectedLineColor);
         _highlightedLineBrush = CreateFrozenBrush(_highlightedLineColor);
         _selectedHighlightedLineBrush = CreateFrozenBrush(_selectedHighlightedLineColor);
+        _criticalHighlightedLineBrush = CreateFrozenBrush(_criticalHighlightedLineColor);
+        _selectedCriticalHighlightedLineBrush = CreateFrozenBrush(_selectedCriticalHighlightedLineColor);
 
         foreach (var doc in _docs.Values)
         {
@@ -2623,18 +2661,33 @@ public partial class MainWindow : Window
     private static string ColorToHex(Color color)
         => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
 
+    private static List<TextAnchor> GetHighlightAnchors(TabDocument doc, HighlightKind kind)
+        => kind == HighlightKind.Critical
+            ? doc.CriticalHighlightAnchors
+            : doc.HighlightAnchors;
+
+    private static HighlightKind OppositeHighlightKind(HighlightKind kind)
+        => kind == HighlightKind.Critical ? HighlightKind.Normal : HighlightKind.Critical;
+
     private IReadOnlyCollection<int> GetHighlightedLineNumbers(TabDocument doc)
+        => GetHighlightedLineNumbers(doc, HighlightKind.Normal);
+
+    private IReadOnlyCollection<int> GetCriticalHighlightedLineNumbers(TabDocument doc)
+        => GetHighlightedLineNumbers(doc, HighlightKind.Critical);
+
+    private IReadOnlyCollection<int> GetHighlightedLineNumbers(TabDocument doc, HighlightKind kind)
     {
-        if (doc.HighlightAnchors.Count == 0)
+        var anchors = GetHighlightAnchors(doc, kind);
+        if (anchors.Count == 0)
             return [];
 
         var lines = new HashSet<int>();
-        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        for (int i = anchors.Count - 1; i >= 0; i--)
         {
-            var anchor = doc.HighlightAnchors[i];
+            var anchor = anchors[i];
             if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
             {
-                doc.HighlightAnchors.RemoveAt(i);
+                anchors.RemoveAt(i);
                 continue;
             }
 
@@ -2645,13 +2698,20 @@ public partial class MainWindow : Window
     }
 
     private bool IsLineHighlighted(TabDocument doc, int lineNumber)
+        => IsLineHighlighted(doc, lineNumber, HighlightKind.Normal);
+
+    private bool IsLineCriticalHighlighted(TabDocument doc, int lineNumber)
+        => IsLineHighlighted(doc, lineNumber, HighlightKind.Critical);
+
+    private bool IsLineHighlighted(TabDocument doc, int lineNumber, HighlightKind kind)
     {
-        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        var anchors = GetHighlightAnchors(doc, kind);
+        for (int i = anchors.Count - 1; i >= 0; i--)
         {
-            var anchor = doc.HighlightAnchors[i];
+            var anchor = anchors[i];
             if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
             {
-                doc.HighlightAnchors.RemoveAt(i);
+                anchors.RemoveAt(i);
                 continue;
             }
 
@@ -2663,20 +2723,26 @@ public partial class MainWindow : Window
     }
 
     private bool AddHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+        => AddHighlightedLine(doc, lineNumber, HighlightKind.Normal, markDirty, redraw);
+
+    private bool AddCriticalHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+        => AddHighlightedLine(doc, lineNumber, HighlightKind.Critical, markDirty, redraw);
+
+    private bool AddHighlightedLine(TabDocument doc, int lineNumber, HighlightKind kind, bool markDirty = true, bool redraw = true)
     {
         int lineCount = doc.Editor.Document.LineCount;
         if (lineCount <= 0)
             lineCount = 1;
 
         int line = Math.Max(1, Math.Min(lineNumber, lineCount));
-        if (IsLineHighlighted(doc, line))
+        if (IsLineHighlighted(doc, line, kind))
             return false;
 
         var docLine = doc.Editor.Document.GetLineByNumber(line);
         var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
         // Keep highlight tied to the original line content when inserting at column 1.
         anchor.MovementType = AnchorMovementType.AfterInsertion;
-        doc.HighlightAnchors.Add(anchor);
+        GetHighlightAnchors(doc, kind).Add(anchor);
 
         if (markDirty)
             MarkDirty(doc);
@@ -2686,20 +2752,27 @@ public partial class MainWindow : Window
     }
 
     private bool RemoveHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+        => RemoveHighlightedLine(doc, lineNumber, HighlightKind.Normal, markDirty, redraw);
+
+    private bool RemoveCriticalHighlightedLine(TabDocument doc, int lineNumber, bool markDirty = true, bool redraw = true)
+        => RemoveHighlightedLine(doc, lineNumber, HighlightKind.Critical, markDirty, redraw);
+
+    private bool RemoveHighlightedLine(TabDocument doc, int lineNumber, HighlightKind kind, bool markDirty = true, bool redraw = true)
     {
+        var anchors = GetHighlightAnchors(doc, kind);
         bool removed = false;
-        for (int i = doc.HighlightAnchors.Count - 1; i >= 0; i--)
+        for (int i = anchors.Count - 1; i >= 0; i--)
         {
-            var anchor = doc.HighlightAnchors[i];
+            var anchor = anchors[i];
             if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
             {
-                doc.HighlightAnchors.RemoveAt(i);
+                anchors.RemoveAt(i);
                 continue;
             }
 
             if (anchor.Line == lineNumber)
             {
-                doc.HighlightAnchors.RemoveAt(i);
+                anchors.RemoveAt(i);
                 removed = true;
             }
         }
@@ -2712,13 +2785,19 @@ public partial class MainWindow : Window
     }
 
     private void SetHighlightedLines(TabDocument doc, IEnumerable<int>? lineNumbers, bool markDirty = true)
+        => SetHighlightedLines(doc, lineNumbers, HighlightKind.Normal, markDirty);
+
+    private void SetCriticalHighlightedLines(TabDocument doc, IEnumerable<int>? lineNumbers, bool markDirty = true)
+        => SetHighlightedLines(doc, lineNumbers, HighlightKind.Critical, markDirty);
+
+    private void SetHighlightedLines(TabDocument doc, IEnumerable<int>? lineNumbers, HighlightKind kind, bool markDirty = true)
     {
-        doc.HighlightAnchors.Clear();
+        GetHighlightAnchors(doc, kind).Clear();
 
         if (lineNumbers != null)
         {
             foreach (var line in lineNumbers.Where(line => line > 0).Distinct())
-                AddHighlightedLine(doc, line, markDirty: false, redraw: false);
+                AddHighlightedLine(doc, line, kind, markDirty: false, redraw: false);
         }
 
         if (markDirty)
@@ -2727,17 +2806,28 @@ public partial class MainWindow : Window
     }
 
     private void ToggleHighlightedCaretLine(TabDocument doc)
+        => ToggleHighlightedCaretLine(doc, HighlightKind.Normal);
+
+    private void ToggleCriticalHighlightedCaretLine(TabDocument doc)
+        => ToggleHighlightedCaretLine(doc, HighlightKind.Critical);
+
+    private void ToggleHighlightedCaretLine(TabDocument doc, HighlightKind kind)
     {
         var selectedLines = GetSelectedLineNumbers(doc);
         if (selectedLines.Count > 0)
         {
-            bool allHighlighted = selectedLines.All(line => IsLineHighlighted(doc, line));
+            bool allHighlighted = selectedLines.All(line => IsLineHighlighted(doc, line, kind));
             bool changed = false;
             foreach (var line in selectedLines)
             {
-                changed |= allHighlighted
-                    ? RemoveHighlightedLine(doc, line, markDirty: false, redraw: false)
-                    : AddHighlightedLine(doc, line, markDirty: false, redraw: false);
+                if (allHighlighted)
+                {
+                    changed |= RemoveHighlightedLine(doc, line, kind, markDirty: false, redraw: false);
+                    continue;
+                }
+
+                changed |= RemoveHighlightedLine(doc, line, OppositeHighlightKind(kind), markDirty: false, redraw: false);
+                changed |= AddHighlightedLine(doc, line, kind, markDirty: false, redraw: false);
             }
 
             if (changed)
@@ -2749,10 +2839,13 @@ public partial class MainWindow : Window
         }
 
         int caretLine = Math.Max(1, doc.Editor.TextArea.Caret.Line);
-        if (IsLineHighlighted(doc, caretLine))
-            RemoveHighlightedLine(doc, caretLine);
+        if (IsLineHighlighted(doc, caretLine, kind))
+            RemoveHighlightedLine(doc, caretLine, kind);
         else
-            AddHighlightedLine(doc, caretLine);
+        {
+            RemoveHighlightedLine(doc, caretLine, OppositeHighlightKind(kind), markDirty: false, redraw: false);
+            AddHighlightedLine(doc, caretLine, kind);
+        }
     }
 
     private static List<int> GetSelectedLineNumbers(TabDocument doc)
@@ -2856,7 +2949,11 @@ public partial class MainWindow : Window
 
             bool changed = false;
             foreach (var entry in record.Entries)
-                changed |= AddHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
+            {
+                changed |= entry.IsCritical
+                    ? AddCriticalHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false)
+                    : AddHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
+            }
 
             if (changed)
                 RedrawHighlight(doc);
@@ -2946,6 +3043,17 @@ public partial class MainWindow : Window
                 removedHighlights.Add(new HighlightLineUndoEntry
                 {
                     LineNumber = line,
+                    IsCritical = false,
+                    LineText = GetLineText(doc, line)
+                });
+            }
+
+            if (IsLineCriticalHighlighted(doc, line))
+            {
+                removedHighlights.Add(new HighlightLineUndoEntry
+                {
+                    LineNumber = line,
+                    IsCritical = true,
                     LineText = GetLineText(doc, line)
                 });
             }
@@ -2965,7 +3073,11 @@ public partial class MainWindow : Window
 
         bool removedHighlight = false;
         foreach (var entry in removedHighlights)
-            removedHighlight |= RemoveHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
+        {
+            removedHighlight |= entry.IsCritical
+                ? RemoveCriticalHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false)
+                : RemoveHighlightedLine(doc, entry.LineNumber, markDirty: false, redraw: false);
+        }
 
         if (changed || removedHighlight)
         {
@@ -2984,7 +3096,9 @@ public partial class MainWindow : Window
 
         int caretLine = Math.Max(1, editor.TextArea.Caret.Line);
         int caretColumn = Math.Max(1, editor.TextArea.Caret.Column);
-        if (caretLine <= 1 || caretColumn != 1 || !IsLineHighlighted(doc, caretLine))
+        bool hasNormalHighlight = IsLineHighlighted(doc, caretLine);
+        bool hasCriticalHighlight = IsLineCriticalHighlighted(doc, caretLine);
+        if (caretLine <= 1 || caretColumn != 1 || (!hasNormalHighlight && !hasCriticalHighlight))
             return false;
 
         var previousLine = editor.Document.GetLineByNumber(caretLine - 1);
@@ -2992,7 +3106,17 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(previousLineText))
             return false;
 
-        return RemoveHighlightedLine(doc, caretLine);
+        bool removed = false;
+        if (hasNormalHighlight)
+            removed |= RemoveHighlightedLine(doc, caretLine, markDirty: false, redraw: false);
+        if (hasCriticalHighlight)
+            removed |= RemoveCriticalHighlightedLine(doc, caretLine, markDirty: false, redraw: false);
+        if (removed)
+        {
+            MarkDirty(doc);
+            RedrawHighlight(doc);
+        }
+        return removed;
     }
 
     private static bool TryMoveCurrentLine(TabDocument doc, bool moveDown)
@@ -3514,6 +3638,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutAddBlankLines, AddBlankLinesCommand);
         AddShortcutBinding(_shortcutTrimTrailingEmptyLines, TrimTrailingEmptyLinesCommand);
         AddShortcutBinding(_shortcutToggleHighlight, ToggleHighlightCommand);
+        AddShortcutBinding(_shortcutToggleCriticalHighlight, ToggleCriticalHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
         AddShortcutBinding(DefaultShortcutToggleTodoPanel, ToggleTodoPanelCommand);
@@ -3589,6 +3714,13 @@ public partial class MainWindow : Window
         var doc = CurrentDoc();
         if (doc != null)
             ToggleHighlightedCaretLine(doc);
+    }
+
+    private void ExecuteToggleCriticalHighlight()
+    {
+        var doc = CurrentDoc();
+        if (doc != null)
+            ToggleCriticalHighlightedCaretLine(doc);
     }
 
     private void ExecuteGoToLine()
@@ -4734,7 +4866,9 @@ public partial class MainWindow : Window
         var highlightedLines = entry.Metadata?.HighlightLines ?? [];
         if (highlightedLines.Count == 0 && entry.Metadata?.HighlightLine is int legacyHighlightLine && legacyHighlightLine > 0)
             highlightedLines = [legacyHighlightLine];
+        var criticalHighlightedLines = entry.Metadata?.CriticalHighlightLines ?? [];
         SetHighlightedLines(doc, highlightedLines, markDirty: false);
+        SetCriticalHighlightedLines(doc, criticalHighlightedLines, markDirty: false);
         SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
         RestoreCaretPosition(doc, entry.Metadata);
         doc.LastSavedUtc = entry.Metadata?.LastSavedUtc?.ToUniversalTime();
@@ -5083,6 +5217,7 @@ public partial class MainWindow : Window
     private FileMetadata CreateFileMetadata(TabDocument doc)
     {
         var highlighted = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
+        var criticalHighlighted = GetCriticalHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
         var assignees = GetLineAssignments(doc)
             .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value))
             .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
@@ -5092,6 +5227,7 @@ public partial class MainWindow : Window
         return new FileMetadata
         {
             HighlightLines = highlighted.Count > 0 ? highlighted : null,
+            CriticalHighlightLines = criticalHighlighted.Count > 0 ? criticalHighlighted : null,
             Assignees = assignees.Count > 0 ? assignees : null,
             LastSavedUtc = doc.LastSavedUtc,
             LastChangedUtc = doc.LastChangedUtc,
@@ -5130,6 +5266,7 @@ public partial class MainWindow : Window
                     .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
                     .ToList();
                 var highlightSnapshot = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
+                var criticalHighlightSnapshot = GetCriticalHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
 
                 var normalizedText = RemoveTrailingWhitespacesExceptLine(originalText, preservedLineNumber);
                 if (!string.Equals(originalText, normalizedText, StringComparison.Ordinal))
@@ -5138,6 +5275,7 @@ public partial class MainWindow : Window
                     doc.Editor.Text = normalizedText;
                     doc.Editor.CaretOffset = caretOffset;
                     SetHighlightedLines(doc, highlightSnapshot.Count > 0 ? highlightSnapshot : null, markDirty: false);
+                    SetCriticalHighlightedLines(doc, criticalHighlightSnapshot.Count > 0 ? criticalHighlightSnapshot : null, markDirty: false);
                     SetLineAssignments(doc, assigneeSnapshot.Count > 0 ? assigneeSnapshot : null, markDirty: false);
                 }
 
@@ -5398,7 +5536,9 @@ public partial class MainWindow : Window
                 var highlightedLines = metadata.HighlightLines ?? [];
                 if (highlightedLines.Count == 0 && metadata.HighlightLine.HasValue && metadata.HighlightLine.Value > 0)
                     highlightedLines = [metadata.HighlightLine.Value];
+                var criticalHighlightedLines = metadata.CriticalHighlightLines ?? [];
                 SetHighlightedLines(doc, highlightedLines, markDirty: false);
+                SetCriticalHighlightedLines(doc, criticalHighlightedLines, markDirty: false);
                 SetLineAssignments(doc, metadata.Assignees, markDirty: false);
                 RestoreCaretPosition(doc, metadata);
                 doc.LastSavedUtc = metadata.LastSavedUtc?.ToUniversalTime();

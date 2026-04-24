@@ -62,6 +62,11 @@ public sealed class ClosedTabsService
                 .Distinct()
                 .OrderBy(line => line)
                 .ToList();
+            var criticalHighlightedLines = entry.Metadata?.CriticalHighlightLines?
+                .Where(line => line > 0)
+                .Distinct()
+                .OrderBy(line => line)
+                .ToList();
 
             var assignees = entry.Metadata?.Assignees?
                 .Where(assignee => assignee != null && assignee.Line > 0 && !string.IsNullOrWhiteSpace(assignee.Person))
@@ -85,6 +90,9 @@ public sealed class ClosedTabsService
                     {
                         HighlightLine = entry.Metadata.HighlightLine,
                         HighlightLines = highlightedLines != null && highlightedLines.Count > 0 ? highlightedLines : null,
+                        CriticalHighlightLines = criticalHighlightedLines != null && criticalHighlightedLines.Count > 0
+                            ? criticalHighlightedLines
+                            : null,
                         Assignees = assignees != null && assignees.Count > 0 ? assignees : null,
                         LastSavedUtc = entry.Metadata.LastSavedUtc,
                         LastChangedUtc = entry.Metadata.LastChangedUtc

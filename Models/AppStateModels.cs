@@ -8,6 +8,9 @@ public sealed class FileMetadata
     // Current format supports multiple highlighted lines.
     public List<int>? HighlightLines { get; set; }
 
+    // Optional critical highlight rows (rendered using a separate color).
+    public List<int>? CriticalHighlightLines { get; set; }
+
     // Optional line ownership metadata.
     public List<FileLineAssignee>? Assignees { get; set; }
 
@@ -170,11 +173,14 @@ public sealed class WindowSettings
     public string ShortcutAddBlankLines { get; set; } = "Ctrl+Space";
     public string ShortcutTrimTrailingEmptyLines { get; set; } = "Ctrl+Shift+Space";
     public string ShortcutToggleHighlight { get; set; } = "Ctrl+J";
+    public string ShortcutToggleCriticalHighlight { get; set; } = "Ctrl+K";
     public string ShortcutGoToLine { get; set; } = "Ctrl+G";
     public string ShortcutGoToTab { get; set; } = "Ctrl+P";
     public string? SelectedLineColor { get; set; }
     public string? HighlightedLineColor { get; set; }
     public string? SelectedHighlightedLineColor { get; set; }
+    public string? CriticalHighlightedLineColor { get; set; }
+    public string? SelectedCriticalHighlightedLineColor { get; set; }
     public string? BackupFolder { get; set; }
     public string? CloudBackupFolder { get; set; }
     public int? CloudSaveHours { get; set; }

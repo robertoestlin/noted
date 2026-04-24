@@ -37,6 +37,9 @@ public class TabDocument
     /// <summary>Anchors for highlighted lines (track edits as text shifts).</summary>
     public List<TextAnchor> HighlightAnchors { get; } = [];
 
+    /// <summary>Anchors for critical highlighted lines (track edits as text shifts).</summary>
+    public List<TextAnchor> CriticalHighlightAnchors { get; } = [];
+
     /// <summary>Anchors for line assignees (track edits as text shifts).</summary>
     public List<LineAssigneeAnchor> LineAssigneeAnchors { get; } = [];
 
