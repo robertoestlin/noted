@@ -147,6 +147,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutToggleCriticalHighlight = "Ctrl+K";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private const string DefaultShortcutGoToTab = "Ctrl+P";
+    private const string DefaultShortcutSwitchToPreviousTab = "Ctrl+Q";
     private const string DefaultShortcutFakeSave = "Ctrl+S";
     private static readonly string[] FakeSaveStatusMessages =
     [
@@ -229,6 +230,7 @@ public partial class MainWindow : Window
     private bool _isFredagspartyTemporarilyDisabled;
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
+    private TabItem? _previousSelectedTab;
     private readonly Dictionary<string, BitmapSource> _inlineImageCache = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _referencedInlineImagesSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<TabDocument, Stack<LineAssigneeUndoRecord>> _pendingShiftDeleteAssigneeUndo = [];
@@ -330,6 +332,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand ToggleCriticalHighlightCommand = new("Toggle Critical Highlight", nameof(ToggleCriticalHighlightCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToLineCommand = new("Go To Line", nameof(GoToLineCommand), typeof(MainWindow));
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand SwitchToPreviousTabCommand = new("Switch To Previous Tab", nameof(SwitchToPreviousTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleTodoPanelCommand = new("Toggle Todo Panel", nameof(ToggleTodoPanelCommand), typeof(MainWindow));
     private static readonly RoutedUICommand FakeSaveCommand = new("Fake Save", nameof(FakeSaveCommand), typeof(MainWindow));
     private static readonly (FancyBulletStyle Style, string Label)[] FancyBulletStyleOptions =
@@ -1170,6 +1173,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(ToggleCriticalHighlightCommand, (_, _) => ExecuteToggleCriticalHighlight()));
         CommandBindings.Add(new CommandBinding(GoToLineCommand, (_, _) => ExecuteGoToLine()));
         CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
+        CommandBindings.Add(new CommandBinding(SwitchToPreviousTabCommand, (_, _) => ExecuteSwitchToPreviousTab()));
         CommandBindings.Add(new CommandBinding(ToggleTodoPanelCommand, (_, _) => ExecuteToggleTodoPanel()));
         CommandBindings.Add(new CommandBinding(FakeSaveCommand, (_, _) => ExecuteFakeSaveShortcut()));
 
@@ -1210,6 +1214,10 @@ public partial class MainWindow : Window
         if (_docs.Count == 0)
             NewTab();
         RefreshInlineImageReferenceSnapshot();
+
+        // Discard any "previous tab" captured from startup-triggered selection
+        // changes so Ctrl+Q does nothing until the user actually switches tabs.
+        _previousSelectedTab = null;
     }
 
     // --- Tab management ----------------------------------------------------------
@@ -3927,6 +3935,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutToggleCriticalHighlight, ToggleCriticalHighlightCommand);
         AddShortcutBinding(_shortcutGoToLine, GoToLineCommand);
         AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
+        AddShortcutBinding(DefaultShortcutSwitchToPreviousTab, SwitchToPreviousTabCommand);
         AddShortcutBinding(DefaultShortcutToggleTodoPanel, ToggleTodoPanelCommand);
         AddShortcutBinding(DefaultShortcutFakeSave, FakeSaveCommand);
         UpdateMenuShortcutTexts();
@@ -3946,6 +3955,17 @@ public partial class MainWindow : Window
     {
         if (MainTabControl.SelectedItem is TabItem tab)
             RenameTab(tab);
+    }
+
+    private void ExecuteSwitchToPreviousTab()
+    {
+        var target = _previousSelectedTab;
+        if (target == null || !MainTabControl.Items.Contains(target))
+            return;
+        if (ReferenceEquals(MainTabControl.SelectedItem, target))
+            return;
+
+        MainTabControl.SelectedItem = target;
     }
 
     private void ExecuteAddBlankLines()
@@ -5910,6 +5930,13 @@ public partial class MainWindow : Window
 
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (ReferenceEquals(e.OriginalSource, MainTabControl))
+        {
+            var removedTab = e.RemovedItems.OfType<TabItem>().FirstOrDefault();
+            if (removedTab != null && MainTabControl.Items.Contains(removedTab))
+                _previousSelectedTab = removedTab;
+        }
+
         CloseTagCompletionIfAny();
         var doc = CurrentDoc();
         if (doc != null) UpdateStatusBar(doc);
