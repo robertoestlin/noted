@@ -420,6 +420,7 @@ public partial class MainWindow
         secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        secretHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         secretHeader.Children.Add(new TextBlock
         {
             Text = "Secret Paste Area (masked)",
@@ -439,6 +440,19 @@ public partial class MainWindow
         };
         Grid.SetColumn(btnOpenContainsCheck, 1);
         secretHeader.Children.Add(btnOpenContainsCheck);
+        var btnOpenSecretCompare = new Button
+        {
+            Content = "=",
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            Margin = new Thickness(8, 0, 0, 0),
+            FontSize = 12,
+            FontWeight = FontWeights.Bold,
+            ToolTip = "Open secret comparison"
+        };
+        Grid.SetColumn(btnOpenSecretCompare, 2);
+        secretHeader.Children.Add(btnOpenSecretCompare);
         var btnToggleSecretVisible = new Button
         {
             Width = 28,
@@ -450,7 +464,7 @@ public partial class MainWindow
             FontSize = 14,
             Content = "🙈"
         };
-        Grid.SetColumn(btnToggleSecretVisible, 2);
+        Grid.SetColumn(btnToggleSecretVisible, 3);
         secretHeader.Children.Add(btnToggleSecretVisible);
         secretPanel.Children.Add(secretHeader);
         var txtSecretMasked = new TextBox
@@ -718,7 +732,6 @@ public partial class MainWindow
 
             var txtContainsNeedle = new TextBox
             {
-                Text = plainValue,
                 AcceptsReturn = false,
                 MinHeight = 28,
                 FontFamily = new FontFamily("Consolas, Courier New")
@@ -801,14 +814,136 @@ public partial class MainWindow
 
             txtContainsNeedle.TextChanged += (_, _) => UpdateContainsResult();
             btnCloseContainsWindow.Click += (_, _) => containsWindow.Close();
-            containsWindow.Loaded += (_, _) =>
-            {
-                txtContainsNeedle.Focus();
-                txtContainsNeedle.SelectAll();
-            };
+            containsWindow.Loaded += (_, _) => txtContainsNeedle.Focus();
             containsWindow.Content = panel;
             UpdateContainsResult();
             containsWindow.ShowDialog();
+        }
+
+        void ShowSecretComparisonDialog()
+        {
+            var compareWindow = new Window
+            {
+                Title = "Secret comparison",
+                Width = 460,
+                Height = 300,
+                MinWidth = 430,
+                MinHeight = 280,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = dlg
+            };
+
+            var panel = new StackPanel { Margin = new Thickness(12) };
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Paste two secrets to check if they match.",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8)
+            });
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Secret 1:",
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+            var txtCompareA = new PasswordBox
+            {
+                MinHeight = 28,
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            panel.Children.Add(txtCompareA);
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Secret 2:",
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+            var txtCompareB = new PasswordBox
+            {
+                MinHeight = 28,
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            panel.Children.Add(txtCompareB);
+
+            var compareResultRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 10, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var txtCompareResultIcon = new TextBlock
+            {
+                Text = "•",
+                FontSize = 20,
+                FontWeight = FontWeights.Bold,
+                Foreground = Brushes.DimGray,
+                Width = 26,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var txtCompareResult = new TextBlock
+            {
+                Text = "Enter secrets to compare.",
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap
+            };
+            compareResultRow.Children.Add(txtCompareResultIcon);
+            compareResultRow.Children.Add(txtCompareResult);
+            panel.Children.Add(compareResultRow);
+
+            var compareCloseRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 14, 0, 0)
+            };
+            var btnCloseCompareWindow = new Button
+            {
+                Content = "Close",
+                IsCancel = true,
+                Width = 90
+            };
+            compareCloseRow.Children.Add(btnCloseCompareWindow);
+            panel.Children.Add(compareCloseRow);
+
+            void UpdateCompareResult()
+            {
+                var a = txtCompareA.Password ?? string.Empty;
+                var b = txtCompareB.Password ?? string.Empty;
+
+                if (a.Length == 0 && b.Length == 0)
+                {
+                    txtCompareResultIcon.Text = "•";
+                    txtCompareResultIcon.Foreground = Brushes.DimGray;
+                    txtCompareResult.Text = "Enter secrets to compare.";
+                    return;
+                }
+
+                if (a.Length == 0 || b.Length == 0)
+                {
+                    txtCompareResultIcon.Text = "•";
+                    txtCompareResultIcon.Foreground = Brushes.DimGray;
+                    txtCompareResult.Text = "Enter both secrets to compare.";
+                    return;
+                }
+
+                var match = string.Equals(a, b, StringComparison.Ordinal);
+                txtCompareResultIcon.Text = match ? "✔" : "✖";
+                txtCompareResultIcon.Foreground = match ? Brushes.ForestGreen : Brushes.IndianRed;
+                txtCompareResult.Text = match
+                    ? "The secrets match."
+                    : "The secrets do not match.";
+            }
+
+            txtCompareA.PasswordChanged += (_, _) => UpdateCompareResult();
+            txtCompareB.PasswordChanged += (_, _) => UpdateCompareResult();
+            btnCloseCompareWindow.Click += (_, _) => compareWindow.Close();
+            compareWindow.Loaded += (_, _) => txtCompareA.Focus();
+            compareWindow.Content = panel;
+            UpdateCompareResult();
+            compareWindow.ShowDialog();
         }
 
         void RefreshSavedSecretsList()
@@ -935,6 +1070,7 @@ public partial class MainWindow
             ApplySecretVisibility();
         };
         btnOpenContainsCheck.Click += (_, _) => ShowContainsCheckDialog();
+        btnOpenSecretCompare.Click += (_, _) => ShowSecretComparisonDialog();
 
         lstSavedSecrets.SelectionChanged += (_, _) =>
         {

@@ -163,11 +163,11 @@
                     <MenuItem Header="_Recover Tabs" Click="MenuRecoverTabs_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Plugins">
-                    <MenuItem Header="Alarms" Click="MenuAlarms_Click"/>
+                    <MenuItem Header="_Alarms" Click="MenuAlarms_Click"/>
                     <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_Message Overlay" InputGestureText="Ctrl+O" Click="MenuQuickMessageOverlay_Click"/>
-                    <MenuItem Header="_MongoDB">
+                    <MenuItem Header="Mon_goDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
                         <MenuItem Header="ObjectId to _Timestamp Converter" Click="MenuMongoObjectIdTimestampConverter_Click"/>
                         <MenuItem Header="_SRV DNS Lookup" Click="MenuMongoSrvLookup_Click"/>
@@ -176,18 +176,18 @@
                         <MenuItem Header="_CIDR Converter" Click="MenuCidrConverter_Click"/>
                         <MenuItem Header="_TXT DNS Lookup" Click="MenuTxtLookup_Click"/>
                     </MenuItem>
+                    <MenuItem Header="Pass_word Generator" Click="MenuPasswordGenerator_Click"/>
                     <MenuItem Header="_Programming">
                         <MenuItem Header="_Project Line Counter" Click="MenuProjectLineCounter_Click"/>
                     </MenuItem>
-                    <MenuItem Header="_Password Generator" Click="MenuPasswordGenerator_Click"/>
                     <MenuItem Header="Safe _Paste Area" Click="MenuSafePasteArea_Click"/>
                     <MenuItem Header="_Seach Files" Click="MenuSearchFiles_Click"/>
-                    <MenuItem Header="_Text">
+                    <MenuItem Header="Task _Panel" InputGestureText="F3" Click="MenuTodoList_Click"/>
+                    <MenuItem Header="Te_xt">
                         <MenuItem Header="Text _Splitter" Click="MenuTextSplitter_Click"/>
                     </MenuItem>
                     <MenuItem Header="Time _Converter" Click="MenuTimeConverter_Click"/>
                     <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
-                    <MenuItem Header="_Todo List" InputGestureText="F3" Click="MenuTodoList_Click"/>
                 </MenuItem>
                 <MenuItem Header="_About">
                     <MenuItem Header="_Info" Click="MenuAboutInfo_Click"/>
