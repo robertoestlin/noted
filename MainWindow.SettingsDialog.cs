@@ -25,7 +25,9 @@ public partial class MainWindow
                 Id = group.Id,
                 Name = group.Name,
                 ShortcutKey = group.ShortcutKey,
-                SortOrder = group.SortOrder
+                SortOrder = group.SortOrder,
+                CompletedRetentionDays = group.CompletedRetentionDays,
+                CompletedRetentionHours = group.CompletedRetentionHours
             }).ToList()
         }).ToList();
     }
@@ -885,8 +887,34 @@ public partial class MainWindow
         groupsButtonRow.Children.Add(btnMoveGroupUp);
         groupsButtonRow.Children.Add(btnMoveGroupDown);
         groupsPanel.Children.Add(groupsButtonRow);
-        var groupsList = new ListBox();
-        groupsPanel.Children.Add(groupsList);
+
+        var groupRetentionRow = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        groupRetentionRow.Children.Add(new TextBlock
+        {
+            Text = "Remove completed tasks from panel after (0 days + 0 hours = never hide):",
+            Margin = new Thickness(0, 0, 0, 6),
+            TextWrapping = TextWrapping.Wrap
+        });
+        var retentionInputRow = new StackPanel { Orientation = Orientation.Horizontal };
+        var txtGroupRetentionDays = new TextBox { IsEnabled = false, Width = 60, VerticalContentAlignment = VerticalAlignment.Center };
+        retentionInputRow.Children.Add(txtGroupRetentionDays);
+        retentionInputRow.Children.Add(new TextBlock { Text = " days", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 12, 0) });
+        var cmbGroupRetentionHours = new ComboBox { IsEnabled = false, Width = 70 };
+        for (int h = MinCompletedRetentionHours; h <= MaxCompletedRetentionHours; h++)
+            cmbGroupRetentionHours.Items.Add(new ComboBoxItem { Content = h.ToString(), Tag = h });
+        retentionInputRow.Children.Add(cmbGroupRetentionHours);
+        retentionInputRow.Children.Add(new TextBlock { Text = " hours", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) });
+        groupRetentionRow.Children.Add(retentionInputRow);
+        groupRetentionRow.Children.Add(new TextBlock
+        {
+            Text = "Hidden items remain in Recently Completed.",
+            Margin = new Thickness(0, 4, 0, 0),
+            FontStyle = FontStyles.Italic,
+            TextWrapping = TextWrapping.Wrap
+        });
+        DockPanel.SetDock(groupRetentionRow, Dock.Bottom);
+        groupsPanel.Children.Add(groupRetentionRow);
+
         var groupShortcutRow = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         groupShortcutRow.Children.Add(new TextBlock
         {
@@ -895,7 +923,11 @@ public partial class MainWindow
         });
         var txtGroupShortcut = new TextBox { IsEnabled = false };
         groupShortcutRow.Children.Add(txtGroupShortcut);
+        DockPanel.SetDock(groupShortcutRow, Dock.Bottom);
         groupsPanel.Children.Add(groupShortcutRow);
+
+        var groupsList = new ListBox();
+        groupsPanel.Children.Add(groupsList);
 
         void RefreshAreasList(string? selectedAreaId = null)
         {
@@ -918,6 +950,10 @@ public partial class MainWindow
             {
                 txtGroupShortcut.Text = string.Empty;
                 txtGroupShortcut.IsEnabled = false;
+                txtGroupRetentionDays.Text = string.Empty;
+                txtGroupRetentionDays.IsEnabled = false;
+                cmbGroupRetentionHours.SelectedIndex = 0;
+                cmbGroupRetentionHours.IsEnabled = false;
                 return;
             }
             foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
@@ -931,17 +967,28 @@ public partial class MainWindow
                 groupsList.SelectedItem = toSelect;
         }
 
-        void UpdateGroupShortcutEditor()
+        void UpdateGroupEditors()
         {
             if (groupsList.SelectedItem is not TaskGroupState group)
             {
                 txtGroupShortcut.Text = string.Empty;
                 txtGroupShortcut.IsEnabled = false;
+                txtGroupRetentionDays.Text = string.Empty;
+                txtGroupRetentionDays.IsEnabled = false;
+                cmbGroupRetentionHours.SelectedIndex = 0;
+                cmbGroupRetentionHours.IsEnabled = false;
                 return;
             }
 
             txtGroupShortcut.IsEnabled = true;
             txtGroupShortcut.Text = group.ShortcutKey ?? string.Empty;
+
+            txtGroupRetentionDays.IsEnabled = true;
+            txtGroupRetentionDays.Text = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            cmbGroupRetentionHours.IsEnabled = true;
+            cmbGroupRetentionHours.SelectedIndex = NormalizeCompletedRetentionHours(group.CompletedRetentionHours);
         }
 
         bool ApplySelectedGroupShortcut()
@@ -974,14 +1021,39 @@ public partial class MainWindow
             return true;
         }
 
+        bool ApplySelectedGroupRetentionDays()
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return true;
+
+            var raw = (txtGroupRetentionDays.Text ?? string.Empty).Trim();
+            if (!int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days)
+                || days < MinCompletedRetentionDays
+                || days > MaxCompletedRetentionDays)
+            {
+                MessageBox.Show($"Days must be a whole number between {MinCompletedRetentionDays} and {MaxCompletedRetentionDays}.",
+                    "Task Panel", MessageBoxButton.OK, MessageBoxImage.Warning);
+                txtGroupRetentionDays.Text = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return false;
+            }
+
+            group.CompletedRetentionDays = days;
+            txtGroupRetentionDays.Text = days.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            var hours = cmbGroupRetentionHours.SelectedIndex >= 0 ? cmbGroupRetentionHours.SelectedIndex : 0;
+            group.CompletedRetentionHours = hours;
+            return true;
+        }
+
         areasList.DisplayMemberPath = nameof(TaskAreaState.Name);
         groupsList.DisplayMemberPath = nameof(TaskGroupState.Name);
         areasList.SelectionChanged += (_, _) =>
         {
             RefreshGroupsList();
-            UpdateGroupShortcutEditor();
+            UpdateGroupEditors();
         };
-        groupsList.SelectionChanged += (_, _) => UpdateGroupShortcutEditor();
+        groupsList.SelectionChanged += (_, _) => UpdateGroupEditors();
 
         btnAddArea.Click += (_, _) =>
         {
@@ -1037,7 +1109,8 @@ public partial class MainWindow
             {
                 Id = Guid.NewGuid().ToString("N"),
                 Name = name.Trim(),
-                SortOrder = (area.Groups.Count == 0 ? 0 : area.Groups.Max(g => g.SortOrder)) + 1
+                SortOrder = (area.Groups.Count == 0 ? 0 : area.Groups.Max(g => g.SortOrder)) + 1,
+                CompletedRetentionDays = DefaultCompletedRetentionDays
             };
             area.Groups.Add(newGroup);
             RefreshGroupsList(newGroup.Id);
@@ -1107,6 +1180,20 @@ public partial class MainWindow
                 e.Handled = true;
                 ApplySelectedGroupShortcut();
             }
+        };
+        txtGroupRetentionDays.LostFocus += (_, _) => ApplySelectedGroupRetentionDays();
+        txtGroupRetentionDays.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                ApplySelectedGroupRetentionDays();
+            }
+        };
+        cmbGroupRetentionHours.SelectionChanged += (_, _) =>
+        {
+            if (groupsList.SelectedItem is TaskGroupState group && cmbGroupRetentionHours.SelectedIndex >= 0)
+                group.CompletedRetentionHours = cmbGroupRetentionHours.SelectedIndex;
         };
 
         RefreshAreasList(_currentTaskAreaId);
@@ -1298,11 +1385,17 @@ public partial class MainWindow
 
             if (!ApplySelectedGroupShortcut())
                 return;
+            if (!ApplySelectedGroupRetentionDays())
+                return;
 
             foreach (var area in workingTaskAreas)
             {
                 foreach (var group in area.Groups)
+                {
                     group.ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey);
+                    group.CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id);
+                    group.CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours);
+                }
 
                 var usedShortcuts = area.Groups
                     .Select(group => group.ShortcutKey ?? string.Empty)

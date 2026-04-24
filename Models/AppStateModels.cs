@@ -83,6 +83,20 @@ public sealed class TaskGroupState
     public string Name { get; set; } = string.Empty;
     public string? ShortcutKey { get; set; }
     public int SortOrder { get; set; }
+
+    /// <summary>
+    /// Number of days a completed task stays visible in the task panel for this group.
+    /// 0 means never auto-hide (when combined with <see cref="CompletedRetentionHours"/> also being 0).
+    /// Null falls back to per-group defaults for known built-in groups.
+    /// Hidden items remain visible in Recently Completed.
+    /// </summary>
+    public int? CompletedRetentionDays { get; set; }
+
+    /// <summary>
+    /// Additional hours (0-23) on top of <see cref="CompletedRetentionDays"/>.
+    /// Null is treated as 0.
+    /// </summary>
+    public int? CompletedRetentionHours { get; set; }
 }
 
 public sealed class TaskAreaState

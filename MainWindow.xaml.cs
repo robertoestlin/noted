@@ -97,12 +97,18 @@ public partial class MainWindow : Window
     private const string DefaultTaskPanelTitle = "Task Panel";
     private const string DefaultTaskAreaId = "main";
     private const string DefaultTaskAreaName = "Main";
-    private static readonly (string Id, string Name, string ShortcutKey)[] DefaultTaskGroups =
+    private static readonly (string Id, string Name, string ShortcutKey, int CompletedRetentionDays, int CompletedRetentionHours)[] DefaultTaskGroups =
     [
-        ("today", "Today", "+"),
-        ("this-week", "This Week", "W"),
-        ("this-month", "This Month", "M")
+        ("today", "Today", "+", 1, 0),
+        ("this-week", "This Week", "W", 7, 0),
+        ("this-month", "This Month", "M", 30, 0)
     ];
+    private const int DefaultCompletedRetentionDays = 7;
+    private const int DefaultCompletedRetentionHours = 0;
+    private const int MinCompletedRetentionDays = 0;
+    private const int MaxCompletedRetentionDays = 3650;
+    private const int MinCompletedRetentionHours = 0;
+    private const int MaxCompletedRetentionHours = 23;
     private const int DefaultClosedTabsMaxCount = 10;
     private const int MinClosedTabsMaxCount = 1;
     private const int MaxClosedTabsMaxCount = 500;

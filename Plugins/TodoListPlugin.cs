@@ -252,26 +252,41 @@ public partial class MainWindow
 
     private void PruneCompletedTodoItems()
     {
-        var today = DateTime.Today;
-        var currentWeekStart = StartOfWeekMonday(today);
-        var currentMonthStart = new DateTime(today.Year, today.Month, 1);
-
-        _todoItems.RemoveAll(item =>
+        foreach (var item in _todoItems)
         {
             if (!item.CompletedAtUtc.HasValue)
-                return false;
+                continue;
 
-            var completedDate = item.CompletedAtUtc.Value.ToLocalTime().Date;
-            var groupId = (item.GroupId ?? string.Empty).ToLowerInvariant();
-
-            return groupId switch
+            // Items already archived into the closed bucket are untouched so
+            // they remain visible in Recently Completed.
+            if (string.Equals(item.AreaId, TodoClosedAreaId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.GroupId, TodoClosedGroupId, StringComparison.OrdinalIgnoreCase))
             {
-                "today" => completedDate < today,
-                "this-week" => StartOfWeekMonday(completedDate) < currentWeekStart,
-                "this-month" => new DateTime(completedDate.Year, completedDate.Month, 1) < currentMonthStart,
-                _ => false
-            };
-        });
+                continue;
+            }
+
+            var owningArea = _taskAreas.FirstOrDefault(area => string.Equals(area.Id, item.AreaId, StringComparison.OrdinalIgnoreCase));
+            var owningGroup = owningArea?.Groups.FirstOrDefault(group => string.Equals(group.Id, item.GroupId, StringComparison.OrdinalIgnoreCase));
+            if (owningGroup == null)
+                continue;
+
+            var retentionDays = NormalizeCompletedRetentionDays(owningGroup.CompletedRetentionDays, owningGroup.Id);
+            var retentionHours = NormalizeCompletedRetentionHours(owningGroup.CompletedRetentionHours);
+            if (retentionDays == 0 && retentionHours == 0)
+                continue;
+
+            var retention = TimeSpan.FromDays(retentionDays) + TimeSpan.FromHours(retentionHours);
+            var elapsed = DateTime.UtcNow - item.CompletedAtUtc.Value;
+            if (elapsed >= retention)
+            {
+                // Hide from the task panel by moving into the closed bucket.
+                // Completed-at timestamp is preserved so the entry stays in
+                // Recently Completed.
+                item.AreaId = TodoClosedAreaId;
+                item.GroupId = TodoClosedGroupId;
+            }
+        }
+
         NormalizeTodoSortOrders();
     }
 

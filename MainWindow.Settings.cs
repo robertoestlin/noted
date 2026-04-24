@@ -409,7 +409,9 @@ public partial class MainWindow
                 Id = DefaultTaskGroups[i].Id,
                 Name = DefaultTaskGroups[i].Name,
                 ShortcutKey = DefaultTaskGroups[i].ShortcutKey,
-                SortOrder = i + 1
+                SortOrder = i + 1,
+                CompletedRetentionDays = DefaultTaskGroups[i].CompletedRetentionDays,
+                CompletedRetentionHours = DefaultTaskGroups[i].CompletedRetentionHours
             });
         }
         return [area];
@@ -435,6 +437,28 @@ public partial class MainWindow
         return string.Empty;
     }
 
+    private static int DefaultCompletedRetentionDaysForGroupId(string groupId)
+    {
+        foreach (var entry in DefaultTaskGroups)
+        {
+            if (string.Equals(entry.Id, groupId, StringComparison.OrdinalIgnoreCase))
+                return entry.CompletedRetentionDays;
+        }
+        return DefaultCompletedRetentionDays;
+    }
+
+    private static int NormalizeCompletedRetentionDays(int? retentionDays, string groupId)
+    {
+        var value = retentionDays ?? DefaultCompletedRetentionDaysForGroupId(groupId);
+        return Math.Clamp(value, MinCompletedRetentionDays, MaxCompletedRetentionDays);
+    }
+
+    private static int NormalizeCompletedRetentionHours(int? retentionHours)
+    {
+        var value = retentionHours ?? DefaultCompletedRetentionHours;
+        return Math.Clamp(value, MinCompletedRetentionHours, MaxCompletedRetentionHours);
+    }
+
     private List<TaskAreaState> BuildTaskAreasSnapshot()
         => _taskAreas
             .Where(area => area != null && !string.IsNullOrWhiteSpace(area.Id))
@@ -449,7 +473,9 @@ public partial class MainWindow
                         Id = group.Id,
                         Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id : group.Name,
                         ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
-                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
+                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1,
+                        CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id),
+                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours)
                     })
                     .ToList()
             })
@@ -474,7 +500,9 @@ public partial class MainWindow
                         Id = group.Id.Trim(),
                         Name = string.IsNullOrWhiteSpace(group.Name) ? group.Id.Trim() : group.Name.Trim(),
                         ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
-                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1
+                        SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1,
+                        CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id?.Trim() ?? string.Empty),
+                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours)
                     })
                     .ToList()
             })
