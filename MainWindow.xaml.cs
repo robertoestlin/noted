@@ -2326,6 +2326,7 @@ public partial class MainWindow : Window
 
         string clipboardText;
         List<int> fullyCutLines;
+        int firstClipboardLine;
 
         if (editor.SelectionLength <= 0)
         {
@@ -2333,6 +2334,7 @@ public partial class MainWindow : Window
             var caretDocLine = document.GetLineByNumber(caretLine);
             clipboardText = document.GetText(caretDocLine.Offset, caretDocLine.TotalLength);
             fullyCutLines = [caretLine];
+            firstClipboardLine = caretLine;
         }
         else
         {
@@ -2341,13 +2343,17 @@ public partial class MainWindow : Window
             int selectionEnd = selectionStart + editor.SelectionLength;
             int firstLineNum = document.GetLineByOffset(selectionStart).LineNumber;
             int lastLineNum = document.GetLineByOffset(Math.Max(selectionStart, selectionEnd - 1)).LineNumber;
+            firstClipboardLine = firstLineNum;
 
             fullyCutLines = new List<int>();
             for (int line = firstLineNum; line <= lastLineNum; line++)
             {
                 var docLine = document.GetLineByNumber(line);
-                // Consider a line fully cut when the selection spans its entire
-                // content (trailing newline is optional on the final line).
+                // Consider a line fully included when the selection spans its
+                // entire content (trailing newline is optional on the last
+                // line). Partial lines are intentionally excluded so their
+                // highlight stays on the remaining source text and doesn't
+                // travel with a partial paste.
                 bool startsAtLineStart = selectionStart <= docLine.Offset;
                 bool endsAfterLineContent = selectionEnd >= docLine.Offset + docLine.Length;
                 if (startsAtLineStart && endsAfterLineContent)
@@ -2358,7 +2364,6 @@ public partial class MainWindow : Window
         if (clipboardText.Length == 0 || fullyCutLines.Count == 0)
             return null;
 
-        int firstLine = fullyCutLines[0];
         var entries = new List<CutLineMetadataEntry>();
         foreach (var line in fullyCutLines)
         {
@@ -2375,9 +2380,13 @@ public partial class MainWindow : Window
             if (highlightKind == null && assignee == null)
                 continue;
 
+            // Measured against the first line of the clipboard text, not the
+            // first fully-cut line. This matters when the selection starts
+            // mid-line: the partial leading text becomes the first pasted
+            // line, so the highlighted line lands at offset +1 (or later).
             entries.Add(new CutLineMetadataEntry
             {
-                RelativeLineOffset = line - firstLine,
+                RelativeLineOffset = line - firstClipboardLine,
                 Highlight = highlightKind,
                 Assignee = assignee
             });
@@ -2443,6 +2452,15 @@ public partial class MainWindow : Window
         doc.Editor.Cut();
     }
 
+    private void ExecuteEditorCopy(TabDocument doc)
+    {
+        // Capture the same metadata as cut but leave the source intact; the
+        // transfer is applied on the next paste whose clipboard still matches.
+        var capture = CaptureCutLineMetadata(doc);
+        _pendingCutLineMetadataTransfer = capture?.Transfer;
+        doc.Editor.Copy();
+    }
+
     private void ExecuteEditorPaste(TabDocument doc)
     {
         if (TryPasteClipboardImage(doc))
@@ -2489,22 +2507,21 @@ public partial class MainWindow : Window
 
         // WPF clipboard normalizes line endings to CRLF, but the document may
         // use LF internally. Compare after normalization so we still accept
-        // the paste as matching our previous cut.
+        // the paste as matching our previous cut/copy.
         if (!string.Equals(
                 NormalizeLineEndings(clipboardText),
                 NormalizeLineEndings(pendingTransfer.ClipboardText),
                 StringComparison.Ordinal))
         {
+            // Clipboard has drifted (another app copied something else); drop
+            // the stored metadata so we don't apply it to unrelated text.
             _pendingCutLineMetadataTransfer = null;
             return;
         }
 
         int textLength = doc.Editor.Document.TextLength;
         if (textLength <= 0)
-        {
-            _pendingCutLineMetadataTransfer = null;
             return;
-        }
 
         int maxOffset = Math.Max(0, textLength - 1);
         int startOffset = Math.Max(0, Math.Min(insertedStartOffset, maxOffset));
@@ -2530,7 +2547,8 @@ public partial class MainWindow : Window
                 changed |= SetLineAssignee(doc, targetLine, entry.Assignee, markDirty: false, redraw: false);
         }
 
-        _pendingCutLineMetadataTransfer = null;
+        // Keep _pendingCutLineMetadataTransfer so repeated Ctrl+V pastes the
+        // same highlight as long as the clipboard still matches.
         if (!changed)
             return;
 
@@ -3249,6 +3267,13 @@ public partial class MainWindow : Window
         if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.X)
         {
             ExecuteEditorCut(doc);
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.C)
+        {
+            ExecuteEditorCopy(doc);
             e.Handled = true;
             return;
         }
@@ -6017,7 +6042,14 @@ public partial class MainWindow : Window
 
         ExecuteEditorCut(doc);
     }
-    private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
+    private void MenuCopy_Click(object sender, RoutedEventArgs e)
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        ExecuteEditorCopy(doc);
+    }
     private void MenuPaste_Click(object sender, RoutedEventArgs e)
     {
         var doc = CurrentDoc();
