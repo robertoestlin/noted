@@ -235,6 +235,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<TabDocument, Stack<HighlightLineUndoRecord>> _pendingShiftDeleteHighlightUndo = [];
     private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeUndoHistory = [];
     private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeRedoHistory = [];
+    private CutLineMetadataTransfer? _pendingCutLineMetadataTransfer;
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -288,6 +289,25 @@ public partial class MainWindow : Window
         public required int LineNumber { get; init; }
         public bool IsCritical { get; init; }
         public required string LineText { get; init; }
+    }
+
+    private sealed class CutLineMetadataTransfer
+    {
+        public required string ClipboardText { get; init; }
+        public required IReadOnlyList<CutLineMetadataEntry> Entries { get; init; }
+    }
+
+    private sealed class CutLineMetadataEntry
+    {
+        public required int RelativeLineOffset { get; init; }
+        public HighlightKind? Highlight { get; init; }
+        public string? Assignee { get; init; }
+    }
+
+    private sealed class CutLineMetadataCapture
+    {
+        public required CutLineMetadataTransfer Transfer { get; init; }
+        public required IReadOnlyList<int> FullyCutLines { get; init; }
     }
 
     private enum HighlightKind
@@ -2297,6 +2317,240 @@ public partial class MainWindow : Window
         destinationEditor.Focus();
     }
 
+    private CutLineMetadataCapture? CaptureCutLineMetadata(TabDocument doc)
+    {
+        var editor = doc.Editor;
+        var document = editor.Document;
+        if (document == null || document.LineCount <= 0)
+            return null;
+
+        string clipboardText;
+        List<int> fullyCutLines;
+
+        if (editor.SelectionLength <= 0)
+        {
+            int caretLine = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, document.LineCount));
+            var caretDocLine = document.GetLineByNumber(caretLine);
+            clipboardText = document.GetText(caretDocLine.Offset, caretDocLine.TotalLength);
+            fullyCutLines = [caretLine];
+        }
+        else
+        {
+            clipboardText = editor.SelectedText ?? string.Empty;
+            int selectionStart = editor.SelectionStart;
+            int selectionEnd = selectionStart + editor.SelectionLength;
+            int firstLineNum = document.GetLineByOffset(selectionStart).LineNumber;
+            int lastLineNum = document.GetLineByOffset(Math.Max(selectionStart, selectionEnd - 1)).LineNumber;
+
+            fullyCutLines = new List<int>();
+            for (int line = firstLineNum; line <= lastLineNum; line++)
+            {
+                var docLine = document.GetLineByNumber(line);
+                // Consider a line fully cut when the selection spans its entire
+                // content (trailing newline is optional on the final line).
+                bool startsAtLineStart = selectionStart <= docLine.Offset;
+                bool endsAfterLineContent = selectionEnd >= docLine.Offset + docLine.Length;
+                if (startsAtLineStart && endsAfterLineContent)
+                    fullyCutLines.Add(line);
+            }
+        }
+
+        if (clipboardText.Length == 0 || fullyCutLines.Count == 0)
+            return null;
+
+        int firstLine = fullyCutLines[0];
+        var entries = new List<CutLineMetadataEntry>();
+        foreach (var line in fullyCutLines)
+        {
+            HighlightKind? highlightKind = null;
+            if (IsLineCriticalHighlighted(doc, line))
+                highlightKind = HighlightKind.Critical;
+            else if (IsLineHighlighted(doc, line))
+                highlightKind = HighlightKind.Normal;
+
+            string? assignee = null;
+            if (TryGetLineAssignee(doc, line, out var person) && !string.IsNullOrWhiteSpace(person))
+                assignee = person;
+
+            if (highlightKind == null && assignee == null)
+                continue;
+
+            entries.Add(new CutLineMetadataEntry
+            {
+                RelativeLineOffset = line - firstLine,
+                Highlight = highlightKind,
+                Assignee = assignee
+            });
+        }
+
+        if (entries.Count == 0)
+            return null;
+
+        return new CutLineMetadataCapture
+        {
+            Transfer = new CutLineMetadataTransfer
+            {
+                ClipboardText = clipboardText,
+                Entries = entries
+            },
+            FullyCutLines = fullyCutLines
+        };
+    }
+
+    private bool TryGetClipboardText(out string? clipboardText)
+    {
+        clipboardText = null;
+        try
+        {
+            if (!Clipboard.ContainsText())
+                return true;
+
+            clipboardText = Clipboard.GetText();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeLineEndings(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+        return text.Replace("\r\n", "\n").Replace('\r', '\n');
+    }
+
+    private void ExecuteEditorCut(TabDocument doc)
+    {
+        var capture = CaptureCutLineMetadata(doc);
+        _pendingCutLineMetadataTransfer = capture?.Transfer;
+
+        // Strip metadata from the source BEFORE the cut so anchors at a
+        // selection boundary (e.g. selection starts at the line's first
+        // offset) can't survive the deletion and drift onto the next line.
+        if (capture != null)
+        {
+            foreach (var line in capture.FullyCutLines)
+                ClearLineMetadataForCutSource(doc, line);
+        }
+        else if (doc.Editor.SelectionLength <= 0)
+        {
+            int caretLine = Math.Max(1, doc.Editor.TextArea.Caret.Line);
+            ClearLineMetadataForCutSource(doc, caretLine);
+        }
+
+        doc.Editor.Cut();
+    }
+
+    private void ExecuteEditorPaste(TabDocument doc)
+    {
+        if (TryPasteClipboardImage(doc))
+            return;
+
+        var editor = doc.Editor;
+        var document = editor.Document;
+
+        int insertedOffset = -1;
+        int insertedLength = 0;
+
+        void OnDocumentChanged(object? sender, DocumentChangeEventArgs e)
+        {
+            // AvalonEdit may emit multiple changes for a single Paste (e.g.
+            // remove-selection + insert). Take the first offset as the start
+            // and sum the inserted character counts.
+            if (insertedOffset < 0)
+                insertedOffset = e.Offset;
+            insertedLength += e.InsertionLength;
+        }
+
+        document.Changed += OnDocumentChanged;
+        try
+        {
+            editor.Paste();
+        }
+        finally
+        {
+            document.Changed -= OnDocumentChanged;
+        }
+
+        if (insertedOffset >= 0 && insertedLength > 0)
+            TryApplyPendingCutLineMetadataAfterPaste(doc, insertedOffset, insertedLength);
+    }
+
+    private void TryApplyPendingCutLineMetadataAfterPaste(TabDocument doc, int insertedStartOffset, int insertedLength)
+    {
+        var pendingTransfer = _pendingCutLineMetadataTransfer;
+        if (pendingTransfer == null || pendingTransfer.Entries.Count == 0 || insertedLength <= 0)
+            return;
+
+        if (!TryGetClipboardText(out var clipboardText))
+            return;
+
+        // WPF clipboard normalizes line endings to CRLF, but the document may
+        // use LF internally. Compare after normalization so we still accept
+        // the paste as matching our previous cut.
+        if (!string.Equals(
+                NormalizeLineEndings(clipboardText),
+                NormalizeLineEndings(pendingTransfer.ClipboardText),
+                StringComparison.Ordinal))
+        {
+            _pendingCutLineMetadataTransfer = null;
+            return;
+        }
+
+        int textLength = doc.Editor.Document.TextLength;
+        if (textLength <= 0)
+        {
+            _pendingCutLineMetadataTransfer = null;
+            return;
+        }
+
+        int maxOffset = Math.Max(0, textLength - 1);
+        int startOffset = Math.Max(0, Math.Min(insertedStartOffset, maxOffset));
+        int endExclusiveOffset = Math.Max(startOffset, Math.Min(textLength, insertedStartOffset + insertedLength));
+        int endOffset = Math.Max(startOffset, Math.Min(maxOffset, endExclusiveOffset - 1));
+        int startLine = doc.Editor.Document.GetLineByOffset(startOffset).LineNumber;
+        int endLine = doc.Editor.Document.GetLineByOffset(endOffset).LineNumber;
+
+        bool changed = false;
+        foreach (var entry in pendingTransfer.Entries.OrderBy(item => item.RelativeLineOffset))
+        {
+            int targetLine = startLine + entry.RelativeLineOffset;
+            if (targetLine < startLine || targetLine > endLine)
+                continue;
+
+            if (entry.Highlight is HighlightKind kind)
+            {
+                changed |= RemoveHighlightedLine(doc, targetLine, OppositeHighlightKind(kind), markDirty: false, redraw: false);
+                changed |= AddHighlightedLine(doc, targetLine, kind, markDirty: false, redraw: false);
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.Assignee))
+                changed |= SetLineAssignee(doc, targetLine, entry.Assignee, markDirty: false, redraw: false);
+        }
+
+        _pendingCutLineMetadataTransfer = null;
+        if (!changed)
+            return;
+
+        MarkDirty(doc);
+        RedrawHighlight(doc);
+    }
+
+    private void ClearLineMetadataForCutSource(TabDocument doc, int lineNumber)
+    {
+        bool changed = false;
+        changed |= RemoveHighlightedLine(doc, lineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
+        changed |= RemoveHighlightedLine(doc, lineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
+        changed |= RemoveLineAssignee(doc, lineNumber, markDirty: false, redraw: false);
+        if (!changed)
+            return;
+
+        MarkDirty(doc);
+        RedrawHighlight(doc);
+    }
+
     private double ClampedEditorDisplayFontSize()
         => Math.Max(6, Math.Min(72, _fontSize + _sessionEditorFontZoomDelta));
 
@@ -2992,10 +3246,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
-            && e.Key == Key.V
-            && TryPasteClipboardImage(doc))
+        if (Keyboard.Modifiers == ModifierKeys.Control && key == Key.X)
         {
+            ExecuteEditorCut(doc);
+            e.Handled = true;
+            return;
+        }
+
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && key == Key.V)
+        {
+            ExecuteEditorPaste(doc);
             e.Handled = true;
             return;
         }
@@ -5748,15 +6009,22 @@ public partial class MainWindow : Window
 
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
-    private void MenuCut_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Cut();
+    private void MenuCut_Click(object sender, RoutedEventArgs e)
+    {
+        var doc = CurrentDoc();
+        if (doc == null)
+            return;
+
+        ExecuteEditorCut(doc);
+    }
     private void MenuCopy_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Copy();
     private void MenuPaste_Click(object sender, RoutedEventArgs e)
     {
         var doc = CurrentDoc();
         if (doc == null)
             return;
-        if (!TryPasteClipboardImage(doc))
-            doc.Editor.Paste();
+
+        ExecuteEditorPaste(doc);
     }
     private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
