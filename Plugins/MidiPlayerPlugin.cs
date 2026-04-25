@@ -168,6 +168,7 @@ public partial class MainWindow
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         long lengthMs = 0;
         long positionMs = 0;
+        long pausedPositionMs = 0;
         int? preloadedNextIndex = null;
         string? preloadedNextPath = null;
         var preloadedNextDeviceOpen = false;
@@ -1075,8 +1076,15 @@ public partial class MainWindow
                 UpdatePreloadIndicator();
                 HighlightCurrent();
             }
-            var command = isPaused ? $"resume {alias}" : $"play {alias}";
-            if (!TryMci(command, null, out var err))
+            // MCI sequencer device does not support the "resume" command (only
+            // waveaudio/avivideo do). Resuming from pause requires us to seek
+            // back to the stored position because the sequencer's "pause"
+            // command may behave like "stop" and lose the playhead.
+            if (isPaused && pausedPositionMs > 0)
+            {
+                TryMci($"seek {alias} to {pausedPositionMs}", null, out _);
+            }
+            if (!TryMci($"play {alias}", null, out var err))
             {
                 SetStatus($"Play failed: {GetMciError(err)}", Brushes.IndianRed);
                 return;
@@ -1266,6 +1274,11 @@ public partial class MainWindow
         void Pause()
         {
             if (!isOpen || !isPlaying) return;
+            // Capture the position before pausing. The MCI sequencer driver's
+            // "pause" command is known to behave like "stop" on some Windows
+            // configurations (mode becomes "stopped" and position may reset),
+            // so we remember where we were and seek back when resuming.
+            pausedPositionMs = QueryStatusNumber("position");
             if (!TryMci($"pause {alias}", null, out var err))
             {
                 SetStatus($"Pause failed: {GetMciError(err)}", Brushes.IndianRed);
@@ -1487,7 +1500,12 @@ public partial class MainWindow
             TryPreloadUpcomingTrack(force: false);
 
             var mode = QueryStatusText("mode");
-            if (isPlaying && mode == "stopped")
+            // Only treat "stopped" mode as end-of-song when the playhead is
+            // actually near the end. Some MCI sequencer drivers report
+            // "stopped" briefly during transitions (e.g. after pause/resume),
+            // which previously caused the next song to start.
+            var atEndOfSong = lengthMs > 0 && positionMs >= lengthMs - 250;
+            if (isPlaying && mode == "stopped" && atEndOfSong)
             {
                 isPlaying = false;
                 isPaused = false;
