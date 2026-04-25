@@ -71,6 +71,7 @@ public partial class MainWindow
             ShortcutToggleCriticalHighlight = _shortcutToggleCriticalHighlight,
             ShortcutGoToLine = _shortcutGoToLine,
             ShortcutGoToTab = _shortcutGoToTab,
+            ShortcutMidiPlayer = _shortcutMidiPlayer,
             SelectedLineColor = ColorToHex(_selectedLineColor),
             HighlightedLineColor = ColorToHex(_highlightedLineColor),
             SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
@@ -214,6 +215,7 @@ public partial class MainWindow
         _shortcutToggleCriticalHighlight = DefaultShortcutToggleCriticalHighlight;
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _shortcutGoToTab = DefaultShortcutGoToTab;
+        _shortcutMidiPlayer = DefaultShortcutMidiPlayer;
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _writeUptimeHeartbeatInNoted = true;
         _useStandaloneHeartbeatApp = false;
@@ -378,6 +380,8 @@ public partial class MainWindow
             _shortcutGoToLine = state.ShortcutGoToLine!.Trim();
         if (TryParseKeyGesture(state.ShortcutGoToTab, out _))
             _shortcutGoToTab = state.ShortcutGoToTab!.Trim();
+        if (TryParseKeyGesture(state.ShortcutMidiPlayer, out _))
+            _shortcutMidiPlayer = state.ShortcutMidiPlayer!.Trim();
     }
 
     private void ApplyThemeColorsFromSettings(WindowSettings state)

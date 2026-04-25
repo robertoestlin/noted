@@ -49,6 +49,55 @@ public partial class MainWindow
     private const string MidiCustomGroupName = "Custom";
     private const string MidiOtherGroupName = "Other";
 
+    private Window? _midiPlayerWindow;
+    private bool _midiPlayerDocked;
+    private Action? _midiPlayerDockAction;
+    private Action? _midiPlayerRestoreAction;
+
+    private void UpdateMidiPlayerDockedIndicator()
+    {
+        if (MidiPlayerDockedIndicator == null)
+            return;
+        MidiPlayerDockedIndicator.Visibility = _midiPlayerDocked
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Opens the MIDI player when not running yet, or brings it back to the
+    /// foreground when it has been docked. Used by the menu and as the
+    /// "open/restore" half of the toggle.
+    /// </summary>
+    private void OpenOrRestoreMidiPlayer()
+    {
+        if (_midiPlayerWindow == null)
+        {
+            ShowMidiPlayerDialog();
+            return;
+        }
+
+        _midiPlayerRestoreAction?.Invoke();
+    }
+
+    /// <summary>
+    /// Toggles between visible and docked. Opens the player if it is not
+    /// already running. Hooked up to the configurable MIDI shortcut (default
+    /// Ctrl+M).
+    /// </summary>
+    private void ToggleMidiPlayer()
+    {
+        if (_midiPlayerWindow == null)
+        {
+            ShowMidiPlayerDialog();
+            return;
+        }
+
+        if (_midiPlayerDocked)
+            _midiPlayerRestoreAction?.Invoke();
+        else
+            _midiPlayerDockAction?.Invoke();
+    }
+
     private static (string Group, string Title) SplitMidiTitle(string fileNameNoExt)
     {
         var idx = fileNameNoExt.IndexOf(" - ", StringComparison.Ordinal);
@@ -144,6 +193,13 @@ public partial class MainWindow
 
     private void ShowMidiPlayerDialog()
     {
+        // Guard against double-open if invoked while a player is already alive.
+        if (_midiPlayerWindow != null)
+        {
+            _midiPlayerRestoreAction?.Invoke();
+            return;
+        }
+
         var dlg = new Window
         {
             Title = "MIDI Player",
@@ -154,6 +210,7 @@ public partial class MainWindow
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.CanResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = true,
             Owner = this
         };
 
@@ -221,6 +278,24 @@ public partial class MainWindow
         };
         Grid.SetColumn(headerDragArea, 0);
         header.Children.Add(headerDragArea);
+        var headerButtons = new StackPanel { Orientation = Orientation.Horizontal };
+        var btnHeaderDock = new Button
+        {
+            Content = "\uE738",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Width = 32,
+            Height = 32,
+            FontSize = 12,
+            ToolTip = "Dock (keep playing in background)",
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(0),
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        btnHeaderDock.Click += (_, _) => DockMidiPlayerWindow();
+        headerButtons.Children.Add(btnHeaderDock);
         var btnHeaderClose = new Button
         {
             Content = "\uE711",
@@ -237,10 +312,30 @@ public partial class MainWindow
             Margin = new Thickness(8, 0, 0, 0)
         };
         btnHeaderClose.Click += (_, _) => dlg.Close();
-        Grid.SetColumn(btnHeaderClose, 1);
-        header.Children.Add(btnHeaderClose);
+        headerButtons.Children.Add(btnHeaderClose);
+        Grid.SetColumn(headerButtons, 1);
+        header.Children.Add(headerButtons);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
+
+        void DockMidiPlayerWindow()
+        {
+            _midiPlayerDocked = true;
+            UpdateMidiPlayerDockedIndicator();
+            dlg.Hide();
+        }
+
+        void RestoreMidiPlayerWindow()
+        {
+            _midiPlayerDocked = false;
+            UpdateMidiPlayerDockedIndicator();
+            if (!dlg.IsVisible)
+                dlg.Show();
+            if (dlg.WindowState == WindowState.Minimized)
+                dlg.WindowState = WindowState.Normal;
+            dlg.Activate();
+            dlg.Focus();
+        }
 
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -1962,6 +2057,17 @@ public partial class MainWindow
         {
             if (e.OriginalSource is TextBox)
                 return;
+            // Ctrl+M docks the player while keeping playback alive. Handle it
+            // before the per-key switch so playback shortcuts (e.g. Space) on
+            // the dialog stay independent from the global toggle binding.
+            if (e.Key == Key.M
+                && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control
+                && (Keyboard.Modifiers & (ModifierKeys.Alt | ModifierKeys.Shift | ModifierKeys.Windows)) == ModifierKeys.None)
+            {
+                DockMidiPlayerWindow();
+                e.Handled = true;
+                return;
+            }
             switch (e.Key)
             {
                 case Key.Space:
@@ -2002,7 +2108,15 @@ public partial class MainWindow
             }
         };
 
-        dlg.Closed += (_, _) => CloseDevice();
+        dlg.Closed += (_, _) =>
+        {
+            CloseDevice();
+            _midiPlayerWindow = null;
+            _midiPlayerDockAction = null;
+            _midiPlayerRestoreAction = null;
+            _midiPlayerDocked = false;
+            UpdateMidiPlayerDockedIndicator();
+        };
         dlg.ContentRendered += (_, _) =>
         {
             if (hasDialogShown)
@@ -2020,6 +2134,11 @@ public partial class MainWindow
 
         SyncPlaylistScrollBarFromViewer();
         dlg.Content = root;
-        dlg.ShowDialog();
+        _midiPlayerWindow = dlg;
+        _midiPlayerDocked = false;
+        _midiPlayerDockAction = DockMidiPlayerWindow;
+        _midiPlayerRestoreAction = RestoreMidiPlayerWindow;
+        UpdateMidiPlayerDockedIndicator();
+        dlg.Show();
     }
 }

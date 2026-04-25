@@ -464,6 +464,10 @@ public partial class MainWindow
         var txtShortcutGoToTab = new TextBox { Text = _shortcutGoToTab, Margin = new Thickness(0, 4, 0, 8) };
         shortkeysPanel.Children.Add(txtShortcutGoToTab);
 
+        shortkeysPanel.Children.Add(new TextBlock { Text = "MIDI Player (toggle / dock):" });
+        var txtShortcutMidiPlayer = new TextBox { Text = _shortcutMidiPlayer, Margin = new Thickness(0, 4, 0, 8) };
+        shortkeysPanel.Children.Add(txtShortcutMidiPlayer);
+
         shortkeysPanel.Children.Add(new TextBlock
         {
             Text = "Ctrl+Shift+T reopens the most recently closed tab.",
@@ -1329,6 +1333,7 @@ public partial class MainWindow
             var shortcutToggleCriticalHighlight = txtShortcutToggleCriticalHighlight.Text.Trim();
             var shortcutGoToLine = txtShortcutGoToLine.Text.Trim();
             var shortcutGoToTab = txtShortcutGoToTab.Text.Trim();
+            var shortcutMidiPlayer = txtShortcutMidiPlayer.Text.Trim();
 
             if (string.IsNullOrWhiteSpace(shortcutNewPrimary)
                 || string.IsNullOrWhiteSpace(shortcutClose)
@@ -1338,7 +1343,8 @@ public partial class MainWindow
                 || string.IsNullOrWhiteSpace(shortcutToggleHighlight)
                 || string.IsNullOrWhiteSpace(shortcutToggleCriticalHighlight)
                 || string.IsNullOrWhiteSpace(shortcutGoToLine)
-                || string.IsNullOrWhiteSpace(shortcutGoToTab))
+                || string.IsNullOrWhiteSpace(shortcutGoToTab)
+                || string.IsNullOrWhiteSpace(shortcutMidiPlayer))
             {
                 MessageBox.Show("Shortcut fields cannot be empty (except secondary New tab shortcut).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1354,7 +1360,8 @@ public partial class MainWindow
                 || !TryParseKeyGesture(shortcutToggleHighlight, out _)
                 || !TryParseKeyGesture(shortcutToggleCriticalHighlight, out _)
                 || !TryParseKeyGesture(shortcutGoToLine, out _)
-                || !TryParseKeyGesture(shortcutGoToTab, out _))
+                || !TryParseKeyGesture(shortcutGoToTab, out _)
+                || !TryParseKeyGesture(shortcutMidiPlayer, out _))
             {
                 MessageBox.Show("One or more shortcuts have an invalid format.\nUse values like Ctrl+N, Ctrl+Shift+N, F2.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -1371,7 +1378,8 @@ public partial class MainWindow
                 shortcutToggleHighlight,
                 shortcutToggleCriticalHighlight,
                 shortcutGoToLine,
-                shortcutGoToTab
+                shortcutGoToTab,
+                shortcutMidiPlayer
             };
             if (!string.IsNullOrWhiteSpace(shortcutNewSecondary))
                 shortcutList.Add(shortcutNewSecondary);
@@ -1480,6 +1488,7 @@ public partial class MainWindow
                 _shortcutToggleCriticalHighlight = shortcutToggleCriticalHighlight;
                 _shortcutGoToLine = shortcutGoToLine;
                 _shortcutGoToTab = shortcutGoToTab;
+                _shortcutMidiPlayer = shortcutMidiPlayer;
                 _selectedLineColor = selectedLineColor;
                 _highlightedLineColor = highlightedLineColor;
                 _selectedHighlightedLineColor = selectedHighlightedLineColor;

@@ -167,7 +167,7 @@
                     <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_Message Overlay" InputGestureText="Ctrl+O" Click="MenuQuickMessageOverlay_Click"/>
-                    <MenuItem Header="M_IDI Player" Click="MenuMidiPlayer_Click"/>
+                    <MenuItem x:Name="MenuItemMidiPlayer" Header="M_IDI Player" InputGestureText="Ctrl+M" Click="MenuMidiPlayer_Click"/>
                     <MenuItem Header="Mon_goDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
                         <MenuItem Header="ObjectId to _Timestamp Converter" Click="MenuMongoObjectIdTimestampConverter_Click"/>
@@ -230,15 +230,23 @@
                         Background="White"/>
         </DockPanel>
 
-        <TextBlock Grid.Row="1"
-                   Grid.Column="1"
-                   Text="0.10.0"
-                   HorizontalAlignment="Right"
-                   VerticalAlignment="Bottom"
-                   Margin="0,0,8,4"
-                   Foreground="#666"
-                   FontSize="11"
-                   IsHitTestVisible="False"/>
+        <StackPanel Grid.Row="1"
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,8,4"
+                    IsHitTestVisible="False">
+            <TextBlock x:Name="MidiPlayerDockedIndicator"
+                       Text="MIDI Player: Docked  |"
+                       Margin="0,0,8,0"
+                       Foreground="#666"
+                       FontSize="11"
+                       Visibility="Collapsed"/>
+            <TextBlock Text="0.10.0"
+                       Foreground="#666"
+                       FontSize="11"/>
+        </StackPanel>
 
         <Border x:Name="MessageOverlay"
                 Grid.RowSpan="2"

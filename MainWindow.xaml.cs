@@ -153,6 +153,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutToggleCriticalHighlight = "Ctrl+K";
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private const string DefaultShortcutGoToTab = "Ctrl+P";
+    private const string DefaultShortcutMidiPlayer = "Ctrl+M";
     private const string DefaultShortcutSwitchToPreviousTab = "Ctrl+Q";
     private const string DefaultShortcutFakeSave = "Ctrl+S";
     private static readonly string[] FakeSaveStatusMessages =
@@ -212,6 +213,7 @@ public partial class MainWindow : Window
     private string _shortcutToggleCriticalHighlight = DefaultShortcutToggleCriticalHighlight;
     private string _shortcutGoToLine = DefaultShortcutGoToLine;
     private string _shortcutGoToTab = DefaultShortcutGoToTab;
+    private string _shortcutMidiPlayer = DefaultShortcutMidiPlayer;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
@@ -340,6 +342,7 @@ public partial class MainWindow : Window
     private static readonly RoutedUICommand GoToTabCommand = new("Go To Tab", nameof(GoToTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand SwitchToPreviousTabCommand = new("Switch To Previous Tab", nameof(SwitchToPreviousTabCommand), typeof(MainWindow));
     private static readonly RoutedUICommand ToggleTodoPanelCommand = new("Toggle Todo Panel", nameof(ToggleTodoPanelCommand), typeof(MainWindow));
+    private static readonly RoutedUICommand ToggleMidiPlayerCommand = new("Toggle MIDI Player", nameof(ToggleMidiPlayerCommand), typeof(MainWindow));
     private static readonly RoutedUICommand FakeSaveCommand = new("Fake Save", nameof(FakeSaveCommand), typeof(MainWindow));
     private static readonly (FancyBulletStyle Style, string Label)[] FancyBulletStyleOptions =
     [
@@ -1181,6 +1184,7 @@ public partial class MainWindow : Window
         CommandBindings.Add(new CommandBinding(GoToTabCommand, (_, _) => ExecuteGoToTab()));
         CommandBindings.Add(new CommandBinding(SwitchToPreviousTabCommand, (_, _) => ExecuteSwitchToPreviousTab()));
         CommandBindings.Add(new CommandBinding(ToggleTodoPanelCommand, (_, _) => ExecuteToggleTodoPanel()));
+        CommandBindings.Add(new CommandBinding(ToggleMidiPlayerCommand, (_, _) => ToggleMidiPlayer()));
         CommandBindings.Add(new CommandBinding(FakeSaveCommand, (_, _) => ExecuteFakeSaveShortcut()));
 
         MainTabControl.AllowDrop = true;
@@ -3982,6 +3986,7 @@ public partial class MainWindow : Window
         AddShortcutBinding(_shortcutGoToTab, GoToTabCommand);
         AddShortcutBinding(DefaultShortcutSwitchToPreviousTab, SwitchToPreviousTabCommand);
         AddShortcutBinding(DefaultShortcutToggleTodoPanel, ToggleTodoPanelCommand);
+        AddShortcutBinding(_shortcutMidiPlayer, ToggleMidiPlayerCommand);
         AddShortcutBinding(DefaultShortcutFakeSave, FakeSaveCommand);
         UpdateMenuShortcutTexts();
     }
@@ -4965,6 +4970,8 @@ public partial class MainWindow : Window
             MenuItemGoToTab.InputGestureText = GestureDisplayText(_shortcutGoToTab);
         if (MenuItemTrimTrailingEmptyLines != null)
             MenuItemTrimTrailingEmptyLines.InputGestureText = GestureDisplayText(_shortcutTrimTrailingEmptyLines);
+        if (MenuItemMidiPlayer != null)
+            MenuItemMidiPlayer.InputGestureText = GestureDisplayText(_shortcutMidiPlayer);
     }
 
     private void TabHeader_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -6091,7 +6098,7 @@ public partial class MainWindow : Window
     private void MenuTimeReport_Click(object sender, RoutedEventArgs e) => ShowTimeReportDialog();
     private void MenuBase64_Click(object sender, RoutedEventArgs e) => ShowBase64Dialog();
     private void MenuQuickMessageOverlay_Click(object sender, RoutedEventArgs e) => ShowQuickMessageOverlayDialog();
-    private void MenuMidiPlayer_Click(object sender, RoutedEventArgs e) => ShowMidiPlayerDialog();
+    private void MenuMidiPlayer_Click(object sender, RoutedEventArgs e) => OpenOrRestoreMidiPlayer();
     private void MenuCidrConverter_Click(object sender, RoutedEventArgs e) => ShowCidrConverterDialog();
     private void MenuPasswordGenerator_Click(object sender, RoutedEventArgs e) => ShowPasswordGeneratorDialog();
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();

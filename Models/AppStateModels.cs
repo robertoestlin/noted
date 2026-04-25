@@ -190,6 +190,7 @@ public sealed class WindowSettings
     public string ShortcutToggleCriticalHighlight { get; set; } = "Ctrl+K";
     public string ShortcutGoToLine { get; set; } = "Ctrl+G";
     public string ShortcutGoToTab { get; set; } = "Ctrl+P";
+    public string ShortcutMidiPlayer { get; set; } = "Ctrl+M";
     public string? SelectedLineColor { get; set; }
     public string? HighlightedLineColor { get; set; }
     public string? SelectedHighlightedLineColor { get; set; }
