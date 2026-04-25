@@ -21,4 +21,10 @@
     <Resource Include="logo\world-map-equirectangular.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Plugins\resources\midi\*.mid">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>
