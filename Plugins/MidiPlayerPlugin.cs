@@ -80,9 +80,11 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Toggles between visible and docked. Opens the player if it is not
+    /// Toggles between visible and hidden. Opens the player if it is not
     /// already running. Hooked up to the configurable MIDI shortcut (default
-    /// Ctrl+M).
+    /// Ctrl+M). The "docked" indicator next to the version tag is only
+    /// shown while playback is active; minimizing while idle simply hides
+    /// the window.
     /// </summary>
     private void ToggleMidiPlayer()
     {
@@ -92,10 +94,10 @@ public partial class MainWindow
             return;
         }
 
-        if (_midiPlayerDocked)
-            _midiPlayerRestoreAction?.Invoke();
-        else
+        if (_midiPlayerWindow.IsVisible)
             _midiPlayerDockAction?.Invoke();
+        else
+            _midiPlayerRestoreAction?.Invoke();
     }
 
     private static (string Group, string Title) SplitMidiTitle(string fileNameNoExt)
@@ -241,6 +243,7 @@ public partial class MainWindow
         var shuffleHistory = new List<int>();
 
         var itemBordersByIndex = new Dictionary<int, Border>();
+        var groupHeadersByName = new Dictionary<string, Border>(StringComparer.Ordinal);
         Border? currentHighlightedItem = null;
         var rowBaseBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x17, 0x24, 0x3B));
         var rowHighlightBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0x9C, 0xFF));
@@ -318,23 +321,30 @@ public partial class MainWindow
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
+        // The "docked" indicator beside the version tag is only meaningful
+        // while music is actually playing - hiding the window while idle
+        // simply tucks it away without flagging it as docked.
+        void RefreshDockedIndicator()
+        {
+            _midiPlayerDocked = !dlg.IsVisible && isPlaying;
+            UpdateMidiPlayerDockedIndicator();
+        }
+
         void DockMidiPlayerWindow()
         {
-            _midiPlayerDocked = true;
-            UpdateMidiPlayerDockedIndicator();
             dlg.Hide();
+            RefreshDockedIndicator();
         }
 
         void RestoreMidiPlayerWindow()
         {
-            _midiPlayerDocked = false;
-            UpdateMidiPlayerDockedIndicator();
             if (!dlg.IsVisible)
                 dlg.Show();
             if (dlg.WindowState == WindowState.Minimized)
                 dlg.WindowState = WindowState.Normal;
             dlg.Activate();
             dlg.Focus();
+            RefreshDockedIndicator();
         }
 
         var layout = new Grid();
@@ -1017,6 +1027,7 @@ public partial class MainWindow
             seekSlider.IsEnabled = isOpen && lengthMs > 0;
             btnPrev.IsEnabled = playlist.Count > 0;
             btnNext.IsEnabled = playlist.Count > 0;
+            RefreshDockedIndicator();
         }
 
         void UpdateInfo(string path, MidiHeaderInfo? info)
@@ -1082,6 +1093,68 @@ public partial class MainWindow
             ClearNextPreload(closeDevice: true);
         }
 
+        void CenterItemInPlaylist(Border item)
+        {
+            // Defer until layout is ready so ActualHeight / ViewportHeight /
+            // TransformToAncestor return meaningful values. Falls back to
+            // BringIntoView if anything goes wrong (e.g. no scrollable area).
+            void DoCenter()
+            {
+                try
+                {
+                    if (!item.IsLoaded
+                        || item.ActualHeight <= 0
+                        || listScroll.ViewportHeight <= 0)
+                    {
+                        listScroll.Dispatcher.BeginInvoke(
+                            new Action(DoCenter),
+                            DispatcherPriority.Loaded);
+                        return;
+                    }
+
+                    var viewport = listScroll.ViewportHeight;
+                    var maxOffset = listScroll.ScrollableHeight;
+
+                    var itemTop = item
+                        .TransformToAncestor(listStack)
+                        .Transform(new Point(0, 0)).Y;
+                    var itemBottom = itemTop + item.ActualHeight;
+
+                    // Prefer pinning the group header at the top whenever the
+                    // current song is close enough to the header to remain
+                    // fully visible in the viewport. For songs near the top of
+                    // a group this keeps the genre/instrument label on screen;
+                    // for songs further down (where pinning the header would
+                    // push the song off-screen) we fall through to centering.
+                    if (currentIndex >= 0
+                        && currentIndex < playlist.Count
+                        && groupHeadersByName.TryGetValue(playlist[currentIndex].Group, out var headerBorder)
+                        && headerBorder.IsLoaded
+                        && headerBorder.ActualHeight > 0)
+                    {
+                        var headerTop = headerBorder
+                            .TransformToAncestor(listStack)
+                            .Transform(new Point(0, 0)).Y;
+                        if (itemBottom - headerTop <= viewport)
+                        {
+                            var headerTarget = Math.Max(0, Math.Min(headerTop, maxOffset));
+                            listScroll.ScrollToVerticalOffset(headerTarget);
+                            return;
+                        }
+                    }
+
+                    var target = itemTop - (viewport - item.ActualHeight) / 2.0;
+                    target = Math.Max(0, Math.Min(target, maxOffset));
+                    listScroll.ScrollToVerticalOffset(target);
+                }
+                catch
+                {
+                    item.BringIntoView();
+                }
+            }
+            DoCenter();
+        }
+
         void HighlightCurrent()
         {
             if (currentHighlightedItem is not null)
@@ -1097,7 +1170,7 @@ public partial class MainWindow
                 item.Background = rowSelectedFillBrush;
                 item.BorderBrush = rowHighlightBrush;
                 item.BorderThickness = new Thickness(2);
-                item.BringIntoView();
+                CenterItemInPlaylist(item);
                 currentHighlightedItem = item;
             }
         }
@@ -1383,7 +1456,6 @@ public partial class MainWindow
             isPaused = true;
             timer.Stop();
             UpdateButtons();
-            SetStatus("Paused.");
         }
 
         void Stop()
@@ -1637,6 +1709,7 @@ public partial class MainWindow
         {
             listStack.Children.Clear();
             itemBordersByIndex.Clear();
+            groupHeadersByName.Clear();
             currentHighlightedItem = null;
 
             if (playlist.Count == 0)
@@ -1687,6 +1760,7 @@ public partial class MainWindow
                     }
                 };
                 listStack.Children.Add(headerPanel);
+                groupHeadersByName[group] = headerPanel;
 
                 foreach (var i in filteredIndexes)
                 {
