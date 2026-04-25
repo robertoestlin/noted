@@ -167,6 +167,7 @@
                     <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_Message Overlay" InputGestureText="Ctrl+O" Click="MenuQuickMessageOverlay_Click"/>
+                    <MenuItem Header="M_IDI Player" Click="MenuMidiPlayer_Click"/>
                     <MenuItem Header="Mon_goDB">
                         <MenuItem Header="MongoDB API Get _Token" Click="MenuMongoDbApiGetToken_Click"/>
                         <MenuItem Header="ObjectId to _Timestamp Converter" Click="MenuMongoObjectIdTimestampConverter_Click"/>
