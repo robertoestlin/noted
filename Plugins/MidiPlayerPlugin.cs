@@ -658,6 +658,20 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 12, 0),
             ToolTip = "Loop current track"
         };
+        void RefreshPreloadAfterShuffleToggle()
+        {
+            // Run preload on the dispatcher after the clear-state repaint, so indicator
+            // is visibly reset first and only turns ready once preload completes.
+            dlg.Dispatcher.BeginInvoke(
+                () =>
+                {
+                    if (isPlaying)
+                        TryPreloadUpcomingTrack(force: true);
+                    else
+                        PrimeInitialPreload();
+                },
+                DispatcherPriority.Background);
+        }
         var preloadDot = new Border
         {
             Width = 8,
@@ -672,13 +686,13 @@ public partial class MainWindow
         {
             ClearNextPreload();
             ClearStartPreload();
-            PrimeInitialPreload();
+            RefreshPreloadAfterShuffleToggle();
         };
         btnShuffle.Unchecked += (_, _) =>
         {
             ClearNextPreload();
             ClearStartPreload();
-            PrimeInitialPreload();
+            RefreshPreloadAfterShuffleToggle();
         };
         btnLoop.Checked += (_, _) => ClearNextPreload();
         btnLoop.Unchecked += (_, _) => ClearNextPreload();
