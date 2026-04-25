@@ -181,7 +181,8 @@ public partial class MainWindow
         var itemBordersByIndex = new Dictionary<int, Border>();
         Border? currentHighlightedItem = null;
         var rowBaseBrush = new SolidColorBrush(Color.FromArgb(0x22, 0x17, 0x24, 0x3B));
-        var rowHighlightBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0x3B, 0x82, 0xF6));
+        var rowHighlightBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0x9C, 0xFF));
+        var rowSelectedFillBrush = new SolidColorBrush(Color.FromArgb(0x2E, 0x4F, 0x9C, 0xFF));
         var rowHoverBrush = new SolidColorBrush(Color.FromArgb(0x77, 0x29, 0x4A, 0x7A));
 
         dlg.Background = new SolidColorBrush(Color.FromRgb(0x09, 0x0F, 0x1A));
@@ -917,12 +918,18 @@ public partial class MainWindow
         void HighlightCurrent()
         {
             if (currentHighlightedItem is not null)
+            {
                 currentHighlightedItem.Background = rowBaseBrush;
+                currentHighlightedItem.BorderBrush = Brushes.Transparent;
+                currentHighlightedItem.BorderThickness = new Thickness(1);
+            }
             currentHighlightedItem = null;
 
             if (currentIndex >= 0 && itemBordersByIndex.TryGetValue(currentIndex, out var item))
             {
-                item.Background = rowHighlightBrush;
+                item.Background = rowSelectedFillBrush;
+                item.BorderBrush = rowHighlightBrush;
+                item.BorderThickness = new Thickness(2);
                 item.BringIntoView();
                 currentHighlightedItem = item;
             }
@@ -1386,10 +1393,12 @@ public partial class MainWindow
 
                     var itemBorder = new Border
                     {
-                        CornerRadius = new CornerRadius(3),
+                        CornerRadius = new CornerRadius(6),
                         Padding = new Thickness(8, 4, 6, 4),
                         Margin = new Thickness(4, 1, 4, 1),
                         Background = rowBaseBrush,
+                        BorderBrush = Brushes.Transparent,
+                        BorderThickness = new Thickness(1),
                         Cursor = Cursors.Hand,
                         Child = line
                     };
