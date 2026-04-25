@@ -180,41 +180,51 @@ public partial class MainWindow
         var root = new DockPanel { Margin = new Thickness(12) };
 
         // ---- Header ----------------------------------------------------------------------
-        var header = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
-        header.Children.Add(new TextBlock
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headerTitle = new TextBlock
         {
             Text = "MIDI Player",
             FontSize = 22,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brushes.White
-        });
-        header.MouseLeftButtonDown += (_, e) =>
+            Foreground = Brushes.White,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var headerDragArea = new Border
+        {
+            Background = Brushes.Transparent,
+            Child = headerTitle
+        };
+        headerDragArea.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ChangedButton == MouseButton.Left)
             {
                 try { dlg.DragMove(); } catch { /* ignore */ }
             }
         };
+        Grid.SetColumn(headerDragArea, 0);
+        header.Children.Add(headerDragArea);
+        var btnHeaderClose = new Button
+        {
+            Content = "\uE711",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Width = 32,
+            Height = 32,
+            FontSize = 12,
+            ToolTip = "Close",
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+            Foreground = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(0),
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        btnHeaderClose.Click += (_, _) => dlg.Close();
+        Grid.SetColumn(btnHeaderClose, 1);
+        header.Children.Add(btnHeaderClose);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
-
-        // ---- Bottom: close ---------------------------------------------------------------
-        var closeRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 10, 0, 0)
-        };
-        var btnClose = new Button
-        {
-            Content = "Close",
-            Width = 92,
-            IsCancel = true,
-            Padding = new Thickness(10, 4, 10, 4)
-        };
-        closeRow.Children.Add(btnClose);
-        DockPanel.SetDock(closeRow, Dock.Bottom);
-        root.Children.Add(closeRow);
 
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -238,6 +248,110 @@ public partial class MainWindow
         var queueTop = new Grid { Margin = new Thickness(0, 0, 0, 10) };
         queueTop.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         queueTop.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var iconButtonStyle = new Style(typeof(Button));
+        iconButtonStyle.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31))));
+        iconButtonStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        iconButtonStyle.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63))));
+        iconButtonStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        iconButtonStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        iconButtonStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        iconButtonStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        iconButtonStyle.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
+        var iconButtonTemplate = new ControlTemplate(typeof(Button));
+        var iconButtonBorder = new FrameworkElementFactory(typeof(Border));
+        iconButtonBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+        iconButtonBorder.SetValue(Border.SnapsToDevicePixelsProperty, true);
+        iconButtonBorder.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        iconButtonBorder.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        iconButtonBorder.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        var iconButtonPresenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        iconButtonPresenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        iconButtonPresenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        iconButtonBorder.AppendChild(iconButtonPresenter);
+        iconButtonTemplate.VisualTree = iconButtonBorder;
+        iconButtonTemplate.Triggers.Add(new Trigger
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true,
+            Setters =
+            {
+                new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x1D, 0x2D, 0x49))),
+                new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(0x4A, 0x64, 0x95)))
+            }
+        });
+        iconButtonTemplate.Triggers.Add(new Trigger
+        {
+            Property = ButtonBase.IsPressedProperty,
+            Value = true,
+            Setters =
+            {
+                new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x0D, 0x17, 0x28)))
+            }
+        });
+        iconButtonTemplate.Triggers.Add(new Trigger
+        {
+            Property = UIElement.IsEnabledProperty,
+            Value = false,
+            Setters =
+            {
+                new Setter(UIElement.OpacityProperty, 0.52),
+                new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)))
+            }
+        });
+        iconButtonStyle.Setters.Add(new Setter(Control.TemplateProperty, iconButtonTemplate));
+
+        var iconToggleStyle = new Style(typeof(ToggleButton));
+        iconToggleStyle.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31))));
+        iconToggleStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        iconToggleStyle.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63))));
+        iconToggleStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        iconToggleStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        iconToggleStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        iconToggleStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        iconToggleStyle.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
+        var iconToggleTemplate = new ControlTemplate(typeof(ToggleButton));
+        var iconToggleBorder = new FrameworkElementFactory(typeof(Border));
+        iconToggleBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+        iconToggleBorder.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+        iconToggleBorder.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+        iconToggleBorder.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+        var iconTogglePresenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        iconTogglePresenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        iconTogglePresenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+        iconToggleBorder.AppendChild(iconTogglePresenter);
+        iconToggleTemplate.VisualTree = iconToggleBorder;
+        iconToggleTemplate.Triggers.Add(new Trigger
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true,
+            Setters =
+            {
+                new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x1D, 0x2D, 0x49))),
+                new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(0x4A, 0x64, 0x95)))
+            }
+        });
+        iconToggleTemplate.Triggers.Add(new Trigger
+        {
+            Property = ToggleButton.IsCheckedProperty,
+            Value = true,
+            Setters =
+            {
+                new Setter(Control.ForegroundProperty, new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0))),
+                new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(0x3D, 0x9B, 0x6A))),
+                new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(0x12, 0x2B, 0x27)))
+            }
+        });
+        iconToggleTemplate.Triggers.Add(new Trigger
+        {
+            Property = UIElement.IsEnabledProperty,
+            Value = false,
+            Setters =
+            {
+                new Setter(UIElement.OpacityProperty, 0.52)
+            }
+        });
+        iconToggleStyle.Setters.Add(new Setter(Control.TemplateProperty, iconToggleTemplate));
 
         var nowPlayingStack = new StackPanel { Margin = new Thickness(2, 0, 0, 0) };
         nowPlayingStack.Children.Add(new TextBlock
@@ -276,24 +390,16 @@ public partial class MainWindow
         };
         var btnAdd = new Button
         {
-            Content = "+",
+            Content = "\uE710",
             Width = 34,
             Height = 34,
-            FontSize = 20,
-            FontWeight = FontWeights.SemiBold,
-            Padding = new Thickness(0, -2, 0, 0),
+            FontSize = 16,
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Style = iconButtonStyle,
             Margin = new Thickness(8, 0, 0, 0),
             ToolTip = "Add MIDI file(s) to Custom"
         };
-        var btnUnload = new Button
-        {
-            Content = "Unload",
-            Padding = new Thickness(14, 7, 14, 7),
-            Margin = new Thickness(8, 0, 0, 0),
-            IsEnabled = false
-        };
         queueButtons.Children.Add(btnAdd);
-        queueButtons.Children.Add(btnUnload);
         Grid.SetColumn(queueButtons, 1);
         queueTop.Children.Add(queueButtons);
 
@@ -377,14 +483,11 @@ public partial class MainWindow
         var btnPrev = new Button
         {
             Content = "⏮",
-            Padding = new Thickness(0),
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
             Width = 44,
             Height = 44,
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            Style = iconButtonStyle,
             IsEnabled = false
         };
         var btnPlay = new Button
@@ -397,49 +500,38 @@ public partial class MainWindow
             Width = 52,
             Height = 52,
             Margin = new Thickness(10, 0, 10, 0),
-            Background = Brushes.White,
-            Foreground = Brushes.Black,
-            BorderBrush = Brushes.White,
+            Style = iconButtonStyle,
             IsEnabled = false
         };
         var btnPause = new Button
         {
             Content = "⏸",
-            Padding = new Thickness(0),
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
             Width = 44,
             Height = 44,
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            Style = iconButtonStyle,
             IsEnabled = false
         };
         var btnNext = new Button
         {
             Content = "⏭",
-            Padding = new Thickness(0),
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
             Width = 44,
             Height = 44,
             Margin = new Thickness(10, 0, 10, 0),
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            Style = iconButtonStyle,
             IsEnabled = false
         };
         var btnStop = new Button
         {
             Content = "⏹",
-            Padding = new Thickness(0),
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
             Width = 44,
             Height = 44,
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            Style = iconButtonStyle,
             IsEnabled = false
         };
         transportRow.Children.Add(btnPrev);
@@ -462,11 +554,9 @@ public partial class MainWindow
             Height = 36,
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
-            Padding = new Thickness(0),
+            Style = iconToggleStyle,
             Margin = new Thickness(0, 0, 12, 0),
-            Background = Brushes.Transparent,
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            IsChecked = true,
             ToolTip = "Shuffle"
         };
         var btnLoop = new ToggleButton
@@ -476,32 +566,9 @@ public partial class MainWindow
             Height = 36,
             FontSize = 18,
             FontFamily = new FontFamily("Segoe UI Symbol"),
-            Padding = new Thickness(0),
+            Style = iconToggleStyle,
             Margin = new Thickness(0, 0, 12, 0),
-            Background = Brushes.Transparent,
-            Foreground = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
             ToolTip = "Loop current track"
-        };
-        btnShuffle.Checked += (_, _) =>
-        {
-            btnShuffle.Foreground = new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0));
-            btnShuffle.BorderBrush = new SolidColorBrush(Color.FromRgb(0x3D, 0x9B, 0x6A));
-        };
-        btnShuffle.Unchecked += (_, _) =>
-        {
-            btnShuffle.Foreground = Brushes.White;
-            btnShuffle.BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63));
-        };
-        btnLoop.Checked += (_, _) =>
-        {
-            btnLoop.Foreground = new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0));
-            btnLoop.BorderBrush = new SolidColorBrush(Color.FromRgb(0x3D, 0x9B, 0x6A));
-        };
-        btnLoop.Unchecked += (_, _) =>
-        {
-            btnLoop.Foreground = Brushes.White;
-            btnLoop.BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63));
         };
         modeRow.Children.Add(btnShuffle);
         modeRow.Children.Add(btnLoop);
@@ -665,7 +732,6 @@ public partial class MainWindow
             btnPlay.IsEnabled = isOpen && !isPlaying;
             btnPause.IsEnabled = isOpen && isPlaying && !isPaused;
             btnStop.IsEnabled = isOpen && (isPlaying || isPaused);
-            btnUnload.IsEnabled = isOpen;
             seekSlider.IsEnabled = isOpen && lengthMs > 0;
             btnPrev.IsEnabled = playlist.Count > 0;
             btnNext.IsEnabled = playlist.Count > 0;
@@ -778,12 +844,12 @@ public partial class MainWindow
             {
                 var song = playlist[currentIndex];
                 lblNowPlaying.Text = song.Title;
-                lblNowPlayingMeta.Text = $"{song.Group}  -  {Path.GetFileName(song.Path)}";
+                lblNowPlayingMeta.Text = $"{song.Group}  -  {Path.GetFileNameWithoutExtension(song.Path)}";
             }
             else
             {
                 lblNowPlaying.Text = Path.GetFileNameWithoutExtension(path);
-                lblNowPlayingMeta.Text = Path.GetFileName(path);
+                lblNowPlayingMeta.Text = Path.GetFileNameWithoutExtension(path);
             }
 
             UpdateButtons();
@@ -805,7 +871,6 @@ public partial class MainWindow
             isPaused = false;
             timer.Start();
             UpdateButtons();
-            SetStatus("Playing.");
         }
 
         void Pause()
@@ -836,6 +901,24 @@ public partial class MainWindow
             lblPosition.Text = "00:00";
             UpdateButtons();
             SetStatus("Stopped.");
+        }
+
+        void ResetPlayerView()
+        {
+            currentIndex = -1;
+            lengthMs = 0;
+            positionMs = 0;
+            seekSlider.Maximum = 0;
+            seekSlider.Value = 0;
+            currentLoadedPath = null;
+            lblNowPlaying.Text = "Nothing playing";
+            lblNowPlayingMeta.Text = "Pick a song from the playlist";
+            lblLength.Text = "00:00";
+            lblPosition.Text = "00:00";
+            txtInfo.Text = "No file loaded.";
+            txtInfo.Foreground = new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
+            HighlightCurrent();
+            UpdateButtons();
         }
 
         void PerformSeek(long target)
@@ -946,14 +1029,18 @@ public partial class MainWindow
                     Play();
                     SetStatus("Looping.");
                 }
-                else if (playlist.Count > 0)
+                else if (btnShuffle.IsChecked == true && playlist.Count > 0)
                 {
                     PlayNext();
                 }
+                else if (currentIndex >= 0 && currentIndex + 1 < playlist.Count)
+                {
+                    PlayIndex(currentIndex + 1);
+                }
                 else
                 {
-                    seekSlider.Value = 0;
-                    lblPosition.Text = "00:00";
+                    CloseDevice();
+                    ResetPlayerView();
                     SetStatus("Finished.");
                 }
             }
@@ -1031,33 +1118,6 @@ public partial class MainWindow
                         FontWeight = FontWeights.SemiBold
                     });
 
-                    var rowGrid = new Grid();
-                    rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                    rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                    Grid.SetColumn(line, 0);
-                    rowGrid.Children.Add(line);
-
-                    Button? btnRemove = null;
-                    if (song.IsCustom)
-                    {
-                        btnRemove = new Button
-                        {
-                            Content = "✕",
-                            Width = 22,
-                            Height = 22,
-                            Padding = new Thickness(0),
-                            Margin = new Thickness(6, 0, 0, 0),
-                            ToolTip = "Remove from Custom playlist",
-                            Background = new SolidColorBrush(Color.FromArgb(0x33, 0x12, 0x1C, 0x30)),
-                            BorderBrush = new SolidColorBrush(Color.FromRgb(0x4D, 0x63, 0x89)),
-                            Foreground = Brushes.White,
-                            Cursor = Cursors.Hand,
-                            FontSize = 11
-                        };
-                        Grid.SetColumn(btnRemove, 1);
-                        rowGrid.Children.Add(btnRemove);
-                    }
-
                     var itemBorder = new Border
                     {
                         CornerRadius = new CornerRadius(3),
@@ -1065,7 +1125,7 @@ public partial class MainWindow
                         Margin = new Thickness(4, 1, 4, 1),
                         Background = rowBaseBrush,
                         Cursor = Cursors.Hand,
-                        Child = rowGrid
+                        Child = line
                     };
                     itemBorder.MouseEnter += (_, _) =>
                     {
@@ -1083,10 +1143,11 @@ public partial class MainWindow
                         e.Handled = true;
                     };
 
-                    if (btnRemove is not null)
+                    if (song.IsCustom)
                     {
                         var pathToRemove = song.Path;
-                        btnRemove.Click += (_, e) =>
+                        var removeMenu = new MenuItem { Header = "Remove from playlist" };
+                        removeMenu.Click += (_, e) =>
                         {
                             e.Handled = true;
                             customPaths = customPaths
@@ -1097,18 +1158,7 @@ public partial class MainWindow
                             if (wasCurrent)
                             {
                                 CloseDevice();
-                                currentIndex = -1;
-                                currentLoadedPath = null;
-                                lblNowPlaying.Text = "Nothing playing";
-                                lblNowPlayingMeta.Text = "Pick a song from the playlist";
-                                lengthMs = 0;
-                                positionMs = 0;
-                                seekSlider.Maximum = 0;
-                                seekSlider.Value = 0;
-                                lblLength.Text = "00:00";
-                                lblPosition.Text = "00:00";
-                                txtInfo.Text = "No file loaded.";
-                                txtInfo.Foreground = new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
+                                ResetPlayerView();
                             }
                             playlist = BuildMidiPlaylist(customPaths);
                             if (!wasCurrent && currentIndex >= 0)
@@ -1118,8 +1168,10 @@ public partial class MainWindow
                             }
                             RebuildPlaylistUi();
                             UpdateButtons();
-                            SetStatus("Removed from Custom playlist.");
+                            SetStatus("Removed from playlist.");
                         };
+                        itemBorder.ContextMenu = new ContextMenu();
+                        itemBorder.ContextMenu.Items.Add(removeMenu);
                     }
 
                     itemBordersByIndex[index] = itemBorder;
@@ -1184,26 +1236,6 @@ public partial class MainWindow
             };
             if (ofd.ShowDialog(dlg) == true)
                 AddCustomFiles(ofd.FileNames, playFirstAdded: true);
-        };
-
-        btnUnload.Click += (_, _) =>
-        {
-            CloseDevice();
-            currentIndex = -1;
-            lengthMs = 0;
-            positionMs = 0;
-            seekSlider.Maximum = 0;
-            seekSlider.Value = 0;
-            currentLoadedPath = null;
-            lblNowPlaying.Text = "Nothing playing";
-            lblNowPlayingMeta.Text = "Pick a song from the playlist";
-            lblLength.Text = "00:00";
-            lblPosition.Text = "00:00";
-            txtInfo.Text = "No file loaded.";
-            txtInfo.Foreground = new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
-            HighlightCurrent();
-            UpdateButtons();
-            SetStatus("Unloaded.");
         };
 
         btnPlay.Click += (_, _) =>
@@ -1280,7 +1312,6 @@ public partial class MainWindow
             }
         };
 
-        btnClose.Click += (_, _) => dlg.Close();
         dlg.Closed += (_, _) => CloseDevice();
 
         RebuildPlaylistUi();
