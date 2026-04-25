@@ -217,6 +217,9 @@ GM_PAN_FLUTE = 75
 
 # Additional drum notes (channel 10 / index 9).
 PEDAL_HAT = 44
+HAND_CLAP = 39
+COWBELL = 56
+TAMBOURINE = 54
 
 # ---------- GM drum notes (channel 10 / index 9) ----------
 KICK = 36
@@ -228,6 +231,14 @@ RIDE = 51
 TOM_LOW = 41
 TOM_MID = 47
 TOM_HIGH = 50
+
+# ---------- GM programs used by the disco tunes ----------
+GM_ELECTRIC_GUITAR_CLEAN = 27
+GM_SLAP_BASS_1 = 36
+GM_BRASS_SECTION = 61
+GM_SYNTH_BRASS_1 = 62
+GM_SYNTH_STRINGS_1 = 50
+GM_VOICE_OOHS = 53
 
 
 # =============================================================================
@@ -1214,44 +1225,1624 @@ def make_blues_piano(reps: int = 4) -> bytes:
     return seq.to_smf()
 
 
-def main() -> None:
-    out_dir = os.path.dirname(os.path.abspath(__file__))
+# =============================================================================
+# Shared disco helpers (4-on-the-floor, octave bass pulse, chicken-scratch).
+# =============================================================================
+def _disco_drums(seq: Sequence, drums: Track, bar_start: float,
+                 with_open_hat: bool = True,
+                 with_cowbell: bool = False,
+                 with_clap: bool = False,
+                 with_tambourine: bool = False) -> None:
+    # 4-on-the-floor kick.
+    for k in range(4):
+        seq.add_drum(drums, bar_start + k, KICK, vel=108)
+    # Snare on 2 and 4.
+    seq.add_drum(drums, bar_start + 1, SNARE, vel=98)
+    seq.add_drum(drums, bar_start + 3, SNARE, vel=100)
+    # Closed hat on the beat, open hat on the "and" (signature disco shimmer).
+    for h in range(4):
+        seq.add_drum(drums, bar_start + h, CLOSED_HAT, vel=68)
+        seq.add_drum(drums, bar_start + h + 0.5, OPEN_HAT if with_open_hat else CLOSED_HAT, vel=78)
+    if with_clap:
+        seq.add_drum(drums, bar_start + 1, HAND_CLAP, vel=88)
+        seq.add_drum(drums, bar_start + 3, HAND_CLAP, vel=90)
+    if with_cowbell:
+        for c in (0.5, 1.5, 2.5, 3.5):
+            seq.add_drum(drums, bar_start + c, COWBELL, vel=76)
+    if with_tambourine:
+        for t in (0.5, 1.5, 2.5, 3.5):
+            seq.add_drum(drums, bar_start + t, TAMBOURINE, vel=70)
 
+
+def _disco_bass_octave(seq: Sequence, bass: Track, bar_start: float,
+                       root_pitch: int, beats: int = 4, vel: int = 92) -> None:
+    """8th-note octave-bouncing bass: low-high-low-high...."""
+    eighths = beats * 2
+    for i in range(eighths):
+        pitch = root_pitch if (i % 2 == 0) else root_pitch + 12
+        seq.add_note(bass, bar_start + i * 0.5, 0.42, pitch, vel)
+
+
+def _disco_chicken_scratch(seq: Sequence, guitar: Track, bar_start: float,
+                           chord_pitches: list[int], beats: int = 4,
+                           accent_idx: tuple[int, ...] = (0, 6, 8, 14)) -> None:
+    """16th-note muted chord strums with a few accents (Nile Rodgers-ish)."""
+    sixteenths = beats * 4
+    for i in range(sixteenths):
+        beat = bar_start + i * 0.25
+        is_accent = i in accent_idx
+        vel = 78 if is_accent else 32
+        for p in chord_pitches:
+            seq.add_note(guitar, beat, 0.18, p, vel)
+
+
+# =============================================================================
+# 16. DISCO - SATURDAY GROOVE: happy major-key disco (118 BPM, D major)
+# =============================================================================
+def make_disco_saturday_groove(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=118)
+    lead = seq.add_track("Voice Lead", GM_VOICE_OOHS, 0)
+    bass = seq.add_track("Disco Bass", GM_SYNTH_BASS_2, 1)
+    strings = seq.add_track("Strings", GM_STRINGS, 2)
+    brass = seq.add_track("Brass", GM_BRASS_SECTION, 3)
+    guitar = seq.add_track("Guitar", GM_ELECTRIC_GUITAR_CLEAN, 4)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # D - Bm - G - A, 2 bars per chord = 8 bars per cycle (~16.3s).
+    progression = [
+        ("D",  "D2",  ["D4",  "F#4", "A4",  "D5"]),
+        ("Bm", "B1",  ["B3",  "D4",  "F#4", "B4"]),
+        ("G",  "G1",  ["G3",  "B3",  "D4",  "G4"]),
+        ("A",  "A1",  ["A3",  "C#4", "E4",  "A4"]),
+    ]
+
+    melody_a = [
+        ("F#5", 1),    ("A5", 1),    ("D6", 2),
+        ("F#5", 0.5),  ("E5", 0.5),  ("D5", 1),    ("F#5", 2),
+        ("D5", 1),     ("F#5", 1),   ("B5", 2),
+        ("A5", 0.5),   ("F#5", 0.5), ("D5", 1),    ("F#5", 2),
+        ("B4", 1),     ("D5", 1),    ("G5", 2),
+        ("F#5", 1),    ("E5", 1),    ("D5", 2),
+        ("C#5", 1),    ("E5", 1),    ("A5", 2),
+        ("G5", 1),     ("E5", 1),    ("C#5", 2),
+    ]
+    melody_b = [
+        ("D6", 0.5),   ("F#6", 0.5), ("A6", 1),    ("F#6", 2),
+        ("E6", 0.5),   ("D6", 0.5),  ("F#6", 1),   ("D6", 2),
+        ("F#5", 0.5),  ("A5", 0.5),  ("D6", 1),    ("B5", 2),
+        ("D6", 0.5),   ("B5", 0.5),  ("F#5", 1),   ("B5", 2),
+        ("G5", 0.5),   ("B5", 0.5),  ("D6", 1),    ("G5", 2),
+        ("D6", 0.5),   ("G5", 0.5),  ("B5", 1),    ("D6", 2),
+        ("E5", 0.5),   ("A5", 0.5),  ("C#6", 1),   ("E6", 2),
+        ("C#6", 1),    ("E6", 1),    ("A5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Lead drops out for the first cycle (intro), comes in afterwards.
+        if rep >= 1:
+            mel = melody_b if rep in (3, 5) else melody_a
+            seq.play_line(lead, rep_start, mel, vel=86)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Strings: held chord across the 2 bars per chord.
+            seq.add_chord(strings, chord_start, 8, [n(p) for p in ch_pitches], vel=58)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _disco_drums(seq, drums, bar_start, with_tambourine=(rep >= 2))
+                _disco_bass_octave(seq, bass, bar_start, n(root) + 12)
+                _disco_chicken_scratch(seq, guitar, bar_start, [n(p) for p in ch_pitches[:3]])
+
+                # Brass stab on the "and" of beat 4 (push into next bar).
+                stab_pitches = [n(p) + 12 for p in ch_pitches[:3]]
+                seq.add_chord(brass, bar_start + 3.5, 0.45, stab_pitches, vel=82)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 17. DISCO - NIGHT FEVER: minor-key disco anthem (116 BPM, F# minor)
+# =============================================================================
+def make_disco_night_fever(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=116)
+    lead = seq.add_track("Synth Lead", GM_LEAD_3_CALLIOPE, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_2, 1)
+    strings = seq.add_track("Strings", GM_STRINGS, 2)
+    brass = seq.add_track("Brass", GM_BRASS_SECTION, 3)
+    guitar = seq.add_track("Guitar", GM_ELECTRIC_GUITAR_CLEAN, 4)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # F#m - D - E - A (i-VI-VII-III), 2 bars each = 8-bar cycle (~16.6s).
+    progression = [
+        ("F#m", "F#1", ["F#3", "A3",  "C#4", "F#4"]),
+        ("D",   "D1",  ["D3",  "F#3", "A3",  "D4"]),
+        ("E",   "E1",  ["E3",  "G#3", "B3",  "E4"]),
+        ("A",   "A1",  ["A3",  "C#4", "E4",  "A4"]),
+    ]
+
+    falsetto = [
+        # Bar 1-2 (F#m): soaring high lead
+        ("C#6", 1),    ("F#6", 2),   ("E6", 1),
+        ("C#6", 0.5),  ("E6", 0.5),  ("F#6", 1),  ("A6", 2),
+        # Bar 3-4 (D)
+        ("F#6", 1),    ("D6", 1),    ("A6", 2),
+        ("G6", 0.5),   ("F#6", 0.5), ("E6", 1),   ("D6", 2),
+        # Bar 5-6 (E)
+        ("E6", 1),     ("G#6", 1),   ("B6", 2),
+        ("A6", 0.5),   ("G#6", 0.5), ("F#6", 1),  ("E6", 2),
+        # Bar 7-8 (A)
+        ("A5", 1),     ("C#6", 1),   ("E6", 2),
+        ("D6", 1),     ("C#6", 1),   ("A5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(lead, rep_start, falsetto, vel=82)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Strings: doubled (low + octave up) for that lush disco-string sound.
+            seq.add_chord(strings, chord_start, 8, [n(p) for p in ch_pitches], vel=62)
+            seq.add_chord(strings, chord_start, 8, [n(p) + 12 for p in ch_pitches[:3]], vel=46)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _disco_drums(seq, drums, bar_start, with_clap=(rep >= 2))
+                _disco_bass_octave(seq, bass, bar_start, n(root) + 12)
+                _disco_chicken_scratch(seq, guitar, bar_start, [n(p) for p in ch_pitches[:3]])
+
+                # Brass: two stabs per bar (beats 1 and 3.5).
+                stab = [n(p) + 12 for p in ch_pitches[:3]]
+                seq.add_chord(brass, bar_start + 0, 0.4, stab, vel=78)
+                seq.add_chord(brass, bar_start + 3.5, 0.4, stab, vel=82)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 18. DISCO - FUNKY STRUT: Nile Rodgers-style funk-disco (108 BPM, E minor)
+# =============================================================================
+def make_disco_funky_strut(reps: int = 7) -> bytes:
+    seq = Sequence(bpm=108)
+    lead = seq.add_track("Brass Lead", GM_SYNTH_BRASS_1, 0)
+    bass = seq.add_track("Slap Bass", GM_SLAP_BASS_1, 1)
+    guitar = seq.add_track("Funk Guitar", GM_ELECTRIC_GUITAR_CLEAN, 2)
+    keys = seq.add_track("Clavinet", 7, 3)  # GM 7 = Clavinet, super funky
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Em7 - A7 - Dmaj7 - G - 2 bars per chord = 8-bar cycle (~17.8s).
+    progression = [
+        ("Em7",   "E2", ["E3",  "G3",  "B3",  "D4"]),
+        ("A7",    "A1", ["A3",  "C#4", "E4",  "G4"]),
+        ("Dmaj7", "D2", ["D3",  "F#3", "A3",  "C#4"]),
+        ("G",     "G1", ["G3",  "B3",  "D4",  "F#4"]),
+    ]
+
+    horn_riff = [
+        # 8-bar funk horn line
+        ("E5", 0.5),   ("G5", 0.5),  ("B5", 0.5),  ("E5", 0.5),
+        ("D5", 1),     ("E5", 1),
+        ("E5", 0.5),   ("G5", 0.5),  ("A5", 1),    ("E5", 2),
+        ("C#5", 0.5),  ("E5", 0.5),  ("G5", 0.5),  ("C#5", 0.5),
+        ("B4", 1),     ("A4", 1),
+        ("F#5", 0.5),  ("A5", 0.5),  ("D6", 1),    ("A5", 2),
+        ("G5", 0.5),   ("B5", 0.5),  ("D6", 0.5),  ("G5", 0.5),
+        ("F#5", 1),    ("D5", 1),
+        ("E5", 2),     ("G5", 1),    ("B5", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Horn riff every other cycle (call/response feel).
+        if rep % 2 == 1:
+            seq.play_line(lead, rep_start, horn_riff, vel=88)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                # Drums: cowbell + claps for extra funk.
+                _disco_drums(seq, drums, bar_start, with_cowbell=True, with_clap=(rep >= 2))
+
+                # Bass: syncopated 16ths instead of straight 8ths for funkier feel.
+                root_pitch = n(root) + 12
+                # Pattern: R - R - oct - R - R - 5th - R - oct (16ths)
+                bass_pattern = [
+                    (0,    root_pitch,         92),
+                    (0.5,  root_pitch,         70),
+                    (0.75, root_pitch + 12,    82),
+                    (1,    root_pitch,         88),
+                    (1.5,  root_pitch + 7,     78),
+                    (2,    root_pitch,         92),
+                    (2.5,  root_pitch,         70),
+                    (2.75, root_pitch + 12,    82),
+                    (3,    root_pitch,         88),
+                    (3.5,  root_pitch + 7,     78),
+                ]
+                for off, p, v in bass_pattern:
+                    seq.add_note(bass, bar_start + off, 0.22, p, v)
+
+                # Heavy chicken scratch on guitar.
+                _disco_chicken_scratch(seq, guitar, bar_start, [n(p) for p in ch_pitches[:3]],
+                                       accent_idx=(0, 3, 6, 8, 11, 14))
+
+                # Clavinet: chord on beat 1 + offbeat stab on 2.5.
+                seq.add_chord(keys, bar_start + 0, 0.3, [n(p) for p in ch_pitches[:3]], vel=72)
+                seq.add_chord(keys, bar_start + 2.5, 0.3, [n(p) for p in ch_pitches[:3]], vel=64)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 19. DISCO - DIVA ANTHEM: lush dramatic disco (112 BPM, A minor)
+# =============================================================================
+def make_disco_diva_anthem(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=112)
+    voice = seq.add_track("Voice Lead", GM_VOICE_OOHS, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_2, 1)
+    strings = seq.add_track("Strings", GM_STRINGS, 2)
+    pad = seq.add_track("Synth Strings", GM_SYNTH_STRINGS_1, 3)
+    brass = seq.add_track("Brass", GM_BRASS_SECTION, 4)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # 8-chord progression in 8 bars (1 bar per chord) for more drama.
+    progression = [
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("F",   "F1",  ["F3",  "A3",  "C4"]),
+        ("C",   "C2",  ["C4",  "E4",  "G4"]),
+        ("G",   "G1",  ["G3",  "B3",  "D4"]),
+        ("Dm",  "D2",  ["D4",  "F4",  "A4"]),
+        ("E7",  "E1",  ["E3",  "G#3", "B3",  "D4"]),
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("E7",  "E1",  ["E3",  "G#3", "B3",  "D4"]),
+    ]
+
+    # 8-bar diva-style melody (1 bar per chord change).
+    diva_melody = [
+        ("E5", 1.5),   ("G5", 0.5),  ("A5", 2),                  # Am
+        ("F5", 1),     ("A5", 1),    ("C6", 2),                  # F
+        ("E5", 1),     ("G5", 1),    ("C6", 2),                  # C
+        ("D5", 0.5),   ("G5", 0.5),  ("B5", 1),    ("D6", 2),    # G
+        ("F5", 1),     ("A5", 1),    ("D6", 2),                  # Dm
+        ("E5", 1),     ("G#5", 1),   ("B5", 2),                  # E7
+        ("A5", 0.5),   ("C6", 0.5),  ("E6", 1),    ("A6", 2),    # Am
+        ("G#5", 1),    ("B5", 1),    ("E5", 2),                  # E7
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Voice lead drops in from cycle 2.
+        if rep >= 1:
+            seq.play_line(voice, rep_start, diva_melody, vel=88)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 4  # 1 bar per chord
+
+            # Strings + pad: layered held chords.
+            seq.add_chord(strings, chord_start, 4, [n(p) for p in ch_pitches], vel=60)
+            seq.add_chord(pad, chord_start, 4, [n(p) + 12 for p in ch_pitches[:3]], vel=46)
+
+            _disco_drums(seq, drums, chord_start, with_clap=(rep >= 1))
+            _disco_bass_octave(seq, bass, chord_start, n(root) + 12)
+
+            # Brass stab on beat 4.5 of every bar (drives into next chord).
+            stab = [n(p) + 12 for p in ch_pitches[:3]]
+            seq.add_chord(brass, chord_start + 3.5, 0.4, stab, vel=80)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 20. DISCO - DANCE FLOOR HEAT: euro-disco, 16th-note synth bass (128 BPM, C min)
+# =============================================================================
+def make_disco_dance_floor_heat(reps: int = 9) -> bytes:
+    seq = Sequence(bpm=128)
+    lead = seq.add_track("Synth Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Synth Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_POLYSYNTH, 2)
+    strings = seq.add_track("Strings", GM_STRINGS, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Cm - Ab - Eb - Bb (i - VI - III - VII), 2 bars each = 8-bar cycle (~15s).
+    progression = [
+        ("Cm",  "C2",  ["C4",  "Eb4", "G4"]),
+        ("Ab",  "Ab1", ["Ab3", "C4",  "Eb4"]),
+        ("Eb",  "Eb2", ["Eb3", "G3",  "Bb3"]),
+        ("Bb",  "Bb1", ["Bb3", "D4",  "F4"]),
+    ]
+
+    arp_melody = [
+        # 8-bar Moroder-style synth lead
+        ("G5", 0.5),  ("Eb5", 0.5), ("C5", 0.5),  ("G4", 0.5),
+        ("G5", 0.5),  ("Eb5", 0.5), ("C5", 0.5),  ("Eb5", 0.5),
+        ("Ab5", 0.5), ("Eb5", 0.5), ("C5", 0.5),  ("Ab4", 0.5),
+        ("Ab5", 0.5), ("Eb5", 0.5), ("C5", 0.5),  ("Eb5", 0.5),
+        ("Bb5", 0.5), ("G5", 0.5),  ("Eb5", 0.5), ("Bb4", 0.5),
+        ("Bb5", 0.5), ("G5", 0.5),  ("Eb5", 0.5), ("G5", 0.5),
+        ("D6", 0.5),  ("Bb5", 0.5), ("F5", 0.5),  ("D5", 0.5),
+        ("F5", 1),    ("Bb5", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(lead, rep_start, arp_melody, vel=82)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Pad/strings: held chord through 2 bars.
+            seq.add_chord(pad, chord_start, 8, [n(p) for p in ch_pitches], vel=52)
+            seq.add_chord(strings, chord_start, 8, [n(p) + 12 for p in ch_pitches[:3]], vel=44)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _disco_drums(seq, drums, bar_start, with_clap=(rep >= 2), with_tambourine=(rep >= 4))
+
+                # 16th-note synth bass arpeggio (the Moroder hallmark).
+                root_pitch = n(root) + 12
+                fifth_pitch = root_pitch + 7
+                octave_pitch = root_pitch + 12
+                bass_seq = [root_pitch, fifth_pitch, octave_pitch, fifth_pitch] * 4
+                for i, p in enumerate(bass_seq):
+                    seq.add_note(bass, bar_start + i * 0.25, 0.22, p, vel=88)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# Shared jazz helpers (swing ride pattern, walking bass quarters).
+# =============================================================================
+def _jazz_swing_ride(seq: Sequence, drums: Track, bar_start: float, vel: int = 58) -> None:
+    """Classic 'spang-a-lang' swung ride pattern over 4 beats (4/4)."""
+    # Beat 1, 2, 2.667 (swung "and"), 3, 4, 4.667
+    for b in (0, 1, 1.667, 2, 3, 3.667):
+        seq.add_drum(drums, bar_start + b, RIDE, vel=vel - (8 if b in (1.667, 3.667) else 0))
+
+
+def _jazz_hat_foot(seq: Sequence, drums: Track, bar_start: float, vel: int = 50) -> None:
+    """Hi-hat pedal on beats 2 and 4 (jazz afterbeat)."""
+    seq.add_drum(drums, bar_start + 1, PEDAL_HAT, vel=vel)
+    seq.add_drum(drums, bar_start + 3, PEDAL_HAT, vel=vel)
+
+
+def _jazz_walking_bass(seq: Sequence, bass: Track, bar_start: float,
+                       notes: list[str], vel: int = 78) -> None:
+    """4 quarter notes per bar, slight gap so attack is clean."""
+    for i, p in enumerate(notes):
+        seq.add_note(bass, bar_start + i, 0.92, n(p), vel)
+
+
+# =============================================================================
+# 21. JAZZ - SMOOTH STANDARDS: medium-swing ballad (80 BPM, F major)
+# =============================================================================
+def make_jazz_smooth_standards(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=80)
+    sax = seq.add_track("Tenor Sax", 66, 0)  # GM Tenor Sax
+    piano = seq.add_track("Piano", GM_ACOUSTIC_GRAND, 1)
+    bass = seq.add_track("Bass", GM_ACOUSTIC_BASS, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # 8-bar form: Fmaj7 - Dm7 - Gm7 - C7 - Am7 - D7 - Gm7 - C7 (~24s/cycle).
+    chords = [
+        # name, walking bass (4 quarters), piano voicing
+        ("Fmaj7", ["F2",  "A2",  "C3",  "E3"],  ["E3",  "A3",  "C4",  "F4"]),
+        ("Dm7",   ["D2",  "F2",  "A2",  "C3"],  ["F3",  "A3",  "C4",  "D4"]),
+        ("Gm7",   ["G2",  "Bb2", "D3",  "F3"],  ["F3",  "Bb3", "D4",  "G4"]),
+        ("C7",    ["C2",  "E2",  "G2",  "Bb2"], ["E3",  "G3",  "Bb3", "C4"]),
+        ("Am7",   ["A2",  "C3",  "E3",  "G3"],  ["G3",  "C4",  "E4",  "A4"]),
+        ("D7",    ["D2",  "F#2", "A2",  "C3"],  ["F#3", "A3",  "C4",  "D4"]),
+        ("Gm7",   ["G2",  "Bb2", "D3",  "F3"],  ["F3",  "Bb3", "D4",  "G4"]),
+        ("C7",    ["C2",  "E2",  "G2",  "Bb2"], ["E3",  "G3",  "Bb3", "C4"]),
+    ]
+
+    # Sax melody: lyrical, sustained, with a few ornaments.
+    sax_line = [
+        ("A4", 1.5),   ("C5", 0.5),  ("F5", 1),    ("E5", 1),     # Fmaj7
+        ("D5", 1),     ("F5", 1),    ("A5", 2),                   # Dm7
+        ("Bb4", 1),    ("D5", 1),    ("F5", 0.5),  ("D5", 0.5),   ("Bb4", 1),  # Gm7
+        ("E4", 0.5),   ("G4", 0.5),  ("Bb4", 1),   ("C5", 2),     # C7
+        ("A4", 1.5),   ("C5", 0.5),  ("E5", 1),    ("G5", 1),     # Am7
+        ("F5", 0.5),   ("D5", 0.5),  ("F#5", 1),   ("A5", 2),     # D7
+        ("G5", 1),     ("F5", 1),    ("D5", 1),    ("Bb4", 1),    # Gm7
+        ("Bb4", 1),    ("A4", 1),    ("E4", 1),    ("F4", 1),     # C7 -> resolve to F
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Sax plays from cycle 2 onward (intro = bass + drums + piano comp).
+        if rep >= 1:
+            seq.play_line(sax, rep_start, sax_line, vel=82)
+
+        for ci, (cname, walk, voicing) in enumerate(chords):
+            bar_start = rep_start + ci * 4
+
+            _jazz_swing_ride(seq, drums, bar_start)
+            _jazz_hat_foot(seq, drums, bar_start)
+            _jazz_walking_bass(seq, bass, bar_start, walk)
+
+            # Piano: comp on beat 1 + offbeat (Charleston feel).
+            seq.add_chord(piano, bar_start + 0, 1.4, [n(p) for p in voicing], vel=66)
+            seq.add_chord(piano, bar_start + 2.5, 1.4, [n(p) for p in voicing], vel=58)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 22. JAZZ - BEBOP BURNER: fast bebop (192 BPM, C major)
+# =============================================================================
+def make_jazz_bebop_burner(reps: int = 7) -> bytes:
+    seq = Sequence(bpm=192)
+    trumpet = seq.add_track("Trumpet", GM_TRUMPET, 0)
+    piano = seq.add_track("Piano", GM_ACOUSTIC_GRAND, 1)
+    bass = seq.add_track("Bass", GM_ACOUSTIC_BASS, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # 16-bar rhythm-changes-style A section in C major (~20s/cycle at 192 BPM).
+    # | C  Am | Dm G | C  Am | Dm G | F  Fm | C  A7 | Dm G | C   ||
+    # Use 1 bar per chord pair where listed, simplified:
+    chords_16 = [
+        # First 8 bars (A1)
+        ("C",   ["C2",  "E2",  "G2",  "B2"], ["E3", "G3", "C4"]),
+        ("Am7", ["A2",  "C3",  "E3",  "G3"], ["E3", "G3", "C4"]),
+        ("Dm7", ["D2",  "F2",  "A2",  "C3"], ["F3", "A3", "C4"]),
+        ("G7",  ["G2",  "B2",  "D3",  "F3"], ["F3", "B3", "D4"]),
+        ("C",   ["C2",  "E2",  "G2",  "B2"], ["E3", "G3", "C4"]),
+        ("Am7", ["A2",  "C3",  "E3",  "G3"], ["E3", "G3", "C4"]),
+        ("Dm7", ["D2",  "F2",  "A2",  "C3"], ["F3", "A3", "C4"]),
+        ("G7",  ["G2",  "B2",  "D3",  "F3"], ["F3", "B3", "D4"]),
+        # Second 8 bars (A2)
+        ("F",   ["F2",  "A2",  "C3",  "E3"], ["A3", "C4", "F4"]),
+        ("Fm",  ["F2",  "Ab2", "C3",  "Eb3"], ["Ab3","C4", "F4"]),
+        ("C",   ["C2",  "E2",  "G2",  "B2"], ["E3", "G3", "C4"]),
+        ("A7",  ["A2",  "C#3", "E3",  "G3"], ["C#3","E3", "G3"]),
+        ("Dm7", ["D2",  "F2",  "A2",  "C3"], ["F3", "A3", "C4"]),
+        ("G7",  ["G2",  "B2",  "D3",  "F3"], ["F3", "B3", "D4"]),
+        ("C",   ["C2",  "E2",  "G2",  "B2"], ["E3", "G3", "C4"]),
+        ("G7",  ["G2",  "B2",  "D3",  "F3"], ["F3", "B3", "D4"]),
+    ]
+
+    # Bebop trumpet head: rapid 8th-note runs over the changes (16 bars).
+    bebop_head = [
+        # Bar 1 (C): C major arp with chromatic approach
+        ("E5", 0.5), ("G5", 0.5), ("C6", 0.5), ("B5", 0.5),
+        ("A5", 0.5), ("G5", 0.5), ("E5", 0.5), ("C5", 0.5),
+        # Bar 2 (Am7)
+        ("A5", 0.5), ("E5", 0.5), ("C5", 0.5), ("E5", 0.5),
+        ("G5", 0.5), ("E5", 0.5), ("C5", 0.5), ("A4", 0.5),
+        # Bar 3 (Dm7)
+        ("D5", 0.5), ("F5", 0.5), ("A5", 0.5), ("C6", 0.5),
+        ("Bb5", 0.5), ("A5", 0.5), ("F5", 0.5), ("D5", 0.5),
+        # Bar 4 (G7)
+        ("D5", 0.5), ("F5", 0.5), ("G5", 0.5), ("B5", 0.5),
+        ("D6", 0.5), ("B5", 0.5), ("F5", 0.5), ("D5", 0.5),
+        # Bar 5 (C)
+        ("C5", 0.5), ("E5", 0.5), ("G5", 0.5), ("E5", 0.5),
+        ("C5", 0.5), ("D5", 0.5), ("E5", 0.5), ("F5", 0.5),
+        # Bar 6 (Am7)
+        ("G5", 0.5), ("A5", 0.5), ("C6", 0.5), ("A5", 0.5),
+        ("G5", 0.5), ("E5", 0.5), ("D5", 0.5), ("C5", 0.5),
+        # Bar 7 (Dm7)
+        ("D5", 0.5), ("E5", 0.5), ("F5", 0.5), ("A5", 0.5),
+        ("F5", 0.5), ("E5", 0.5), ("D5", 0.5), ("C5", 0.5),
+        # Bar 8 (G7)
+        ("B4", 0.5), ("D5", 0.5), ("F5", 0.5), ("G5", 0.5),
+        ("F5", 0.5), ("D5", 0.5), ("B4", 0.5), ("G4", 0.5),
+        # Bar 9 (F)
+        ("A4", 0.5), ("C5", 0.5), ("F5", 0.5), ("A5", 0.5),
+        ("G5", 0.5), ("F5", 0.5), ("E5", 0.5), ("C5", 0.5),
+        # Bar 10 (Fm)
+        ("F5", 0.5), ("Ab5", 0.5), ("C6", 0.5), ("Ab5", 0.5),
+        ("F5", 0.5), ("Eb5", 0.5), ("C5", 0.5), ("Ab4", 0.5),
+        # Bar 11 (C)
+        ("E5", 0.5), ("G5", 0.5), ("C6", 0.5), ("E6", 0.5),
+        ("D6", 0.5), ("C6", 0.5), ("B5", 0.5), ("G5", 0.5),
+        # Bar 12 (A7)
+        ("E5", 0.5), ("G5", 0.5), ("C#6", 0.5), ("E6", 0.5),
+        ("C#6", 0.5), ("A5", 0.5), ("G5", 0.5), ("E5", 0.5),
+        # Bar 13 (Dm7)
+        ("D5", 0.5), ("F5", 0.5), ("A5", 0.5), ("C6", 0.5),
+        ("Bb5", 0.5), ("A5", 0.5), ("F5", 0.5), ("D5", 0.5),
+        # Bar 14 (G7)
+        ("G5", 0.5), ("B5", 0.5), ("D6", 0.5), ("F6", 0.5),
+        ("D6", 0.5), ("B5", 0.5), ("F5", 0.5), ("D5", 0.5),
+        # Bar 15 (C)
+        ("E5", 0.5), ("G5", 0.5), ("C6", 0.5), ("G5", 0.5),
+        ("E5", 0.5), ("D5", 0.5), ("C5", 0.5), ("E5", 0.5),
+        # Bar 16 (G7) - turnaround
+        ("D5", 0.5), ("B4", 0.5), ("D5", 0.5), ("F5", 0.5),
+        ("G5", 0.5), ("F5", 0.5), ("D5", 0.5), ("B4", 0.5),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 64  # 16 bars * 4 beats = 64 beats per cycle
+
+        # Trumpet plays the head on cycles 0 and the last; rests on middle ones.
+        if rep == 0 or rep == reps - 1 or rep % 3 == 1:
+            seq.play_line(trumpet, rep_start, bebop_head, vel=88)
+
+        for ci, (cname, walk, voicing) in enumerate(chords_16):
+            bar_start = rep_start + ci * 4
+
+            _jazz_swing_ride(seq, drums, bar_start, vel=66)
+            _jazz_hat_foot(seq, drums, bar_start, vel=58)
+            # Drummer occasionally drops a snare comment on beat 4.5
+            if ci % 4 == 3:
+                seq.add_drum(drums, bar_start + 3.5, SNARE, vel=55)
+
+            _jazz_walking_bass(seq, bass, bar_start, walk, vel=82)
+
+            # Piano: rhythmic comp (Bud Powell-style: chord on beat 1 + offbeat 3.5).
+            seq.add_chord(piano, bar_start + 0, 0.6, [n(p) for p in voicing], vel=66)
+            seq.add_chord(piano, bar_start + 2.5, 0.6, [n(p) for p in voicing], vel=58)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 23. JAZZ - BOSSA NOVA: Brazilian feel, gentle & syncopated (120 BPM, D minor)
+# =============================================================================
+def make_jazz_bossa_nova(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=120)
+    flute = seq.add_track("Flute", 73, 0)  # GM Flute
+    piano = seq.add_track("Electric Piano", GM_ELECTRIC_PIANO_1, 1)
+    bass = seq.add_track("Bass", GM_ACOUSTIC_BASS, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # 8-bar progression: Dm7 - G7 - Cmaj7 - Fmaj7 - Bm7b5 - E7 - Am7 - D7
+    chords = [
+        ("Dm7",    "D2",  "A2",  ["D3",  "F3",  "A3",  "C4"]),
+        ("G7",     "G1",  "D2",  ["F3",  "B3",  "D4"]),
+        ("Cmaj7",  "C2",  "G2",  ["E3",  "G3",  "B3"]),
+        ("Fmaj7",  "F1",  "C2",  ["A3",  "C4",  "E4"]),
+        ("Bm7b5",  "B1",  "F2",  ["D3",  "F3",  "A3"]),
+        ("E7",     "E1",  "B1",  ["G#3", "B3",  "D4"]),
+        ("Am7",    "A1",  "E2",  ["C4",  "E4",  "G4"]),
+        ("D7",     "D2",  "A2",  ["F#3", "A3",  "C4"]),
+    ]
+
+    # Flute melody (8 bars), gentle and syncopated.
+    flute_line = [
+        ("F5", 1.5),   ("E5", 0.5),   ("D5", 1),    ("F5", 1),
+        ("D5", 1),     ("F5", 1),     ("G5", 1.5),  ("E5", 0.5),
+        ("E5", 1),     ("D5", 0.5),   ("E5", 0.5),  ("G5", 2),
+        ("F5", 1),     ("E5", 1),     ("C5", 1),    ("A4", 1),
+        ("D5", 1.5),   ("F5", 0.5),   ("A5", 2),
+        ("G#5", 0.5),  ("B5", 0.5),   ("D6", 1),    ("B5", 2),
+        ("A5", 1),     ("E5", 1),     ("G5", 1),    ("C5", 1),
+        ("F#5", 1),    ("A5", 1),     ("D5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(flute, rep_start, flute_line, vel=78)
+
+        for ci, (cname, root_low, root_high, voicing) in enumerate(chords):
+            bar_start = rep_start + ci * 4
+
+            # Bossa bass: root on 1 + 5th on 2.5 (anticipation), every bar.
+            seq.add_note(bass, bar_start + 0,   1.4, n(root_low),  vel=78)
+            seq.add_note(bass, bar_start + 2.5, 1.4, n(root_high), vel=72)
+
+            # Bossa drum: side stick (snare at low velocity) on syncopated pattern,
+            # plus light closed hat 8ths.
+            seq.add_drum(drums, bar_start + 0,    SNARE, vel=42)  # low-vel = side-stick approximation
+            seq.add_drum(drums, bar_start + 1,    SNARE, vel=38)
+            seq.add_drum(drums, bar_start + 1.5,  SNARE, vel=42)
+            seq.add_drum(drums, bar_start + 2.5,  SNARE, vel=42)
+            seq.add_drum(drums, bar_start + 3,    SNARE, vel=38)
+            seq.add_drum(drums, bar_start + 3.5,  SNARE, vel=42)
+            for h in range(8):
+                seq.add_drum(drums, bar_start + h * 0.5, CLOSED_HAT, vel=44)
+            # Light kick on beat 1 only.
+            seq.add_drum(drums, bar_start + 0, KICK, vel=58)
+
+            # Piano comp: classic bossa "1+3+ 4 +" pattern with 16th anticipation.
+            for off in (0, 0.75, 1.5, 2.5, 3.25):
+                seq.add_chord(piano, bar_start + off, 0.45, [n(p) for p in voicing], vel=58)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 24. JAZZ - WALTZ: jazz waltz in 3/4 (96 BPM, A minor)
+# =============================================================================
+def make_jazz_waltz(reps: int = 9) -> bytes:
+    seq = Sequence(bpm=96, time_sig=(3, 2))
+    sax = seq.add_track("Soprano Sax", 64, 0)  # GM Soprano Sax
+    piano = seq.add_track("Piano", GM_ACOUSTIC_GRAND, 1)
+    bass = seq.add_track("Bass", GM_ACOUSTIC_BASS, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # 8-bar progression in 3/4: Am - Em - F - C - Dm - G - C - E7
+    chords = [
+        ("Am",  ["A2",  "C3",  "E3"], ["A3",  "C4",  "E4"]),
+        ("Em",  ["E2",  "G2",  "B2"], ["G3",  "B3",  "E4"]),
+        ("F",   ["F2",  "A2",  "C3"], ["A3",  "C4",  "F4"]),
+        ("C",   ["C3",  "E3",  "G3"], ["E3",  "G3",  "C4"]),
+        ("Dm",  ["D2",  "F2",  "A2"], ["F3",  "A3",  "D4"]),
+        ("G",   ["G2",  "B2",  "D3"], ["G3",  "B3",  "D4"]),
+        ("C",   ["C3",  "E3",  "G3"], ["E3",  "G3",  "C4"]),
+        ("E7",  ["E2",  "G#2", "B2"], ["G#3", "B3",  "D4"]),
+    ]
+
+    # Sax line in 3 (8 bars * 3 beats = 24 beats per phrase).
+    sax_line = [
+        ("E5", 1),   ("A5", 1),   ("C6", 1),     # bar 1 (Am)
+        ("B5", 1),   ("G5", 1),   ("E5", 1),     # bar 2 (Em)
+        ("F5", 1),   ("A5", 1),   ("C6", 1),     # bar 3 (F)
+        ("E5", 1.5), ("D5", 0.5), ("C5", 1),     # bar 4 (C)
+        ("D5", 1),   ("F5", 1),   ("A5", 1),     # bar 5 (Dm)
+        ("G5", 1),   ("D5", 1),   ("B5", 1),     # bar 6 (G)
+        ("C5", 1),   ("E5", 1),   ("G5", 1),     # bar 7 (C)
+        ("G#5", 1),  ("B5", 1),   ("E6", 1),     # bar 8 (E7)
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 24  # 8 bars * 3 beats per bar
+
+        if rep >= 1:
+            seq.play_line(sax, rep_start, sax_line, vel=80)
+
+        for ci, (cname, walk, voicing) in enumerate(chords):
+            bar_start = rep_start + ci * 3  # 3 beats per bar
+
+            # Bass on beat 1; chord tones on 2 and 3 (jazz waltz "in 3" feel).
+            seq.add_note(bass, bar_start + 0, 0.95, n(walk[0]), vel=78)
+            seq.add_note(bass, bar_start + 1, 0.95, n(walk[1]), vel=72)
+            seq.add_note(bass, bar_start + 2, 0.95, n(walk[2]), vel=72)
+
+            # Ride pattern in 3: ride on every beat, accent on 1.
+            seq.add_drum(drums, bar_start + 0, RIDE, vel=64)
+            seq.add_drum(drums, bar_start + 1, RIDE, vel=52)
+            seq.add_drum(drums, bar_start + 2, RIDE, vel=52)
+            seq.add_drum(drums, bar_start + 1.667, RIDE, vel=44)  # swung "and" of 2
+
+            # Hi-hat on beat 2 (jazz waltz afterbeat).
+            seq.add_drum(drums, bar_start + 1, PEDAL_HAT, vel=46)
+            # Soft snare comment on beat 2 once per bar (low vel).
+            seq.add_drum(drums, bar_start + 2.5, SNARE, vel=38)
+
+            # Piano comp: chord on beat 1 + a softer offbeat on 2.5.
+            seq.add_chord(piano, bar_start + 0,   1.0, [n(p) for p in voicing], vel=66)
+            seq.add_chord(piano, bar_start + 2.5, 0.5, [n(p) for p in voicing], vel=54)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 25. JAZZ - COOL BLUE: modal "Kind of Blue" feel (100 BPM, D dorian)
+# =============================================================================
+def make_jazz_cool_blue(reps: int = 2) -> bytes:
+    seq = Sequence(bpm=100)
+    trumpet = seq.add_track("Muted Trumpet", 59, 0)  # GM Muted Trumpet
+    piano = seq.add_track("Piano", GM_ACOUSTIC_GRAND, 1)
+    bass = seq.add_track("Bass", GM_ACOUSTIC_BASS, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Modal vamp: 16 bars Dm7, then 16 bars Ebm7 (a-la "So What").
+    # Each rep = 32 bars = 128 beats = 76.8s. 2 reps = 153s.
+    sections = [
+        ("Dm7",  ["D2", "F2", "A2", "C3"], ["F3", "A3", "C4", "E4"]),  # D dorian
+        ("Ebm7", ["Eb2","Gb2","Bb2","Db3"], ["Gb3","Bb3","Db4","F4"]), # Eb dorian
+    ]
+
+    # Modal melody (8 bars, repeated and transposed for the second key).
+    modal_phrase = [
+        # Bar 1
+        ("D5", 1.5),   ("F5", 0.5),   ("A5", 2),
+        # Bar 2
+        ("G5", 1),     ("F5", 1),     ("E5", 1),     ("D5", 1),
+        # Bar 3
+        ("C5", 2),     ("E5", 2),
+        # Bar 4
+        ("A4", 2),     (None, 2),
+        # Bar 5
+        ("F5", 1.5),   ("A5", 0.5),   ("C6", 2),
+        # Bar 6
+        ("Bb5", 1),    ("A5", 1),     ("F5", 2),
+        # Bar 7
+        ("D5", 4),
+        # Bar 8 - rest
+        (None, 4),
+    ]
+
+    def transpose_phrase(phrase, semitones):
+        out = []
+        for pitch, dur in phrase:
+            if pitch is None:
+                out.append((None, dur))
+            else:
+                out.append((_transpose(pitch, semitones), dur))
+        return out
+
+    for rep in range(reps):
+        rep_start = rep * 128
+
+        for si, (cname, walk, voicing) in enumerate(sections):
+            section_start = rep_start + si * 64  # 16 bars per section
+
+            # Modal phrase plays in bars 1-8 of each 16-bar section.
+            phrase = modal_phrase if si == 0 else transpose_phrase(modal_phrase, 1)
+            seq.play_line(trumpet, section_start, phrase, vel=78)
+            # Echo of phrase higher in bars 9-16.
+            phrase_high = transpose_phrase(phrase, 12) if si == 0 else transpose_phrase(phrase, 13)
+            seq.play_line(trumpet, section_start + 32, phrase_high, vel=68)
+
+            # 16 bars of comping/walking/ride for this modal section.
+            for bi in range(16):
+                bar_start = section_start + bi * 4
+
+                _jazz_swing_ride(seq, drums, bar_start, vel=58)
+                _jazz_hat_foot(seq, drums, bar_start, vel=48)
+                # Walking bass with subtle variation across the section.
+                walk_for_bar = walk if bi % 2 == 0 else list(reversed(walk))
+                _jazz_walking_bass(seq, bass, bar_start, walk_for_bar, vel=74)
+                # Sparse modal piano voicing on beat 1 + occasional comp.
+                seq.add_chord(piano, bar_start + 0, 1.5, [n(p) for p in voicing], vel=58)
+                if bi % 4 == 1:
+                    seq.add_chord(piano, bar_start + 2.5, 1.0, [n(p) for p in voicing[:3]], vel=48)
+
+    return seq.to_smf()
+
+
+def _transpose(pitch_name: str, semitones: int) -> str:
+    """Transpose a note name like 'D5' or 'Bb4' by N semitones, returning a note name."""
+    midi = n(pitch_name) + semitones
+    pc = midi % 12
+    octave = midi // 12 - 1
+    name = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][pc]
+    return f"{name}{octave}"
+
+
+# =============================================================================
+# Shared thug-life helpers (boom-bap and trap drum patterns).
+# =============================================================================
+def _boom_bap_drums(seq: Sequence, drums: Track, bar_start: float,
+                    with_rim: bool = False, with_open_hat_offbeats: bool = True) -> None:
+    """Classic 90s boom-bap: heavy kick on 1 + 3.5, snare on 3, soft hat 8ths."""
+    seq.add_drum(drums, bar_start + 0,   KICK, vel=110)
+    seq.add_drum(drums, bar_start + 2,   SNARE, vel=104)
+    seq.add_drum(drums, bar_start + 3.5, KICK, vel=92)
+    for h in range(8):
+        beat = bar_start + h * 0.5
+        if with_open_hat_offbeats and (h % 2 == 1):
+            seq.add_drum(drums, beat, OPEN_HAT, vel=58)
+        else:
+            seq.add_drum(drums, beat, CLOSED_HAT, vel=52)
+    if with_rim:
+        seq.add_drum(drums, bar_start + 1, SNARE, vel=42)
+
+
+def _trap_drums(seq: Sequence, drums: Track, bar_start: float, fill: bool = False) -> None:
+    """Trap-style drums: kick on 1 + syncopated, clap on 3, fast 16th hats with rolls."""
+    seq.add_drum(drums, bar_start + 0,    KICK, vel=115)
+    seq.add_drum(drums, bar_start + 1.5,  KICK, vel=92)
+    seq.add_drum(drums, bar_start + 2.75, KICK, vel=88)
+    # Clap+snare on beat 3 (the "snare" of trap).
+    seq.add_drum(drums, bar_start + 2, HAND_CLAP, vel=108)
+    seq.add_drum(drums, bar_start + 2, SNARE, vel=78)
+    # 16th hats throughout, with a 32nd-note roll on beat 4 if fill.
+    if fill:
+        for i in range(12):
+            seq.add_drum(drums, bar_start + i * 0.25, CLOSED_HAT, vel=54 - (i % 2) * 6)
+        # 32nd-note roll on beat 4.
+        for i in range(8):
+            seq.add_drum(drums, bar_start + 3 + i * 0.125, CLOSED_HAT, vel=48 + i * 2)
+    else:
+        for i in range(16):
+            v = 56 if i % 2 == 0 else 44
+            # Slight emphasis on beats 1, 2, 3, 4
+            if i in (0, 4, 8, 12):
+                v = 64
+            seq.add_drum(drums, bar_start + i * 0.25, CLOSED_HAT, vel=v)
+
+
+# =============================================================================
+# 26. THUG LIFE - G-FUNK CRUISE: 90s West Coast g-funk (92 BPM, E minor)
+# =============================================================================
+def make_thug_g_funk_cruise(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=92)
+    lead = seq.add_track("Whiny Lead", 84, 0)  # GM Lead 5 (Charang) - g-funk whiny synth
+    bass = seq.add_track("Sub Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_WARM, 2)
+    talkbox = seq.add_track("Talkbox", GM_VOICE_OOHS, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Em - Bm - Am - Em (i-v-iv-i), 2 bars per chord = 8-bar cycle (~21s).
+    progression = [
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("Bm",  "B1",  ["B2",  "D3",  "F#3"]),
+        ("Am",  "A1",  ["A2",  "C3",  "E3"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+    ]
+
+    lead_line = [
+        # Whiny portamento-style lead (8 bars)
+        ("E5", 1.5),   ("G5", 0.5),   ("B5", 2),
+        ("A5", 1),     ("G5", 1),     ("E5", 2),
+        ("F#5", 2),    ("A5", 1),     ("B5", 1),
+        ("D6", 1),     ("B5", 1),     ("F#5", 2),
+        ("E5", 1),     ("A5", 1),     ("C6", 2),
+        ("B5", 1),     ("A5", 1),     ("E5", 2),
+        ("E5", 1),     ("G5", 1),     ("B5", 2),
+        ("A5", 1),     ("G5", 1),     ("E5", 2),
+    ]
+
+    talk_oohs = [
+        ("E4", 4), (None, 4),
+        ("D4", 4), (None, 4),
+        ("C4", 4), (None, 4),
+        ("E4", 4), (None, 4),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Lead drops in cycle 2; talkbox-style oohs on cycles 3-4 for variation.
+        if rep >= 1:
+            seq.play_line(lead, rep_start, lead_line, vel=82)
+        if rep in (2, 4):
+            seq.play_line(talkbox, rep_start, talk_oohs, vel=58)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Pad: warm sustained chord across 2 bars.
+            seq.add_chord(pad, chord_start, 8, [n(p) for p in ch_pitches], vel=50)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _boom_bap_drums(seq, drums, bar_start, with_rim=(rep >= 2))
+
+                # Sub bass: long held root + octave bounce on beat 3.
+                seq.add_note(bass, bar_start + 0, 2.5, n(root), vel=98)
+                seq.add_note(bass, bar_start + 3, 1.0, n(root) + 12, vel=80)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 27. THUG LIFE - EAST COAST BOOM BAP: jazzy sample style (88 BPM, A minor)
+# =============================================================================
+def make_thug_east_coast_boom_bap(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=88)
+    piano = seq.add_track("Sample Piano", GM_ACOUSTIC_GRAND, 0)
+    vibes = seq.add_track("Vibes", GM_VIBRAPHONE, 1)
+    bass = seq.add_track("Upright Bass", GM_ACOUSTIC_BASS, 2)
+    rhodes = seq.add_track("Rhodes", GM_ELECTRIC_PIANO_1, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Am7 - Dm7 - Em7 - Am7 (i-iv-v-i), 2 bars per chord = 8-bar cycle (~21.8s).
+    progression = [
+        ("Am7", "A1",  ["A3",  "C4",  "E4",  "G4"]),
+        ("Dm7", "D2",  ["D3",  "F3",  "A3",  "C4"]),
+        ("Em7", "E2",  ["E3",  "G3",  "B3",  "D4"]),
+        ("Am7", "A1",  ["A3",  "C4",  "E4",  "G4"]),
+    ]
+
+    # Vibraphone "sample" melody (8 bars).
+    vibes_line = [
+        ("A4", 1),   ("C5", 1),   ("E5", 2),
+        ("G5", 1),   ("E5", 1),   ("A4", 2),
+        ("D5", 1),   ("F5", 1),   ("A5", 2),
+        ("G5", 0.5), ("F5", 0.5), ("D5", 1),   ("A4", 2),
+        ("B4", 1),   ("D5", 1),   ("G5", 2),
+        ("F5", 1),   ("E5", 1),   ("B4", 2),
+        ("A4", 1),   ("E5", 1),   ("C5", 2),
+        ("E5", 1),   ("A4", 1),   ("E4", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(vibes, rep_start, vibes_line, vel=72)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Piano sample: chord stab on beat 1 + offbeat (every bar).
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _boom_bap_drums(seq, drums, bar_start)
+
+                # Bass: 1 and 3 (lazy walking).
+                seq.add_note(bass, bar_start + 0, 1.4, n(root) + 12, vel=88)
+                seq.add_note(bass, bar_start + 2, 1.4, n(root) + 19, vel=78)
+
+                # Piano stab on 1, soft.
+                seq.add_chord(piano, bar_start + 0, 0.6, [n(p) for p in ch_pitches[:3]], vel=68)
+                # Rhodes layered chord on 2.5 for depth.
+                seq.add_chord(rhodes, bar_start + 2.5, 1.4, [n(p) for p in ch_pitches], vel=52)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 28. THUG LIFE - TRAP ANTHEM: dark trap with rolled hats (70 BPM, G minor)
+# =============================================================================
+def make_thug_trap_anthem(reps: int = 5) -> bytes:
+    seq = Sequence(bpm=70)
+    lead = seq.add_track("Dark Lead", 81, 0)  # GM Lead 2 (Sawtooth) - dark melodic
+    bass_808 = seq.add_track("808 Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_WARM, 2)
+    bell = seq.add_track("Bell", GM_GLOCKENSPIEL, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Gm - Eb - Cm - Dm (i-VI-iv-v), 2 bars per chord = 8-bar cycle (~27.4s).
+    progression = [
+        ("Gm",  "G1",  ["G3",  "Bb3", "D4"]),
+        ("Eb",  "Eb1", ["Eb3", "G3",  "Bb3"]),
+        ("Cm",  "C2",  ["C3",  "Eb3", "G3"]),
+        ("Dm",  "D2",  ["D3",  "F3",  "A3"]),
+    ]
+
+    # Dark melodic lead (sparse, repeats with variation).
+    lead_line = [
+        ("G4", 2),     ("Bb4", 1),   ("D5", 1),
+        ("F5", 2),     ("Eb5", 1),   ("D5", 1),
+        ("Eb4", 2),    ("G4", 1),    ("Bb4", 1),
+        ("D5", 2),     ("Bb4", 1),   ("G4", 1),
+        ("C5", 2),     ("Eb5", 1),   ("G5", 1),
+        ("F5", 2),     ("Eb5", 1),   ("C5", 1),
+        ("D5", 2),     ("F5", 1),    ("A5", 1),
+        ("G5", 2),     ("F5", 1),    ("D5", 1),
+    ]
+
+    bell_phrase = [
+        # Sparse bell ostinato that adds atmosphere.
+        ("D6", 0.5), (None, 1.5), ("F6", 0.5), (None, 1.5),
+        ("D6", 0.5), (None, 1.5), ("Bb5", 0.5), (None, 1.5),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(lead, rep_start, lead_line, vel=78)
+        # Bell ostinato on cycles 2+ (one phrase per chord change of 2 bars).
+        if rep >= 2:
+            for ci in range(4):
+                seq.play_line(bell, rep_start + ci * 8, bell_phrase, vel=64)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Pad: held chord softly, very ambient.
+            seq.add_chord(pad, chord_start, 8, [n(p) for p in ch_pitches], vel=46)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                # Trap drums; fill on the very last bar of every other cycle.
+                fill = (bar == 1 and ci == 3 and rep % 2 == 1)
+                _trap_drums(seq, drums, bar_start, fill=fill)
+
+                # 808 sub bass: long held note on chord change (sustained for 4 beats).
+                # Plus a slide-up on beat 3 for trap-feel.
+                seq.add_note(bass_808, bar_start + 0, 2.8, n(root) - 12, vel=110)
+                seq.add_note(bass_808, bar_start + 3, 1.0, n(root), vel=92)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 29. THUG LIFE - BLOCK PARTY: early 90s hip-hop, soul vibe (100 BPM, G major)
+# =============================================================================
+def make_thug_block_party(reps: int = 7) -> bytes:
+    seq = Sequence(bpm=100)
+    horn = seq.add_track("Horn Sample", GM_BRASS_SECTION, 0)
+    rhodes = seq.add_track("Rhodes", GM_ELECTRIC_PIANO_1, 1)
+    bass = seq.add_track("Funk Bass", GM_ELECTRIC_BASS_FINGER, 2)
+    guitar = seq.add_track("Funk Guitar", GM_ELECTRIC_GUITAR_CLEAN, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # G - Em - C - D (I-vi-IV-V), 2 bars per chord = 8-bar cycle (~19.2s).
+    progression = [
+        ("G",  "G1",  ["G3",  "B3",  "D4"]),
+        ("Em", "E2",  ["E3",  "G3",  "B3"]),
+        ("C",  "C2",  ["C3",  "E3",  "G3"]),
+        ("D",  "D2",  ["D3",  "F#3", "A3"]),
+    ]
+
+    # Horn riff (8 bars, soul sample style).
+    horn_riff = [
+        ("D5", 0.5),   ("G5", 0.5),  ("B5", 1),    ("A5", 0.5),  ("G5", 0.5), ("D5", 1),
+        ("G5", 1),     ("B5", 1),    ("D6", 2),
+        ("B4", 0.5),   ("E5", 0.5),  ("G5", 1),    ("F#5", 0.5), ("E5", 0.5), ("B4", 1),
+        ("E5", 1),     ("G5", 1),    ("B5", 2),
+        ("E5", 0.5),   ("G5", 0.5),  ("C6", 1),    ("B5", 0.5),  ("G5", 0.5), ("E5", 1),
+        ("G5", 1),     ("E5", 1),    ("C5", 2),
+        ("F#5", 0.5),  ("A5", 0.5),  ("D6", 1),    ("C6", 0.5),  ("A5", 0.5), ("F#5", 1),
+        ("A5", 1),     ("F#5", 1),   ("D5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(horn, rep_start, horn_riff, vel=82)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _boom_bap_drums(seq, drums, bar_start, with_rim=True)
+
+                # Bass: funky pattern (octave + fifth shuffle).
+                seq.add_note(bass, bar_start + 0,    0.92, n(root) + 12, vel=92)
+                seq.add_note(bass, bar_start + 0.75, 0.45, n(root) + 19, vel=72)
+                seq.add_note(bass, bar_start + 2,    0.92, n(root) + 12, vel=88)
+                seq.add_note(bass, bar_start + 3.5,  0.45, n(root) + 19, vel=72)
+
+                # Rhodes: chord on beat 1 + offbeat 2.5.
+                seq.add_chord(rhodes, bar_start + 0,   1.4, [n(p) for p in ch_pitches], vel=64)
+                seq.add_chord(rhodes, bar_start + 2.5, 1.4, [n(p) for p in ch_pitches], vel=58)
+
+                # Funk guitar: 16th-note muted strums (lighter accents than disco).
+                _disco_chicken_scratch(seq, guitar, bar_start, [n(p) for p in ch_pitches[:3]],
+                                       accent_idx=(0, 6, 8, 14))
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 30. THUG LIFE - LOWRIDER SMOOTH: cruising lowrider feel (80 BPM, Bb minor)
+# =============================================================================
+def make_thug_lowrider_smooth(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=80)
+    lead = seq.add_track("Smooth Lead", GM_VOICE_OOHS, 0)
+    bass = seq.add_track("Sub Bass", GM_SYNTH_BASS_1, 1)
+    strings = seq.add_track("Strings", GM_STRINGS, 2)
+    keys = seq.add_track("Rhodes", GM_ELECTRIC_PIANO_1, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Bbm7 - Eb7 - Abmaj7 - Gm7 (jazzy minor), 2 bars per chord = 8-bar cycle (~24s).
+    progression = [
+        ("Bbm7",   "Bb1", ["Bb3", "Db4", "F4",  "Ab4"]),
+        ("Eb7",    "Eb1", ["G3",  "Bb3", "Db4", "F4"]),
+        ("Abmaj7", "Ab1", ["Ab3", "C4",  "Eb4", "G4"]),
+        ("Gm7",    "G1",  ["G3",  "Bb3", "D4",  "F4"]),
+    ]
+
+    smooth_lead = [
+        ("F5", 1.5),   ("Ab5", 0.5), ("Bb5", 2),
+        ("Ab5", 1),    ("F5", 1),    ("Db5", 2),
+        ("Eb5", 1),    ("G5", 1),    ("Bb5", 2),
+        ("Ab5", 0.5),  ("F5", 0.5),  ("Db5", 1),   ("Eb5", 2),
+        ("C5", 1.5),   ("Eb5", 0.5), ("G5", 2),
+        ("F5", 1),     ("Eb5", 1),   ("C5", 2),
+        ("Bb4", 1),    ("D5", 1),    ("F5", 2),
+        ("D5", 1),     ("Bb4", 1),   ("G4", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(lead, rep_start, smooth_lead, vel=80)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Strings: lush sustained chord across 2 bars.
+            seq.add_chord(strings, chord_start, 8, [n(p) for p in ch_pitches], vel=54)
+
+            for bar in range(2):
+                bar_start = chord_start + bar * 4
+
+                _boom_bap_drums(seq, drums, bar_start)
+
+                # Sub bass: long held root + walk to next chord on beat 3.5 of bar 2.
+                seq.add_note(bass, bar_start + 0, 3.4, n(root), vel=96)
+                if bar == 1 and ci < 3:
+                    next_root = progression[ci + 1][1]
+                    seq.add_note(bass, bar_start + 3.5, 0.5, n(next_root), vel=86)
+
+                # Rhodes: chord stab on 2.5 + sus chord on 4.5 (sparse).
+                seq.add_chord(keys, bar_start + 2.5, 1.0, [n(p) for p in ch_pitches], vel=58)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 31. FLUTE - PAN FLUTE PASTORALE: gentle Zamfir-style (75 BPM, A major)
+# =============================================================================
+def make_flute_pan_flute_pastorale(reps: int = 5) -> bytes:
+    seq = Sequence(bpm=75)
+    flute = seq.add_track("Pan Flute", GM_PAN_FLUTE, 0)
+    guitar = seq.add_track("Nylon Guitar", GM_NYLON_GUITAR, 1)
+    strings = seq.add_track("Strings", GM_STRINGS, 2)
+    harp = seq.add_track("Harp", GM_HARP, 3)
+
+    # A - F#m - D - E (I-vi-IV-V), 2 bars per chord = 8 bars per cycle (~25.6s).
+    progression = [
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+        ("F#m", "F#2", ["F#3", "A3",  "C#4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("E",   "E2",  ["E3",  "G#3", "B3"]),
+    ]
+
+    melody_a = [
+        ("A4", 1.5),   ("C#5", 0.5), ("E5", 2),
+        ("F#5", 1),    ("E5", 1),    ("C#5", 2),
+        ("D5", 1.5),   ("E5", 0.5),  ("F#5", 2),
+        ("E5", 1),     ("D5", 1),    ("A4", 2),
+        ("D5", 1),     ("F#5", 1),   ("A5", 2),
+        ("G5", 1),     ("F#5", 1),   ("D5", 2),
+        ("E5", 1),     ("G#5", 1),   ("B5", 2),
+        ("A5", 1),     ("G#5", 1),   ("E5", 2),
+    ]
+
+    # Variation B - higher register, more elaborate
+    melody_b = [
+        ("E5", 1),     ("F#5", 1),   ("A5", 2),
+        ("C#6", 1),    ("B5", 1),    ("A5", 2),
+        ("F#5", 0.5),  ("A5", 0.5),  ("C#6", 1),   ("F#6", 2),
+        ("E6", 1),     ("D6", 1),    ("A5", 2),
+        ("F#5", 1),    ("A5", 1),    ("D6", 2),
+        ("A5", 1),     ("F#5", 1),   ("D5", 2),
+        ("B5", 0.5),   ("D6", 0.5),  ("E6", 1),    ("G#6", 2),
+        ("E6", 1),     ("D6", 1),    ("B5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Flute drops out for cycle 1 (intro) and uses higher melody in alternating cycles.
+        if rep >= 1:
+            mel = melody_b if rep % 2 == 0 else melody_a
+            seq.play_line(flute, rep_start, mel, vel=78)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 8
+
+            # Strings: held chord for 2 bars.
+            seq.add_chord(strings, chord_start, 8, [n(p) for p in ch_pitches], vel=44)
+
+            # Guitar: gentle Travis-picking arpeggio.
+            arp = [n(root), n(ch_pitches[1]), n(ch_pitches[2]), n(ch_pitches[1])]
+            for bar in range(2):
+                bs = chord_start + bar * 4
+                for i in range(8):
+                    seq.add_note(guitar, bs + i * 0.5, 0.45, arp[i % len(arp)], vel=58)
+
+            # Harp: sparse upward sweep at start of each chord (2 bars).
+            seq.add_note(harp, chord_start + 0, 0.5, n(ch_pitches[0]) + 12, vel=48)
+            seq.add_note(harp, chord_start + 0.5, 0.5, n(ch_pitches[1]) + 12, vel=46)
+            seq.add_note(harp, chord_start + 1, 1, n(ch_pitches[2]) + 12, vel=52)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 32. FLUTE - CELTIC REEL: Irish jig in 6/8 (180 BPM, D major)
+# =============================================================================
+def make_flute_celtic_reel(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=180, time_sig=(6, 3))
+    flute = seq.add_track("Flute", 73, 0)  # GM Flute
+    harp = seq.add_track("Harp", GM_HARP, 1)
+    fiddle = seq.add_track("Fiddle", 40, 2)  # GM Violin
+    drums = seq.add_track("Bodhran", 0, 9)
+
+    # 16 bars in 6/8 (each bar = 3 beats / 6 eighths).
+    # D - G - D - A | Bm - G - D - A (2x)
+    progression = [
+        ("D",  "D2",  ["D3",  "F#3", "A3"]),
+        ("G",  "G1",  ["G3",  "B3",  "D4"]),
+        ("D",  "D2",  ["D3",  "F#3", "A3"]),
+        ("A",  "A1",  ["A3",  "C#4", "E4"]),
+        ("Bm", "B1",  ["B3",  "D4",  "F#4"]),
+        ("G",  "G1",  ["G3",  "B3",  "D4"]),
+        ("D",  "D2",  ["D3",  "F#3", "A3"]),
+        ("A",  "A1",  ["A3",  "C#4", "E4"]),
+    ]
+
+    # Jig melody: 6 eighth notes per bar (16 bars * 3 beats = 48 beats per cycle).
+    # Each 8th = 0.5 beat. Each bar = 3 beats = 6 eighths.
+    flute_line = [
+        # Bar 1 (D)
+        ("D5", 0.5),  ("F#5", 0.5), ("A5", 0.5), ("D6", 0.5),  ("A5", 0.5), ("F#5", 0.5),
+        # Bar 2 (G)
+        ("G5", 0.5),  ("B5", 0.5),  ("D6", 0.5), ("G5", 0.5),  ("D5", 0.5), ("B4", 0.5),
+        # Bar 3 (D)
+        ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5), ("A5", 0.5),  ("F#5", 0.5),("D5", 0.5),
+        # Bar 4 (A)
+        ("E5", 0.5),  ("A5", 0.5),  ("C#6", 0.5),("A5", 0.5),  ("E5", 0.5), ("C#5", 0.5),
+        # Bar 5 (Bm)
+        ("B4", 0.5),  ("D5", 0.5),  ("F#5", 0.5),("B5", 0.5),  ("F#5", 0.5),("D5", 0.5),
+        # Bar 6 (G)
+        ("D5", 0.5),  ("G5", 0.5),  ("B5", 0.5), ("D6", 0.5),  ("B5", 0.5), ("G5", 0.5),
+        # Bar 7 (D)
+        ("A5", 0.5),  ("F#5", 0.5), ("D5", 0.5), ("F#5", 0.5), ("A5", 0.5), ("D6", 0.5),
+        # Bar 8 (A) - turnaround
+        ("E5", 0.5),  ("C#5", 0.5), ("A4", 0.5), ("C#5", 0.5), ("E5", 0.5), ("A5", 0.5),
+        # Bar 9 (D)
+        ("D5", 0.5),  ("F#5", 1),   ("A5", 0.5), ("F#5", 0.5),("D5", 0.5),
+        # Bar 10 (G)
+        ("G5", 0.5),  ("B5", 1),    ("G5", 0.5), ("D5", 0.5),  ("B4", 0.5),
+        # Bar 11 (D)
+        ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5), ("F#6", 0.5), ("D6", 0.5), ("A5", 0.5),
+        # Bar 12 (A)
+        ("C#6", 0.5), ("E6", 0.5),  ("A5", 0.5), ("E5", 0.5),  ("C#5", 0.5),("A4", 0.5),
+        # Bar 13 (Bm)
+        ("D5", 0.5),  ("F#5", 0.5), ("B5", 0.5), ("D6", 0.5),  ("F#6", 0.5),("D6", 0.5),
+        # Bar 14 (G)
+        ("B5", 0.5),  ("D6", 0.5),  ("G6", 0.5), ("D6", 0.5),  ("B5", 0.5), ("G5", 0.5),
+        # Bar 15 (D)
+        ("F#5", 0.5), ("D5", 0.5),  ("A5", 0.5), ("F#5", 0.5), ("D6", 0.5), ("A5", 0.5),
+        # Bar 16 (A) - cadence
+        ("E5", 0.5),  ("A4", 0.5),  ("C#5", 0.5),("E5", 0.5),  ("A5", 1),
+    ]
+
+    # Fiddle countermelody (alternating cycles)
+    fiddle_drone = [
+        ("A4", 3), ("D4", 3),    # bars 1-2
+        ("A4", 3), ("E4", 3),    # bars 3-4
+        ("F#4", 3), ("D4", 3),   # bars 5-6
+        ("A4", 3), ("E4", 3),    # bars 7-8
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 48  # 16 bars * 3 beats per bar
+
+        # Flute always plays after intro (cycle 0 = bodhran + harp only).
+        if rep >= 1:
+            seq.play_line(flute, rep_start, flute_line, vel=82)
+
+        # Fiddle drone every 3rd cycle for variation.
+        if rep >= 2 and rep % 3 == 0:
+            seq.play_line(fiddle, rep_start, fiddle_drone, vel=58)
+            seq.play_line(fiddle, rep_start + 24, fiddle_drone, vel=58)
+
+        for ci, (cname, root, ch_pitches) in enumerate(progression):
+            chord_start = rep_start + ci * 3  # 1 bar = 3 beats
+
+            # Harp: arpeggiated chord (6 eighths) in 8va register.
+            arp = [n(p) for p in ch_pitches] + [n(p) + 12 for p in ch_pitches[1:]]
+            for i in range(6):
+                seq.add_note(harp, chord_start + i * 0.5, 0.42, arp[i % len(arp)], vel=52)
+
+            # Bodhran: low tom on beats 1 and 2 (the dotted-quarter pulses), light "buzz" on offbeats.
+            seq.add_drum(drums, chord_start + 0, TOM_LOW, vel=88)
+            seq.add_drum(drums, chord_start + 1.5, TOM_LOW, vel=72)
+            seq.add_drum(drums, chord_start + 0.5, CLOSED_HAT, vel=42)
+            seq.add_drum(drums, chord_start + 1, CLOSED_HAT, vel=38)
+            seq.add_drum(drums, chord_start + 2, CLOSED_HAT, vel=42)
+            seq.add_drum(drums, chord_start + 2.5, CLOSED_HAT, vel=38)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 33. FLUTE - SHAKUHACHI MEDITATION: sparse pentatonic Zen (60 BPM, A min pent)
+# =============================================================================
+def make_flute_shakuhachi_meditation(reps: int = 4) -> bytes:
+    seq = Sequence(bpm=60)
+    shakuhachi = seq.add_track("Shakuhachi", 77, 0)  # GM Shakuhachi
+    koto = seq.add_track("Koto", 107, 1)  # GM Koto
+    pad = seq.add_track("Pad", GM_PAD_WARM, 2)
+    bell = seq.add_track("Bell", GM_GLOCKENSPIEL, 3)
+
+    # Pentatonic A minor (A C D E G), held chord vamps for atmosphere.
+    # 8 bars per cycle (~32s/cycle). Two 4-bar sections per cycle.
+    chords = [
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("Dm",  "D2",  ["D3",  "F3",  "A3"]),
+        ("Dm",  "D2",  ["D3",  "F3",  "A3"]),
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+    ]
+
+    # Sparse pentatonic shakuhachi line - long held notes with breathing space.
+    flute_line = [
+        # Bar 1-2 (Am): long held A4 then bend up
+        ("A4", 3),     (None, 1),
+        ("E5", 2),     ("D5", 1),    ("C5", 1),
+        # Bar 3-4 (Em): higher register
+        ("E5", 2),     ("G5", 2),
+        ("A5", 1.5),   ("G5", 0.5),  ("E5", 2),
+        # Bar 5-6 (Dm): introspective
+        ("D5", 2),     ("F5", 2),
+        ("E5", 1),     ("D5", 1),    ("A4", 2),
+        # Bar 7-8 (Am): resolve down
+        ("E5", 1),     ("C5", 1),    ("A4", 2),
+        ("E4", 4),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(shakuhachi, rep_start, flute_line, vel=72)
+
+        for ci, (cname, root, ch_pitches) in enumerate(chords):
+            bar_start = rep_start + ci * 4
+
+            # Pad: held chord, very soft.
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in ch_pitches], vel=42)
+
+            # Koto: sparse plucked notes - single root + 5th, every 2 beats.
+            seq.add_note(koto, bar_start + 0, 1.8, n(root), vel=68)
+            seq.add_note(koto, bar_start + 2, 1.8, n(root) + 7, vel=58)
+
+            # Bell: occasional zen accent (only on bar 4 and 8 of each cycle)
+            if ci in (3, 7):
+                seq.add_note(bell, bar_start + 3, 1, n(ch_pitches[0]) + 24, vel=48)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 34. FLUTE - BAROQUE SONATA: Telemann-style recorder + harpsichord (110 BPM, G maj)
+# =============================================================================
+def make_flute_baroque_sonata(reps: int = 8) -> bytes:
+    seq = Sequence(bpm=110)
+    recorder = seq.add_track("Recorder", 74, 0)  # GM Recorder
+    harpsichord = seq.add_track("Harpsichord", 6, 1)  # GM Harpsichord
+    cello = seq.add_track("Cello", 42, 2)  # GM Cello
+
+    # G major progression in 8 bars: G - D - Em - Bm - C - G - C - D
+    chords = [
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("Bm",  "B1",  ["B3",  "D4",  "F#4"]),
+        ("C",   "C2",  ["C3",  "E3",  "G3"]),
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("C",   "C2",  ["C3",  "E3",  "G3"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+    ]
+
+    # Baroque recorder line: running 8th notes with ornaments.
+    recorder_line = [
+        # Bar 1 (G): G major 8th-note arpeggio with ornament
+        ("G5", 0.5),  ("B5", 0.5),  ("D6", 0.5),  ("G5", 0.5),
+        ("A5", 0.5),  ("B5", 0.5),  ("C6", 0.5),  ("A5", 0.5),
+        # Bar 2 (D): D major
+        ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5),  ("A5", 0.5),
+        ("G5", 0.5),  ("F#5", 0.5), ("E5", 0.5),  ("D5", 0.5),
+        # Bar 3 (Em): minor
+        ("E5", 0.5),  ("G5", 0.5),  ("B5", 0.5),  ("E6", 0.5),
+        ("D6", 0.5),  ("B5", 0.5),  ("G5", 0.5),  ("E5", 0.5),
+        # Bar 4 (Bm): minor
+        ("B4", 0.5),  ("D5", 0.5),  ("F#5", 0.5), ("B5", 0.5),
+        ("A5", 0.5),  ("F#5", 0.5), ("D5", 0.5),  ("B4", 0.5),
+        # Bar 5 (C): C major
+        ("C5", 0.5),  ("E5", 0.5),  ("G5", 0.5),  ("C6", 0.5),
+        ("B5", 0.5),  ("A5", 0.5),  ("G5", 0.5),  ("E5", 0.5),
+        # Bar 6 (G): cadential
+        ("D5", 0.5),  ("G5", 0.5),  ("B5", 0.5),  ("D6", 0.5),
+        ("G6", 0.5),  ("D6", 0.5),  ("B5", 0.5),  ("G5", 0.5),
+        # Bar 7 (C): pre-cadence
+        ("E5", 0.5),  ("G5", 0.5),  ("C6", 0.5),  ("E6", 0.5),
+        ("D6", 0.5),  ("C6", 0.5),  ("B5", 0.5),  ("A5", 0.5),
+        # Bar 8 (D7): cadence
+        ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5),  ("F#6", 0.5),
+        ("E6", 0.5),  ("D6", 0.5),  ("C6", 0.5),  ("A5", 0.5),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        # Recorder plays the head melody throughout (it's the soloist).
+        seq.play_line(recorder, rep_start, recorder_line, vel=82)
+
+        for ci, (cname, root, ch_pitches) in enumerate(chords):
+            bar_start = rep_start + ci * 4
+
+            # Cello: walking bass quarters (basso continuo).
+            cello_walk = [n(root), n(root) + 7, n(ch_pitches[1]), n(root) + 7]
+            for i, p in enumerate(cello_walk):
+                seq.add_note(cello, bar_start + i, 0.9, p, vel=72)
+
+            # Harpsichord: figured-bass realization - chord on each beat (8th-note pulse).
+            for off in (0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5):
+                vel = 64 if off == int(off) else 50
+                seq.add_chord(harpsichord, bar_start + off, 0.45,
+                              [n(p) for p in ch_pitches], vel=vel)
+
+    return seq.to_smf()
+
+
+# =============================================================================
+# 35. FLUTE - NATIVE SPIRIT: plaintive pentatonic with frame drum (66 BPM, F# min)
+# =============================================================================
+def make_flute_native_spirit(reps: int = 5) -> bytes:
+    seq = Sequence(bpm=66)
+    flute = seq.add_track("Native Flute", GM_PAN_FLUTE, 0)
+    drone = seq.add_track("Drone Pad", GM_PAD_NEW_AGE, 1)
+    drum = seq.add_track("Frame Drum", 0, 9)
+    rattle = seq.add_track("Bell Tree", GM_GLOCKENSPIEL, 2)
+
+    # F# minor pentatonic drone (F# A B C# E). Slow chord vamp.
+    # 8 bars per cycle (~29.1s). Two 4-bar phrases.
+    chords = [
+        ("F#m",  "F#2",  ["F#3", "A3",  "C#4"]),
+        ("F#m",  "F#2",  ["F#3", "A3",  "C#4"]),
+        ("D",    "D2",   ["D3",  "F#3", "A3"]),
+        ("E",    "E2",   ["E3",  "G#3", "B3"]),
+        ("F#m",  "F#2",  ["F#3", "A3",  "C#4"]),
+        ("A",    "A2",   ["A3",  "C#4", "E4"]),
+        ("B",    "B1",   ["B3",  "D4",  "F#4"]),
+        ("F#m",  "F#2",  ["F#3", "A3",  "C#4"]),
+    ]
+
+    # Pentatonic-only flute line (F# A B C# E pentatonic).
+    flute_line = [
+        # Bar 1-2 (F#m): plaintive opening
+        ("F#5", 2),    ("A5", 2),
+        ("C#6", 1.5),  ("B5", 0.5),  ("A5", 2),
+        # Bar 3-4 (D, E): rising phrase
+        ("F#5", 1),    ("A5", 1),    ("B5", 2),
+        ("C#6", 2),    ("E6", 2),
+        # Bar 5-6 (F#m, A): peak
+        ("F#6", 2),    ("E6", 2),
+        ("C#6", 1.5),  ("A5", 0.5),  ("F#5", 2),
+        # Bar 7-8 (B, F#m): descend & rest
+        ("E5", 1),     ("F#5", 1),   ("B5", 2),
+        ("A5", 2),     ("F#5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+
+        if rep >= 1:
+            seq.play_line(flute, rep_start, flute_line, vel=74)
+
+        for ci, (cname, root, ch_pitches) in enumerate(chords):
+            bar_start = rep_start + ci * 4
+
+            # Drone pad: held chord across the bar, very soft.
+            seq.add_chord(drone, bar_start, 4, [n(p) for p in ch_pitches], vel=42)
+
+            # Frame drum: heartbeat pulse - low tom on 1 + 2.5 (loose two-beat feel).
+            seq.add_drum(drum, bar_start + 0, TOM_LOW, vel=80)
+            seq.add_drum(drum, bar_start + 2, TOM_LOW, vel=68)
+            # Soft shake on offbeats.
+            seq.add_drum(drum, bar_start + 1, TAMBOURINE, vel=44)
+            seq.add_drum(drum, bar_start + 3, TAMBOURINE, vel=44)
+
+            # Sparse bell-tree shimmer at start of every other 4-bar phrase.
+            if ci in (3, 7) and rep >= 2:
+                seq.add_note(rattle, bar_start + 3.5, 0.5, n("F#6"), vel=44)
+                seq.add_note(rattle, bar_start + 3.75, 0.5, n("A6"), vel=42)
+
+    return seq.to_smf()
+
+
+CATEGORIES: dict[str, list[tuple[str, "Callable[[], bytes]", str]]] = {  # type: ignore[name-defined]
     # Retro game tunes, all >= 2 minutes (~125-130s, looped from short phrases).
-    retro_files = [
+    "retro": [
         ("Retro - Pixel Quest.mid",     lambda: make_pixel_quest(reps=9),     "Pixel Quest (~130s, 9x)"),
         ("Retro - Neon Arcade.mid",     lambda: make_neon_arcade(reps=21),    "Neon Arcade (~126s, 21x)"),
         ("Retro - Castle Crawl.mid",    lambda: make_castle_crawl(reps=12),   "Castle Crawl (~125s, 12x)"),
         ("Retro - Boss Showdown.mid",   lambda: make_boss_showdown(reps=22),  "Boss Showdown (~125s, 22x)"),
         ("Retro - Victory Fanfare.mid", lambda: make_victory_fanfare(reps=8), "Victory Fanfare (~128s, 8x)"),
-    ]
-
+    ],
     # Programming-background tunes: chill, focus-friendly, all >= 2 minutes.
-    programming_files = [
+    "programming": [
         ("Programming - Lo-Fi Loops.mid",         lambda: make_lofi_loops(),        "Lo-Fi Loops (~148s, 78 BPM, A min)"),
         ("Programming - Ambient Drift.mid",       lambda: make_ambient_drift(),     "Ambient Drift (~128s, 60 BPM, D maj)"),
         ("Programming - Coffee Shop Jazz.mid",    lambda: make_coffee_shop_jazz(),  "Coffee Shop Jazz (~153s, 88 BPM, F maj)"),
         ("Programming - Synthwave Cruise.mid",    lambda: make_synthwave_cruise(),  "Synthwave Cruise (~141s, 95 BPM, E min)"),
         ("Programming - Forest Meditation.mid",   lambda: make_forest_meditation(), "Forest Meditation (~133s, 72 BPM, A maj)"),
-    ]
-
+    ],
     # Solo-piano pieces (originals, not transcriptions), all >= 2 minutes.
-    piano_files = [
+    "piano": [
         ("Piano - Classical Etude.mid",      lambda: make_classical_etude(),     "Classical Etude (~125s, 92 BPM, C maj)"),
         ("Piano - Romantic Nocturne.mid",    lambda: make_romantic_nocturne(),   "Romantic Nocturne (~128s, 60 BPM, Bb maj)"),
         ("Piano - Ragtime Stride.mid",       lambda: make_ragtime_stride(),      "Ragtime Stride (~128s, 105 BPM, C maj)"),
         ("Piano - Minimalist Patterns.mid",  lambda: make_minimalist_patterns(), "Minimalist Patterns (~154s, 100 BPM, A min)"),
         ("Piano - Blues.mid",                lambda: make_blues_piano(),         "Blues Piano (~125s, 92 BPM, F)"),
-    ]
+    ],
+    # Disco tunes - 4-on-the-floor, octave bass, strings, brass, all >= 2 minutes.
+    "disco": [
+        ("Disco - Saturday Groove.mid",   lambda: make_disco_saturday_groove(),   "Saturday Groove (~131s, 118 BPM, D maj)"),
+        ("Disco - Night Fever.mid",       lambda: make_disco_night_fever(),       "Night Fever (~133s, 116 BPM, F# min)"),
+        ("Disco - Funky Strut.mid",       lambda: make_disco_funky_strut(),       "Funky Strut (~125s, 108 BPM, E min)"),
+        ("Disco - Diva Anthem.mid",       lambda: make_disco_diva_anthem(),       "Diva Anthem (~138s, 112 BPM, A min)"),
+        ("Disco - Dance Floor Heat.mid",  lambda: make_disco_dance_floor_heat(),  "Dance Floor Heat (~135s, 128 BPM, C min)"),
+    ],
+    # Jazz tunes - swing, bebop, bossa, waltz, modal, all >= 2 minutes.
+    "jazz": [
+        ("Jazz - Smooth Standards.mid",   lambda: make_jazz_smooth_standards(),   "Smooth Standards (~144s, 80 BPM, F maj)"),
+        ("Jazz - Bebop Burner.mid",       lambda: make_jazz_bebop_burner(),       "Bebop Burner (~140s, 192 BPM, C maj)"),
+        ("Jazz - Bossa Nova.mid",         lambda: make_jazz_bossa_nova(),         "Bossa Nova (~128s, 120 BPM, D min)"),
+        ("Jazz - Waltz.mid",              lambda: make_jazz_waltz(),              "Jazz Waltz (~135s, 96 BPM, A min, 3/4)"),
+        ("Jazz - Cool Blue.mid",          lambda: make_jazz_cool_blue(),          "Cool Blue (~154s, 100 BPM, modal)"),
+    ],
+    # Thug-life tunes - g-funk, boom-bap, trap, soul, lowrider, all >= 2 minutes.
+    "thuglife": [
+        ("Thug Life - G-Funk Cruise.mid",        lambda: make_thug_g_funk_cruise(),         "G-Funk Cruise (~125s, 92 BPM, E min)"),
+        ("Thug Life - East Coast Boom Bap.mid",  lambda: make_thug_east_coast_boom_bap(),   "East Coast Boom Bap (~131s, 88 BPM, A min)"),
+        ("Thug Life - Trap Anthem.mid",          lambda: make_thug_trap_anthem(),           "Trap Anthem (~137s, 70 BPM, G min)"),
+        ("Thug Life - Block Party.mid",          lambda: make_thug_block_party(),           "Block Party (~134s, 100 BPM, G maj)"),
+        ("Thug Life - Lowrider Smooth.mid",      lambda: make_thug_lowrider_smooth(),       "Lowrider Smooth (~144s, 80 BPM, Bb min)"),
+    ],
+    # Flute pieces - five different flute family members, all >= 2 minutes.
+    "flute": [
+        ("Flute - Pan Flute Pastorale.mid",        lambda: make_flute_pan_flute_pastorale(),     "Pan Flute Pastorale (~128s, 75 BPM, A maj)"),
+        ("Flute - Celtic Reel.mid",                lambda: make_flute_celtic_reel(),             "Celtic Reel (~128s, 180 BPM, D maj, 6/8)"),
+        ("Flute - Shakuhachi Meditation.mid",      lambda: make_flute_shakuhachi_meditation(),   "Shakuhachi Meditation (~128s, 60 BPM, A min pent)"),
+        ("Flute - Baroque Sonata.mid",             lambda: make_flute_baroque_sonata(),          "Baroque Sonata (~140s, 110 BPM, G maj)"),
+        ("Flute - Native Spirit.mid",              lambda: make_flute_native_spirit(),           "Native Spirit (~145s, 66 BPM, F# min pent)"),
+    ],
+}
 
-    for fname, builder, desc in retro_files + programming_files + piano_files:
-        path = os.path.join(out_dir, fname)
-        data = builder()
-        with open(path, "wb") as f:
-            f.write(data)
-        print(f"  Wrote {fname:46s} {len(data):7d} bytes  | {desc}")
-    total = len(retro_files) + len(programming_files) + len(piano_files)
-    print(f"\nGenerated {total} MIDI files in: {out_dir}")
+
+def main() -> None:
+    import sys
+    out_dir = os.path.dirname(os.path.abspath(__file__))
+
+    args = [a for a in sys.argv[1:]]
+    force = False
+    requested: list[str] = []
+    for a in args:
+        la = a.lower()
+        if la in ("-f", "--force", "--all"):
+            force = True
+        elif la in ("-h", "--help"):
+            print("Usage: gen_retro_midi.py [CATEGORY ...] [--force]")
+            print(f"  Categories: {', '.join(CATEGORIES.keys())}")
+            print("  Without --force, files that already exist are skipped.")
+            print("  Without arguments, all categories are processed.")
+            return
+        elif la.startswith("-"):
+            print(f"  Unknown option: {a}")
+            return
+        else:
+            if la not in CATEGORIES:
+                print(f"  Unknown category: {a}. Available: {', '.join(CATEGORIES.keys())}")
+                return
+            requested.append(la)
+
+    selected = requested if requested else list(CATEGORIES.keys())
+
+    written = 0
+    skipped = 0
+    for cat in selected:
+        for fname, builder, desc in CATEGORIES[cat]:
+            path = os.path.join(out_dir, fname)
+            if os.path.exists(path) and not force:
+                print(f"  Skip  {fname:46s} (exists)")
+                skipped += 1
+                continue
+            data = builder()
+            with open(path, "wb") as f:
+                f.write(data)
+            print(f"  Wrote {fname:46s} {len(data):7d} bytes  | {desc}")
+            written += 1
+
+    print(f"\nWrote {written} file(s), skipped {skipped} existing in: {out_dir}")
+    if not force and skipped > 0:
+        print("(Pass --force to regenerate existing files; pass category names like 'disco' to scope.)")
 
 
 if __name__ == "__main__":
