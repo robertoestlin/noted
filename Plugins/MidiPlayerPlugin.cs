@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
+using System.Windows.Markup;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -156,12 +157,19 @@ public partial class MainWindow
         };
 
         var alias = "noted_midi_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        var warmupAlias = "noted_midi_warm_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        const long preloadLeadMs = 10_000;
         var isOpen = false;
         var isPlaying = false;
         var isPaused = false;
         var seekDragging = false;
+        var hasDialogShown = false;
         long lengthMs = 0;
         long positionMs = 0;
+        int? preloadedNextIndex = null;
+        string? preloadedNextPath = null;
+        int? preloadedStartIndex = null;
+        string? preloadedStartPath = null;
 
         var customPaths = LoadCustomMidiPaths();
         var playlist = BuildMidiPlaylist(customPaths);
@@ -406,14 +414,87 @@ public partial class MainWindow
         DockPanel.SetDock(queueTop, Dock.Top);
         queueDock.Children.Add(queueTop);
 
+        var playlistScrollBarStyle = (Style)XamlReader.Parse(
+            """
+            <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                   TargetType="ScrollBar">
+              <Setter Property="Width" Value="12"/>
+              <Setter Property="Background" Value="#0D1627"/>
+              <Setter Property="BorderBrush" Value="#1F2D49"/>
+              <Setter Property="BorderThickness" Value="1"/>
+              <Setter Property="Template">
+                <Setter.Value>
+                  <ControlTemplate TargetType="ScrollBar">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            Padding="2">
+                      <Track x:Name="PART_Track" IsDirectionReversed="True">
+                        <Track.DecreaseRepeatButton>
+                          <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0"/>
+                        </Track.DecreaseRepeatButton>
+                        <Track.Thumb>
+                          <Thumb>
+                            <Thumb.Template>
+                              <ControlTemplate TargetType="Thumb">
+                                <Border x:Name="ThumbBorder" Background="#4A6A9D" CornerRadius="4"/>
+                                <ControlTemplate.Triggers>
+                                  <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#5E83BF"/>
+                                  </Trigger>
+                                  <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#73A0E5"/>
+                                  </Trigger>
+                                </ControlTemplate.Triggers>
+                              </ControlTemplate>
+                            </Thumb.Template>
+                          </Thumb>
+                        </Track.Thumb>
+                        <Track.IncreaseRepeatButton>
+                          <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0"/>
+                        </Track.IncreaseRepeatButton>
+                      </Track>
+                    </Border>
+                  </ControlTemplate>
+                </Setter.Value>
+              </Setter>
+            </Style>
+            """);
+
         var listScroll = new ScrollViewer
         {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x14, 0x24)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x2D, 0x49)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(0)
         };
+        var playlistScrollBar = new ScrollBar
+        {
+            Orientation = Orientation.Vertical,
+            Width = 12,
+            Margin = new Thickness(6, 0, 0, 0),
+            Minimum = 0,
+            Maximum = 0,
+            Value = 0,
+            SmallChange = 24,
+            Visibility = Visibility.Collapsed,
+            Style = playlistScrollBarStyle
+        };
+
+        var listArea = new Grid();
+        listArea.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        listArea.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(listScroll, 0);
+        Grid.SetColumn(playlistScrollBar, 1);
+        listArea.Children.Add(listScroll);
+        listArea.Children.Add(playlistScrollBar);
         var listStack = new StackPanel();
         listScroll.Content = listStack;
-        queueDock.Children.Add(listScroll);
+        queueDock.Children.Add(listArea);
 
         Grid.SetRow(queueCard, 0);
         layout.Children.Add(queueCard);
@@ -570,6 +651,20 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 12, 0),
             ToolTip = "Loop current track"
         };
+        btnShuffle.Checked += (_, _) =>
+        {
+            ClearNextPreload();
+            ClearStartPreload();
+            PrimeInitialPreload();
+        };
+        btnShuffle.Unchecked += (_, _) =>
+        {
+            ClearNextPreload();
+            ClearStartPreload();
+            PrimeInitialPreload();
+        };
+        btnLoop.Checked += (_, _) => ClearNextPreload();
+        btnLoop.Unchecked += (_, _) => ClearNextPreload();
         modeRow.Children.Add(btnShuffle);
         modeRow.Children.Add(btnLoop);
         controlsRoot.Children.Add(modeRow);
@@ -601,6 +696,28 @@ public partial class MainWindow
 
         // ---- Helpers -----------------------------------------------------------------
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        var syncingPlaylistScroll = false;
+
+        void SyncPlaylistScrollBarFromViewer()
+        {
+            if (syncingPlaylistScroll)
+                return;
+            syncingPlaylistScroll = true;
+            try
+            {
+                var canScroll = listScroll.ScrollableHeight > 0;
+                playlistScrollBar.Visibility = canScroll ? Visibility.Visible : Visibility.Collapsed;
+                playlistScrollBar.Minimum = 0;
+                playlistScrollBar.Maximum = Math.Max(0, listScroll.ScrollableHeight);
+                playlistScrollBar.LargeChange = Math.Max(1, listScroll.ViewportHeight);
+                playlistScrollBar.SmallChange = 24;
+                playlistScrollBar.Value = Math.Max(0, Math.Min(listScroll.VerticalOffset, playlistScrollBar.Maximum));
+            }
+            finally
+            {
+                syncingPlaylistScroll = false;
+            }
+        }
 
         void SetStatus(string text, Brush? color = null)
         {
@@ -729,7 +846,7 @@ public partial class MainWindow
         {
             btnPlay.Content = "▶";
             btnPlay.ToolTip = isPaused ? "Resume" : "Play";
-            btnPlay.IsEnabled = isOpen && !isPlaying;
+            btnPlay.IsEnabled = playlist.Count > 0 && !isPlaying;
             btnPause.IsEnabled = isOpen && isPlaying && !isPaused;
             btnStop.IsEnabled = isOpen && (isPlaying || isPaused);
             seekSlider.IsEnabled = isOpen && lengthMs > 0;
@@ -794,6 +911,7 @@ public partial class MainWindow
             isPlaying = false;
             isPaused = false;
             currentLoadedPath = null;
+            ClearNextPreload();
         }
 
         void HighlightCurrent()
@@ -812,6 +930,8 @@ public partial class MainWindow
 
         bool LoadFile(string path)
         {
+            ClearStartPreload();
+            ClearNextPreload();
             CloseDevice();
             if (!File.Exists(path))
             {
@@ -844,12 +964,13 @@ public partial class MainWindow
             {
                 var song = playlist[currentIndex];
                 lblNowPlaying.Text = song.Title;
-                lblNowPlayingMeta.Text = $"{song.Group}  -  {Path.GetFileNameWithoutExtension(song.Path)}";
+                lblNowPlayingMeta.Text = song.Group;
             }
             else
             {
-                lblNowPlaying.Text = Path.GetFileNameWithoutExtension(path);
-                lblNowPlayingMeta.Text = Path.GetFileNameWithoutExtension(path);
+                var (group, title) = SplitMidiTitle(Path.GetFileNameWithoutExtension(path));
+                lblNowPlaying.Text = title;
+                lblNowPlayingMeta.Text = group;
             }
 
             UpdateButtons();
@@ -871,6 +992,127 @@ public partial class MainWindow
             isPaused = false;
             timer.Start();
             UpdateButtons();
+        }
+
+        void ClearNextPreload()
+        {
+            preloadedNextIndex = null;
+            preloadedNextPath = null;
+        }
+
+        void ClearStartPreload()
+        {
+            preloadedStartIndex = null;
+            preloadedStartPath = null;
+        }
+
+        static bool IsValidIndex(int index, int count) => index >= 0 && index < count;
+
+        bool TryWarmPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return false;
+            if (!TryMci($"open \"{path}\" type sequencer alias {warmupAlias}", null, out _))
+                return false;
+            TryMci($"set {warmupAlias} time format milliseconds", null, out _);
+            TryMci($"close {warmupAlias}", null, out _);
+            return true;
+        }
+
+        int ResolveInitialPlayIndex()
+        {
+            if (playlist.Count == 0)
+                return -1;
+            if (currentIndex >= 0 && currentIndex < playlist.Count)
+                return currentIndex;
+            if (btnShuffle.IsChecked == true)
+                return rng.Next(playlist.Count);
+            return 0;
+        }
+
+        int ResolveStartPlayIndex()
+        {
+            if (playlist.Count == 0)
+                return -1;
+
+            if (currentIndex >= 0 && currentIndex < playlist.Count)
+                return currentIndex;
+
+            if (preloadedStartIndex.HasValue
+                && IsValidIndex(preloadedStartIndex.Value, playlist.Count)
+                && string.Equals(playlist[preloadedStartIndex.Value].Path, preloadedStartPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return preloadedStartIndex.Value;
+            }
+
+            return ResolveInitialPlayIndex();
+        }
+
+        void PrimeInitialPreload()
+        {
+            if (!hasDialogShown || isOpen || playlist.Count == 0)
+                return;
+            var startIndex = ResolveInitialPlayIndex();
+            if (!IsValidIndex(startIndex, playlist.Count))
+                return;
+            var path = playlist[startIndex].Path;
+            if (string.Equals(path, preloadedStartPath, StringComparison.OrdinalIgnoreCase)
+                && preloadedStartIndex == startIndex)
+                return;
+            if (TryWarmPath(path))
+            {
+                preloadedStartIndex = startIndex;
+                preloadedStartPath = path;
+            }
+        }
+
+        int ResolveAutoNextIndex(bool allowShuffle)
+        {
+            if (playlist.Count == 0)
+                return -1;
+            if (allowShuffle && btnShuffle.IsChecked == true)
+                return PickShuffleIndex();
+            if (currentIndex >= 0 && currentIndex + 1 < playlist.Count)
+                return currentIndex + 1;
+            return -1;
+        }
+
+        void TryPreloadUpcomingTrack(bool force)
+        {
+            if (!isOpen || !isPlaying || btnLoop.IsChecked == true || lengthMs <= 0)
+                return;
+
+            if (!force)
+            {
+                var remainingMs = lengthMs - positionMs;
+                if (remainingMs > preloadLeadMs)
+                    return;
+            }
+
+            var candidateIndex = preloadedNextIndex;
+            if (candidateIndex is null
+                || candidateIndex < 0
+                || candidateIndex >= playlist.Count
+                || candidateIndex == currentIndex)
+            {
+                var resolved = ResolveAutoNextIndex(allowShuffle: true);
+                if (resolved < 0)
+                    return;
+                candidateIndex = resolved;
+            }
+
+            var nextPath = playlist[candidateIndex.Value].Path;
+            if (string.IsNullOrWhiteSpace(nextPath) || !File.Exists(nextPath))
+                return;
+            if (string.Equals(nextPath, preloadedNextPath, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            // Pre-open and close once to warm decoder/device for the specific upcoming file.
+            if (TryWarmPath(nextPath))
+            {
+                preloadedNextIndex = candidateIndex;
+                preloadedNextPath = nextPath;
+            }
         }
 
         void Pause()
@@ -899,6 +1141,7 @@ public partial class MainWindow
             positionMs = 0;
             seekSlider.Value = 0;
             lblPosition.Text = "00:00";
+            ClearNextPreload();
             UpdateButtons();
             SetStatus("Stopped.");
         }
@@ -917,8 +1160,11 @@ public partial class MainWindow
             lblPosition.Text = "00:00";
             txtInfo.Text = "No file loaded.";
             txtInfo.Foreground = new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
+            ClearStartPreload();
+            ClearNextPreload();
             HighlightCurrent();
             UpdateButtons();
+            PrimeInitialPreload();
         }
 
         void PerformSeek(long target)
@@ -953,11 +1199,18 @@ public partial class MainWindow
         {
             if (index < 0 || index >= playlist.Count)
                 return;
+            ClearStartPreload();
             currentIndex = index;
             shuffleHistory.Add(index);
             var song = playlist[index];
             if (LoadFile(song.Path))
+            {
                 Play();
+                // Queue preload right after playback starts, without blocking the click path.
+                dlg.Dispatcher.BeginInvoke(
+                    () => TryPreloadUpcomingTrack(force: true),
+                    DispatcherPriority.Background);
+            }
         }
 
         int PickShuffleIndex()
@@ -979,10 +1232,20 @@ public partial class MainWindow
         {
             if (playlist.Count == 0) return;
             int next;
-            if (btnShuffle.IsChecked == true)
+            if (preloadedNextIndex.HasValue
+                && preloadedNextIndex.Value >= 0
+                && preloadedNextIndex.Value < playlist.Count
+                && preloadedNextIndex.Value != currentIndex)
+            {
+                next = preloadedNextIndex.Value;
+            }
+            else if (btnShuffle.IsChecked == true)
+            {
                 next = PickShuffleIndex();
+            }
             else
                 next = currentIndex < 0 ? 0 : (currentIndex + 1) % playlist.Count;
+            ClearNextPreload();
             PlayIndex(next);
         }
 
@@ -1000,6 +1263,7 @@ public partial class MainWindow
             {
                 prev = currentIndex < 0 ? 0 : (currentIndex - 1 + playlist.Count) % playlist.Count;
             }
+            ClearNextPreload();
             PlayIndex(prev);
         }
 
@@ -1014,6 +1278,8 @@ public partial class MainWindow
                 seekSlider.Value = Math.Min(positionMs, seekSlider.Maximum);
                 lblPosition.Text = FormatTime(positionMs);
             }
+
+            TryPreloadUpcomingTrack(force: false);
 
             var mode = QueryStatusText("mode");
             if (isPlaying && mode == "stopped")
@@ -1161,6 +1427,8 @@ public partial class MainWindow
                                 ResetPlayerView();
                             }
                             playlist = BuildMidiPlaylist(customPaths);
+                            ClearStartPreload();
+                            ClearNextPreload();
                             if (!wasCurrent && currentIndex >= 0)
                             {
                                 var stillPlayingPath = currentLoadedPath;
@@ -1168,6 +1436,7 @@ public partial class MainWindow
                             }
                             RebuildPlaylistUi();
                             UpdateButtons();
+                            PrimeInitialPreload();
                             SetStatus("Removed from playlist.");
                         };
                         itemBorder.ContextMenu = new ContextMenu();
@@ -1180,6 +1449,7 @@ public partial class MainWindow
             }
 
             HighlightCurrent();
+            listScroll.Dispatcher.BeginInvoke(SyncPlaylistScrollBarFromViewer, DispatcherPriority.Background);
         }
 
         // ---- Add files (browse) ---------------------------------------------------------
@@ -1209,12 +1479,15 @@ public partial class MainWindow
                 rememberedPath = playlist[currentIndex].Path;
 
             playlist = BuildMidiPlaylist(customPaths);
+            ClearStartPreload();
+            ClearNextPreload();
 
             if (rememberedPath is not null)
                 currentIndex = playlist.FindIndex(s => string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
 
             RebuildPlaylistUi();
             UpdateButtons();
+            PrimeInitialPreload();
             SetStatus($"Added {added.Count} track{(added.Count == 1 ? string.Empty : "s")} to Custom.");
 
             if (playFirstAdded)
@@ -1238,11 +1511,30 @@ public partial class MainWindow
                 AddCustomFiles(ofd.FileNames, playFirstAdded: true);
         };
 
+        listScroll.ScrollChanged += (_, _) => SyncPlaylistScrollBarFromViewer();
+        listScroll.SizeChanged += (_, _) => SyncPlaylistScrollBarFromViewer();
+        playlistScrollBar.ValueChanged += (_, _) =>
+        {
+            if (syncingPlaylistScroll)
+                return;
+            syncingPlaylistScroll = true;
+            try
+            {
+                listScroll.ScrollToVerticalOffset(playlistScrollBar.Value);
+            }
+            finally
+            {
+                syncingPlaylistScroll = false;
+            }
+        };
+
         btnPlay.Click += (_, _) =>
         {
             if (!isOpen && playlist.Count > 0)
             {
-                PlayIndex(currentIndex >= 0 ? currentIndex : 0);
+                var startIndex = ResolveStartPlayIndex();
+                if (startIndex >= 0)
+                    PlayIndex(startIndex);
                 return;
             }
             Play();
@@ -1291,7 +1583,9 @@ public partial class MainWindow
                     }
                     else if (playlist.Count > 0)
                     {
-                        PlayIndex(currentIndex >= 0 ? currentIndex : 0);
+                        var startIndex = ResolveStartPlayIndex();
+                        if (startIndex >= 0)
+                            PlayIndex(startIndex);
                         e.Handled = true;
                     }
                     break;
@@ -1313,6 +1607,13 @@ public partial class MainWindow
         };
 
         dlg.Closed += (_, _) => CloseDevice();
+        dlg.ContentRendered += (_, _) =>
+        {
+            if (hasDialogShown)
+                return;
+            hasDialogShown = true;
+            PrimeInitialPreload();
+        };
 
         RebuildPlaylistUi();
         UpdateButtons();
@@ -1321,6 +1622,7 @@ public partial class MainWindow
         else
             SetStatus($"{playlist.Count} tracks ready.");
 
+        SyncPlaylistScrollBarFromViewer();
         dlg.Content = root;
         dlg.ShowDialog();
     }
