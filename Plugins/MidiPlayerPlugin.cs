@@ -164,12 +164,14 @@ public partial class MainWindow
         var isPaused = false;
         var seekDragging = false;
         var hasDialogShown = false;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         long lengthMs = 0;
         long positionMs = 0;
         int? preloadedNextIndex = null;
         string? preloadedNextPath = null;
         int? preloadedStartIndex = null;
         string? preloadedStartPath = null;
+        var startTrackPrimedSilently = false;
 
         var customPaths = LoadCustomMidiPaths();
         var playlist = BuildMidiPlaylist(customPaths);
@@ -696,7 +698,6 @@ public partial class MainWindow
         root.Children.Add(layout);
 
         // ---- Helpers -----------------------------------------------------------------
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         var syncingPlaylistScroll = false;
 
         void SyncPlaylistScrollBarFromViewer()
@@ -912,6 +913,7 @@ public partial class MainWindow
             isPlaying = false;
             isPaused = false;
             currentLoadedPath = null;
+            ClearStartPreload();
             ClearNextPreload();
         }
 
@@ -989,6 +991,20 @@ public partial class MainWindow
         void Play()
         {
             if (!isOpen) return;
+            if (startTrackPrimedSilently && currentIndex >= 0 && currentIndex < playlist.Count)
+            {
+                var song = playlist[currentIndex];
+                seekSlider.Maximum = Math.Max(1, lengthMs);
+                seekSlider.Value = 0;
+                lblLength.Text = FormatTime(lengthMs);
+                lblPosition.Text = "00:00";
+                lblNowPlaying.Text = song.Title;
+                lblNowPlayingMeta.Text = song.Group;
+                var info = TryParseMidiHeader(song.Path);
+                UpdateInfo(song.Path, info);
+                startTrackPrimedSilently = false;
+                HighlightCurrent();
+            }
             var command = isPaused ? $"resume {alias}" : $"play {alias}";
             if (!TryMci(command, null, out var err))
             {
@@ -1011,6 +1027,7 @@ public partial class MainWindow
         {
             preloadedStartIndex = null;
             preloadedStartPath = null;
+            startTrackPrimedSilently = false;
         }
 
         static bool IsValidIndex(int index, int count) => index >= 0 && index < count;
@@ -1037,6 +1054,38 @@ public partial class MainWindow
             return 0;
         }
 
+        bool TryPrimeStartTrack(int index)
+        {
+            if (!IsValidIndex(index, playlist.Count))
+                return false;
+
+            var song = playlist[index];
+            if (string.IsNullOrWhiteSpace(song.Path) || !File.Exists(song.Path))
+                return false;
+
+            if (isOpen && !isPlaying)
+                CloseDevice();
+            if (isPlaying)
+                return false;
+
+            var openCommand = $"open \"{song.Path}\" type sequencer alias {alias}";
+            if (!TryMci(openCommand, null, out _))
+                return false;
+
+            isOpen = true;
+            isPlaying = false;
+            isPaused = false;
+            TryMci($"set {alias} time format milliseconds", null, out _);
+            lengthMs = QueryStatusNumber("length");
+            positionMs = 0;
+            currentIndex = index;
+            currentLoadedPath = song.Path;
+            preloadedStartIndex = index;
+            preloadedStartPath = song.Path;
+            startTrackPrimedSilently = true;
+            return true;
+        }
+
         int ResolveStartPlayIndex()
         {
             if (playlist.Count == 0)
@@ -1057,7 +1106,7 @@ public partial class MainWindow
 
         void PrimeInitialPreload()
         {
-            if (!hasDialogShown || isOpen || playlist.Count == 0)
+            if (!hasDialogShown || isPlaying || playlist.Count == 0)
                 return;
             var startIndex = ResolveInitialPlayIndex();
             if (!IsValidIndex(startIndex, playlist.Count))
@@ -1066,11 +1115,8 @@ public partial class MainWindow
             if (string.Equals(path, preloadedStartPath, StringComparison.OrdinalIgnoreCase)
                 && preloadedStartIndex == startIndex)
                 return;
-            if (TryWarmPath(path))
-            {
-                preloadedStartIndex = startIndex;
-                preloadedStartPath = path;
-            }
+            if (!TryPrimeStartTrack(startIndex))
+                ClearStartPreload();
         }
 
         int ResolveAutoNextIndex(bool allowShuffle)
