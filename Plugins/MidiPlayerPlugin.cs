@@ -756,6 +756,34 @@ public partial class MainWindow
             lblStatus.Foreground = color ?? new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
         }
 
+        static bool SongMatchesQuery(MidiSong song, string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return true;
+
+            var tokenSource = string.Create(
+                CultureInfo.InvariantCulture,
+                $"{song.Title} {song.Group} {Path.GetFileNameWithoutExtension(song.Path)}");
+            var normalizedSource = tokenSource.ToLowerInvariant();
+            var words = normalizedSource.Split(
+                [' ', '-', '_', '.', '/', '\\', '(', ')', '[', ']', '{', '}', ',', ';', ':'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var tokens = query.ToLowerInvariant().Split(
+                [' '],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            foreach (var token in tokens)
+            {
+                if (normalizedSource.Contains(token, StringComparison.Ordinal))
+                    continue;
+                if (words.Any(w => w.StartsWith(token, StringComparison.Ordinal)))
+                    continue;
+                return false;
+            }
+
+            return true;
+        }
+
         void UpdatePreloadIndicator()
         {
             var hasPreload =
@@ -1511,10 +1539,15 @@ public partial class MainWindow
                 return;
             }
 
+            var filteredIndexes = Enumerable
+                .Range(0, playlist.Count)
+                .ToList();
+
             var groupOrder = new List<string>();
-            if (playlist.Any(s => s.Group == MidiCustomGroupName))
+            if (filteredIndexes.Any(i => playlist[i].Group == MidiCustomGroupName))
                 groupOrder.Add(MidiCustomGroupName);
-            foreach (var g in playlist
+            foreach (var g in filteredIndexes
+                         .Select(i => playlist[i])
                          .Where(s => s.Group != MidiCustomGroupName)
                          .Select(s => s.Group)
                          .Distinct()
@@ -1526,7 +1559,7 @@ public partial class MainWindow
                 var group = groupOrder[gi];
                 var groupBrush = BrushForMidiGroup(group, gi, groupOrder.Count);
 
-                var headerCount = playlist.Count(s => s.Group == group);
+                var headerCount = filteredIndexes.Count(i => playlist[i].Group == group);
                 var headerPanel = new Border
                 {
                     Background = groupBrush,
@@ -1542,7 +1575,7 @@ public partial class MainWindow
                 };
                 listStack.Children.Add(headerPanel);
 
-                for (var i = 0; i < playlist.Count; i++)
+                foreach (var i in filteredIndexes)
                 {
                     if (playlist[i].Group != group)
                         continue;
@@ -1632,6 +1665,165 @@ public partial class MainWindow
         }
 
         // ---- Add files (browse) ---------------------------------------------------------
+        void ShowPlaylistFilterDialog()
+        {
+            var filterWindow = new Window
+            {
+                Title = "Filter Songs",
+                Width = 520,
+                Height = 430,
+                MinWidth = 520,
+                MinHeight = 430,
+                MaxWidth = 720,
+                MaxHeight = 560,
+                ResizeMode = ResizeMode.CanResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = dlg,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Background = new SolidColorBrush(Color.FromRgb(0x0C, 0x14, 0x24))
+            };
+
+            var shell = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x59)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(12),
+                Background = new LinearGradientBrush(
+                    Color.FromRgb(0x0F, 0x17, 0x2A),
+                    Color.FromRgb(0x0B, 0x14, 0x24),
+                    90)
+            };
+
+            var root = new DockPanel();
+            shell.Child = root;
+            var lblFindSong = new TextBlock
+            {
+                Text = "Find Song",
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 15,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            DockPanel.SetDock(lblFindSong, Dock.Top);
+            root.Children.Add(lblFindSong);
+
+            var txtFilter = new TextBox
+            {
+                Text = string.Empty,
+                Padding = new Thickness(8, 5, 8, 5),
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x14, 0x24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x59)),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            DockPanel.SetDock(txtFilter, Dock.Top);
+            root.Children.Add(txtFilter);
+
+            var resultList = new ListBox
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x14, 0x24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x59)),
+                Foreground = Brushes.White
+            };
+            resultList.Resources[typeof(ScrollBar)] = playlistScrollBarStyle;
+            resultList.Resources[SystemColors.ScrollBarBrushKey] = new SolidColorBrush(Color.FromRgb(0x0D, 0x16, 0x27));
+            resultList.Resources[SystemColors.ControlBrushKey] = new SolidColorBrush(Color.FromRgb(0x0D, 0x16, 0x27));
+            resultList.Resources[SystemColors.ControlLightBrushKey] = new SolidColorBrush(Color.FromRgb(0x1E, 0x2B, 0x45));
+            resultList.Resources[SystemColors.ControlDarkBrushKey] = new SolidColorBrush(Color.FromRgb(0x1E, 0x2B, 0x45));
+            root.Children.Add(resultList);
+
+            List<int> resultIndexes = [];
+
+            void RefreshResults()
+            {
+                var query = (txtFilter.Text ?? string.Empty).Trim();
+                resultIndexes = Enumerable
+                    .Range(0, playlist.Count)
+                    .Where(i => SongMatchesQuery(playlist[i], query))
+                    .ToList();
+
+                resultList.Items.Clear();
+                foreach (var idx in resultIndexes.Take(200))
+                {
+                    var song = playlist[idx];
+                    var item = new ListBoxItem
+                    {
+                        Tag = idx,
+                        Padding = new Thickness(6, 4, 6, 4),
+                        Content = $"{song.Title}  ({song.Group})",
+                        Foreground = Brushes.White
+                    };
+                    resultList.Items.Add(item);
+                }
+
+                if (resultList.Items.Count > 0)
+                    resultList.SelectedIndex = 0;
+            }
+
+            void PlaySelectedAndClose()
+            {
+                if (resultList.SelectedItem is ListBoxItem selected
+                    && selected.Tag is int index
+                    && index >= 0
+                    && index < playlist.Count)
+                {
+                    PlayIndex(index);
+                    filterWindow.Close();
+                }
+            }
+
+            txtFilter.TextChanged += (_, _) => RefreshResults();
+            txtFilter.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter)
+                {
+                    PlaySelectedAndClose();
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Down && resultList.Items.Count > 0)
+                {
+                    resultList.Focus();
+                    e.Handled = true;
+                }
+            };
+
+            resultList.MouseDoubleClick += (_, _) => PlaySelectedAndClose();
+            resultList.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter)
+                {
+                    PlaySelectedAndClose();
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Escape)
+                {
+                    filterWindow.Close();
+                    e.Handled = true;
+                }
+            };
+
+            filterWindow.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape)
+                {
+                    filterWindow.Close();
+                    e.Handled = true;
+                }
+            };
+            filterWindow.Loaded += (_, _) =>
+            {
+                txtFilter.Focus();
+                txtFilter.SelectAll();
+                RefreshResults();
+            };
+
+            filterWindow.Content = shell;
+            filterWindow.ShowDialog();
+        }
+
         void AddCustomFiles(IEnumerable<string> paths, bool playFirstAdded)
         {
             var added = new List<string>();
@@ -1779,6 +1971,13 @@ public partial class MainWindow
                     if (playlist.Count > 0)
                     {
                         PlayPrev();
+                        e.Handled = true;
+                    }
+                    break;
+                case Key.F:
+                    if (Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control)
+                    {
+                        ShowPlaylistFilterDialog();
                         e.Handled = true;
                     }
                     break;
