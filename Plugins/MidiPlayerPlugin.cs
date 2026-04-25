@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -890,7 +891,9 @@ public partial class MainWindow
             }
             else
             {
-                sb.Append($"Size: {info.FileSizeBytes:N0} bytes");
+                var sizeKb = info.FileSizeBytes / 1024.0;
+                var sizeKbText = sizeKb.ToString("0.00", CultureInfo.InvariantCulture);
+                sb.Append($"Size: {info.FileSizeBytes:N0} bytes ({sizeKbText} KB)");
                 if (info.IsRiff)
                     sb.Append("  (RIFF MIDI)");
                 sb.AppendLine();
