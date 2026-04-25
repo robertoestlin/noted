@@ -169,6 +169,7 @@ public partial class MainWindow
         long positionMs = 0;
         int? preloadedNextIndex = null;
         string? preloadedNextPath = null;
+        var preloadedNextDeviceOpen = false;
         int? preloadedStartIndex = null;
         string? preloadedStartPath = null;
         var startTrackPrimedSilently = false;
@@ -186,6 +187,8 @@ public partial class MainWindow
         var rowHighlightBrush = new SolidColorBrush(Color.FromRgb(0x4F, 0x9C, 0xFF));
         var rowSelectedFillBrush = new SolidColorBrush(Color.FromArgb(0x2E, 0x4F, 0x9C, 0xFF));
         var rowHoverBrush = new SolidColorBrush(Color.FromArgb(0x77, 0x29, 0x4A, 0x7A));
+        var preloadDotIdleBrush = new SolidColorBrush(Color.FromRgb(0x4A, 0x57, 0x70));
+        var preloadDotReadyBrush = new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0));
 
         dlg.Background = new SolidColorBrush(Color.FromRgb(0x09, 0x0F, 0x1A));
         var root = new DockPanel { Margin = new Thickness(12) };
@@ -654,6 +657,16 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 12, 0),
             ToolTip = "Loop current track"
         };
+        var preloadDot = new Border
+        {
+            Width = 8,
+            Height = 8,
+            CornerRadius = new CornerRadius(4),
+            Background = preloadDotIdleBrush,
+            Margin = new Thickness(2, 14, 0, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+            ToolTip = "Preload pending"
+        };
         btnShuffle.Checked += (_, _) =>
         {
             ClearNextPreload();
@@ -670,6 +683,7 @@ public partial class MainWindow
         btnLoop.Unchecked += (_, _) => ClearNextPreload();
         modeRow.Children.Add(btnShuffle);
         modeRow.Children.Add(btnLoop);
+        modeRow.Children.Add(preloadDot);
         controlsRoot.Children.Add(modeRow);
 
         var lblStatus = new TextBlock
@@ -725,6 +739,16 @@ public partial class MainWindow
         {
             lblStatus.Text = text;
             lblStatus.Foreground = color ?? new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
+        }
+
+        void UpdatePreloadIndicator()
+        {
+            var hasPreload =
+                startTrackPrimedSilently
+                || !string.IsNullOrWhiteSpace(preloadedStartPath)
+                || (preloadedNextDeviceOpen && !string.IsNullOrWhiteSpace(preloadedNextPath));
+            preloadDot.Background = hasPreload ? preloadDotReadyBrush : preloadDotIdleBrush;
+            preloadDot.ToolTip = hasPreload ? "Preload ready" : "Preload pending";
         }
 
         static string FormatTime(long ms)
@@ -914,7 +938,7 @@ public partial class MainWindow
             isPaused = false;
             currentLoadedPath = null;
             ClearStartPreload();
-            ClearNextPreload();
+            ClearNextPreload(closeDevice: true);
         }
 
         void HighlightCurrent()
@@ -1003,6 +1027,7 @@ public partial class MainWindow
                 var info = TryParseMidiHeader(song.Path);
                 UpdateInfo(song.Path, info);
                 startTrackPrimedSilently = false;
+                UpdatePreloadIndicator();
                 HighlightCurrent();
             }
             var command = isPaused ? $"resume {alias}" : $"play {alias}";
@@ -1017,10 +1042,22 @@ public partial class MainWindow
             UpdateButtons();
         }
 
-        void ClearNextPreload()
+        void ClosePreloadedNextDevice()
         {
+            if (!preloadedNextDeviceOpen)
+                return;
+            TryMci($"stop {warmupAlias}", null, out _);
+            TryMci($"close {warmupAlias}", null, out _);
+            preloadedNextDeviceOpen = false;
+        }
+
+        void ClearNextPreload(bool closeDevice = true)
+        {
+            if (closeDevice)
+                ClosePreloadedNextDevice();
             preloadedNextIndex = null;
             preloadedNextPath = null;
+            UpdatePreloadIndicator();
         }
 
         void ClearStartPreload()
@@ -1028,18 +1065,23 @@ public partial class MainWindow
             preloadedStartIndex = null;
             preloadedStartPath = null;
             startTrackPrimedSilently = false;
+            UpdatePreloadIndicator();
         }
 
         static bool IsValidIndex(int index, int count) => index >= 0 && index < count;
 
-        bool TryWarmPath(string path)
+        bool TryPreopenNextPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 return false;
+
+            ClosePreloadedNextDevice();
             if (!TryMci($"open \"{path}\" type sequencer alias {warmupAlias}", null, out _))
                 return false;
+
             TryMci($"set {warmupAlias} time format milliseconds", null, out _);
-            TryMci($"close {warmupAlias}", null, out _);
+            TryMci($"seek {warmupAlias} to start", null, out _);
+            preloadedNextDeviceOpen = true;
             return true;
         }
 
@@ -1083,6 +1125,7 @@ public partial class MainWindow
             preloadedStartIndex = index;
             preloadedStartPath = song.Path;
             startTrackPrimedSilently = true;
+            UpdatePreloadIndicator();
             return true;
         }
 
@@ -1157,14 +1200,21 @@ public partial class MainWindow
             var nextPath = playlist[candidateIndex.Value].Path;
             if (string.IsNullOrWhiteSpace(nextPath) || !File.Exists(nextPath))
                 return;
-            if (string.Equals(nextPath, preloadedNextPath, StringComparison.OrdinalIgnoreCase))
+            if (preloadedNextDeviceOpen
+                && string.Equals(nextPath, preloadedNextPath, StringComparison.OrdinalIgnoreCase)
+                && preloadedNextIndex == candidateIndex)
                 return;
 
-            // Pre-open and close once to warm decoder/device for the specific upcoming file.
-            if (TryWarmPath(nextPath))
+            // Keep the upcoming track actively pre-opened on the secondary alias.
+            if (TryPreopenNextPath(nextPath))
             {
                 preloadedNextIndex = candidateIndex;
                 preloadedNextPath = nextPath;
+                UpdatePreloadIndicator();
+            }
+            else
+            {
+                ClearNextPreload(closeDevice: true);
             }
         }
 
@@ -1266,6 +1316,69 @@ public partial class MainWindow
             }
         }
 
+        bool TryPlayPreloadedNext()
+        {
+            if (!preloadedNextDeviceOpen
+                || !preloadedNextIndex.HasValue
+                || preloadedNextIndex.Value < 0
+                || preloadedNextIndex.Value >= playlist.Count
+                || preloadedNextIndex.Value == currentIndex)
+            {
+                return false;
+            }
+
+            var nextIndex = preloadedNextIndex.Value;
+            var nextSong = playlist[nextIndex];
+            if (string.IsNullOrWhiteSpace(nextSong.Path) || !File.Exists(nextSong.Path))
+            {
+                ClearNextPreload(closeDevice: true);
+                return false;
+            }
+
+            timer.Stop();
+            if (isOpen)
+            {
+                TryMci($"stop {alias}", null, out _);
+                TryMci($"close {alias}", null, out _);
+            }
+
+            var previousAlias = alias;
+            alias = warmupAlias;
+            warmupAlias = previousAlias;
+            preloadedNextDeviceOpen = false;
+
+            ClearStartPreload();
+            preloadedNextIndex = null;
+            preloadedNextPath = null;
+
+            isOpen = true;
+            isPlaying = false;
+            isPaused = false;
+            currentIndex = nextIndex;
+            currentLoadedPath = nextSong.Path;
+            shuffleHistory.Add(nextIndex);
+
+            TryMci($"set {alias} time format milliseconds", null, out _);
+            lengthMs = QueryStatusNumber("length");
+            positionMs = 0;
+            seekSlider.Maximum = Math.Max(1, lengthMs);
+            seekSlider.Value = 0;
+            lblLength.Text = FormatTime(lengthMs);
+            lblPosition.Text = "00:00";
+            lblNowPlaying.Text = nextSong.Title;
+            lblNowPlayingMeta.Text = nextSong.Group;
+            var info = TryParseMidiHeader(nextSong.Path);
+            UpdateInfo(nextSong.Path, info);
+            HighlightCurrent();
+            UpdatePreloadIndicator();
+
+            Play();
+            dlg.Dispatcher.BeginInvoke(
+                () => TryPreloadUpcomingTrack(force: true),
+                DispatcherPriority.Background);
+            return true;
+        }
+
         int PickShuffleIndex()
         {
             if (playlist.Count == 0)
@@ -1284,21 +1397,15 @@ public partial class MainWindow
         void PlayNext()
         {
             if (playlist.Count == 0) return;
+            if (TryPlayPreloadedNext())
+                return;
+
             int next;
-            if (preloadedNextIndex.HasValue
-                && preloadedNextIndex.Value >= 0
-                && preloadedNextIndex.Value < playlist.Count
-                && preloadedNextIndex.Value != currentIndex)
-            {
-                next = preloadedNextIndex.Value;
-            }
-            else if (btnShuffle.IsChecked == true)
-            {
+            if (btnShuffle.IsChecked == true)
                 next = PickShuffleIndex();
-            }
             else
                 next = currentIndex < 0 ? 0 : (currentIndex + 1) % playlist.Count;
-            ClearNextPreload();
+            ClearNextPreload(closeDevice: true);
             PlayIndex(next);
         }
 
