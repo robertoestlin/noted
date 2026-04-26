@@ -25,6 +25,9 @@ public partial class MainWindow
     private const int CharacterSweepBlankPauseMs = 500;
     private const string BlinkModeWholeText = "whole-text";
     private const string BlinkModeCharacterSweep = "character-sweep";
+    private const string MessageOverlayEffectSnow = "snow";
+    private const string MessageOverlayEffectRain = "rain";
+    private const string DefaultMessageOverlayEffect = MessageOverlayEffectSnow;
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
     private string _quickMessageColorHex = DefaultQuickMessageColorHex;
@@ -49,6 +52,11 @@ public partial class MainWindow
     private DispatcherTimer? _messageOverlayCountdownTimer;
     private DateTime _messageOverlayCountdownEndUtc;
     private bool _messageOverlayShowNowPlaying;
+    private bool _messageOverlayEffectEnabled;
+    private string _messageOverlayEffect = DefaultMessageOverlayEffect;
+    private DispatcherTimer? _messageOverlayEffectTimer;
+    private readonly List<MessageOverlayEffectParticle> _messageOverlayEffectParticles = [];
+    private DateTime _messageOverlayEffectLastTickUtc;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -63,6 +71,23 @@ public partial class MainWindow
         ("Whole text", BlinkModeWholeText),
         ("Character sweep", BlinkModeCharacterSweep)
     ];
+    private static readonly (string Label, string Value)[] MessageOverlayEffectOptions =
+    [
+        ("Snow", MessageOverlayEffectSnow),
+        ("Rain", MessageOverlayEffectRain)
+    ];
+
+    private sealed class MessageOverlayEffectParticle
+    {
+        public required System.Windows.Shapes.Shape Shape { get; init; }
+        public double X;
+        public double Y;
+        public double SpeedY;
+        public double DriftAmplitude;
+        public double DriftPhase;
+        public double DriftFrequency;
+        public double Size;
+    }
 
     private void ResetQuickMessageOverlaySettings()
     {
@@ -75,6 +100,8 @@ public partial class MainWindow
         _messageOverlayCountdownMinutes = 0;
         _messageOverlayCountdownSeconds = 0;
         _messageOverlayShowNowPlaying = false;
+        _messageOverlayEffectEnabled = false;
+        _messageOverlayEffect = DefaultMessageOverlayEffect;
     }
 
     private static int ClampMessageOverlayCountdown(int? value, int max)
@@ -111,6 +138,15 @@ public partial class MainWindow
         _messageOverlayCountdownSeconds = ClampMessageOverlayCountdown(
             state.MessageOverlayCountdownSeconds,
             MaxMessageOverlayCountdownSeconds);
+        _messageOverlayEffectEnabled = state.MessageOverlayEffectEnabled ?? false;
+        _messageOverlayEffect = NormalizeMessageOverlayEffect(state.MessageOverlayEffect);
+    }
+
+    private static string NormalizeMessageOverlayEffect(string? value)
+    {
+        return string.Equals(value, MessageOverlayEffectRain, StringComparison.OrdinalIgnoreCase)
+            ? MessageOverlayEffectRain
+            : MessageOverlayEffectSnow;
     }
 
     private static List<string> NormalizeQuickMessagePresets(IEnumerable<string>? presets)
@@ -300,6 +336,42 @@ public partial class MainWindow
         DockPanel.SetDock(countdownRow, Dock.Top);
         root.Children.Add(countdownRow);
 
+        var effectRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        // Always start this dialog with effect disabled. We still remember the
+        // last selected effect in the dropdown for quick re-enable.
+        _messageOverlayEffectEnabled = false;
+        var chkEffect = new CheckBox
+        {
+            Content = "Enable effect",
+            IsChecked = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsEnabled = MessageOverlay.Visibility != Visibility.Visible
+        };
+        effectRow.Children.Add(chkEffect);
+
+        var cmbEffect = new ComboBox { Width = 140 };
+        foreach (var option in MessageOverlayEffectOptions)
+        {
+            cmbEffect.Items.Add(new ComboBoxItem
+            {
+                Content = option.Label,
+                Tag = option.Value
+            });
+        }
+        var selectedEffectIndex = Array.FindIndex(
+            MessageOverlayEffectOptions,
+            option => string.Equals(option.Value, _messageOverlayEffect, StringComparison.OrdinalIgnoreCase));
+        cmbEffect.SelectedIndex = selectedEffectIndex >= 0 ? selectedEffectIndex : 0;
+        effectRow.Children.Add(cmbEffect);
+        DockPanel.SetDock(effectRow, Dock.Top);
+        root.Children.Add(effectRow);
+
         var messagesWrap = new WrapPanel
         {
             Margin = new Thickness(0, 0, 0, 10)
@@ -363,6 +435,11 @@ public partial class MainWindow
             ShowQuickMessageOverlay(message, ResolveQuickMessageBrush(), CurrentCountdownTotalSeconds());
             dlg.Close();
         }
+
+        void RefreshEffectPickerVisibility()
+            => cmbEffect.Visibility = chkEffect.IsChecked == true
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
         void UpdateCustomButton()
         {
@@ -428,6 +505,26 @@ public partial class MainWindow
             SaveWindowSettings();
         };
 
+        cmbEffect.SelectionChanged += (_, _) =>
+        {
+            _messageOverlayEffect = cmbEffect.SelectedItem is ComboBoxItem item && item.Tag is string value
+                ? NormalizeMessageOverlayEffect(value)
+                : DefaultMessageOverlayEffect;
+            SaveWindowSettings();
+        };
+        chkEffect.Checked += (_, _) =>
+        {
+            _messageOverlayEffectEnabled = true;
+            RefreshEffectPickerVisibility();
+            SaveWindowSettings();
+        };
+        chkEffect.Unchecked += (_, _) =>
+        {
+            _messageOverlayEffectEnabled = false;
+            RefreshEffectPickerVisibility();
+            SaveWindowSettings();
+        };
+
         cmbCountdownMinutes.SelectionChanged += (_, _) =>
         {
             if (cmbCountdownMinutes.SelectedItem is int minutes)
@@ -485,6 +582,7 @@ public partial class MainWindow
             SaveWindowSettings();
         };
 
+        RefreshEffectPickerVisibility();
         RebuildPresetButtons();
         dlg.Content = root;
         dlg.ShowDialog();
@@ -815,6 +913,7 @@ public partial class MainWindow
         MessageOverlay.Visibility = Visibility.Visible;
         StartMessageOverlayCountdown(countdownSeconds, foreground);
         RefreshMessageOverlayNowPlaying();
+        StartMessageOverlayEffect();
         MessageOverlay.Focus();
         Keyboard.Focus(MessageOverlay);
     }
@@ -824,9 +923,159 @@ public partial class MainWindow
         SetMessageOverlayBlinking(false);
         StopMessageOverlayCountdown();
         StopMessageOverlayCountdownExpiredBlink();
+        StopMessageOverlayEffect();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void StartMessageOverlayEffect()
+    {
+        StopMessageOverlayEffect();
+        if (!_messageOverlayEffectEnabled || MessageOverlayEffectCanvas == null)
+            return;
+
+        var width = MessageOverlayEffectCanvas.ActualWidth;
+        var height = MessageOverlayEffectCanvas.ActualHeight;
+        if (width <= 0 || height <= 0)
+        {
+            MessageOverlayEffectCanvas.Loaded -= MessageOverlayEffectCanvas_StartOnSizeReady;
+            MessageOverlayEffectCanvas.SizeChanged -= MessageOverlayEffectCanvas_StartOnSizeReady;
+            MessageOverlayEffectCanvas.SizeChanged += MessageOverlayEffectCanvas_StartOnSizeReady;
+            return;
+        }
+
+        SpawnMessageOverlayEffectParticles(width, height);
+        _messageOverlayEffectLastTickUtc = DateTime.UtcNow;
+        _messageOverlayEffectTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(16)
+        };
+        _messageOverlayEffectTimer.Tick += MessageOverlayEffectTimer_Tick;
+        _messageOverlayEffectTimer.Start();
+    }
+
+    private void MessageOverlayEffectCanvas_StartOnSizeReady(object? sender, EventArgs e)
+    {
+        MessageOverlayEffectCanvas.SizeChanged -= MessageOverlayEffectCanvas_StartOnSizeReady;
+        if (MessageOverlay.Visibility == Visibility.Visible && _messageOverlayEffectEnabled)
+            StartMessageOverlayEffect();
+    }
+
+    private void StopMessageOverlayEffect()
+    {
+        if (_messageOverlayEffectTimer != null)
+        {
+            _messageOverlayEffectTimer.Stop();
+            _messageOverlayEffectTimer.Tick -= MessageOverlayEffectTimer_Tick;
+            _messageOverlayEffectTimer = null;
+        }
+        if (MessageOverlayEffectCanvas != null)
+        {
+            MessageOverlayEffectCanvas.SizeChanged -= MessageOverlayEffectCanvas_StartOnSizeReady;
+            MessageOverlayEffectCanvas.Children.Clear();
+        }
+        _messageOverlayEffectParticles.Clear();
+    }
+
+    private void SpawnMessageOverlayEffectParticles(double width, double height)
+    {
+        MessageOverlayEffectCanvas.Children.Clear();
+        _messageOverlayEffectParticles.Clear();
+
+        var isRain = string.Equals(_messageOverlayEffect, MessageOverlayEffectRain, StringComparison.OrdinalIgnoreCase);
+        var count = isRain ? 160 : 90;
+        var rng = Random.Shared;
+
+        for (var i = 0; i < count; i++)
+        {
+            System.Windows.Shapes.Shape shape;
+            double size;
+            double speedY;
+            double drift;
+            if (isRain)
+            {
+                size = 1.6 + rng.NextDouble() * 1.2;
+                speedY = 700 + rng.NextDouble() * 400;
+                drift = 0;
+                shape = new System.Windows.Shapes.Rectangle
+                {
+                    Width = size,
+                    Height = 14 + rng.NextDouble() * 10,
+                    Fill = new SolidColorBrush(Color.FromArgb(180, 200, 220, 255))
+                };
+            }
+            else
+            {
+                size = 3 + rng.NextDouble() * 5;
+                speedY = 40 + rng.NextDouble() * 60;
+                drift = 12 + rng.NextDouble() * 18;
+                shape = new System.Windows.Shapes.Ellipse
+                {
+                    Width = size,
+                    Height = size,
+                    Fill = new SolidColorBrush(Color.FromArgb(220, 255, 255, 255))
+                };
+            }
+
+            var x = rng.NextDouble() * width;
+            var y = rng.NextDouble() * height;
+            Canvas.SetLeft(shape, x);
+            Canvas.SetTop(shape, y);
+            MessageOverlayEffectCanvas.Children.Add(shape);
+
+            _messageOverlayEffectParticles.Add(new MessageOverlayEffectParticle
+            {
+                Shape = shape,
+                X = x,
+                Y = y,
+                SpeedY = speedY,
+                DriftAmplitude = drift,
+                DriftPhase = rng.NextDouble() * Math.PI * 2,
+                DriftFrequency = 0.6 + rng.NextDouble() * 1.2,
+                Size = size
+            });
+        }
+    }
+
+    private void MessageOverlayEffectTimer_Tick(object? sender, EventArgs e)
+    {
+        if (MessageOverlayEffectCanvas == null)
+            return;
+        var now = DateTime.UtcNow;
+        var dt = (now - _messageOverlayEffectLastTickUtc).TotalSeconds;
+        _messageOverlayEffectLastTickUtc = now;
+        if (dt <= 0 || dt > 0.25)
+            dt = 0.016;
+
+        var width = MessageOverlayEffectCanvas.ActualWidth;
+        var height = MessageOverlayEffectCanvas.ActualHeight;
+        if (width <= 0 || height <= 0)
+            return;
+
+        var rng = Random.Shared;
+        foreach (var p in _messageOverlayEffectParticles)
+        {
+            p.Y += p.SpeedY * dt;
+            double xOffset = 0;
+            if (p.DriftAmplitude > 0)
+            {
+                p.DriftPhase += p.DriftFrequency * dt;
+                xOffset = Math.Sin(p.DriftPhase) * p.DriftAmplitude * dt;
+                p.X += xOffset;
+                if (p.X < -p.Size) p.X = width;
+                else if (p.X > width + p.Size) p.X = 0;
+            }
+
+            if (p.Y > height + 20)
+            {
+                p.Y = -20 - rng.NextDouble() * 40;
+                p.X = rng.NextDouble() * width;
+            }
+
+            Canvas.SetLeft(p.Shape, p.X);
+            Canvas.SetTop(p.Shape, p.Y);
+        }
     }
 
     private void RefreshMessageOverlayNowPlaying()

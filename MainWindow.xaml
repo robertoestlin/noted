@@ -258,6 +258,9 @@
                 PreviewKeyDown="MessageOverlay_DismissByKeyDown"
                 Focusable="True">
             <Grid>
+                <Canvas x:Name="MessageOverlayEffectCanvas"
+                        IsHitTestVisible="False"
+                        ClipToBounds="True"/>
                 <Viewbox Stretch="Uniform" StretchDirection="Both" Margin="30">
                     <TextBlock x:Name="MessageOverlayText"
                                Text="GG"
