@@ -9,9 +9,9 @@ BASE_EXE="Noted.exe"
 
 echo "Publishing ${PROJECT} to ${OUTDIR} ..."
 
-echo "Removing ${OUTDIR} folder..."
-rm -rf "${OUTDIR}"
 mkdir -p "${OUTDIR}"
+echo "Removing previous ${BASE_EXE} from ${OUTDIR} ..."
+rm -f "${OUTDIR}/${BASE_EXE}"
 
 dotnet publish "${PROJECT}" \
   -c "${CONFIG}" \
