@@ -246,6 +246,9 @@ public partial class MainWindow : Window
     private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeUndoHistory = [];
     private readonly Dictionary<TabDocument, Stack<LineAssigneeChangeRecord>> _lineAssigneeRedoHistory = [];
     private CutLineMetadataTransfer? _pendingCutLineMetadataTransfer;
+    private ToolTip? _assigneeHoverTooltip;
+    private TabDocument? _assigneeHoverTooltipDoc;
+    private string _assigneeHoverTooltipKey = string.Empty;
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -275,6 +278,7 @@ public partial class MainWindow : Window
         public required int LineNumber { get; init; }
         public required string Person { get; init; }
         public required string LineText { get; init; }
+        public DateTime? CreatedUtc { get; init; }
     }
 
     private sealed class LineAssigneeChangeRecord
@@ -287,6 +291,8 @@ public partial class MainWindow : Window
         public required int LineNumber { get; init; }
         public string? BeforePerson { get; init; }
         public string? AfterPerson { get; init; }
+        public DateTime? BeforeCreatedUtc { get; init; }
+        public DateTime? AfterCreatedUtc { get; init; }
     }
 
     private sealed class HighlightLineUndoRecord
@@ -312,6 +318,7 @@ public partial class MainWindow : Window
         public required int RelativeLineOffset { get; init; }
         public HighlightKind? Highlight { get; init; }
         public string? Assignee { get; init; }
+        public DateTime? AssigneeCreatedUtc { get; init; }
     }
 
     private sealed class CutLineMetadataCapture
@@ -391,8 +398,10 @@ public partial class MainWindow : Window
     {
         private readonly Func<IReadOnlyCollection<int>> _lineProvider;
         private readonly Func<IReadOnlyCollection<int>> _criticalLineProvider;
-        private readonly Func<IReadOnlyDictionary<int, string>> _assigneeProvider;
+        private readonly Func<IReadOnlyDictionary<int, (string Person, DateTime? CreatedUtc)>> _assigneeProvider;
         private readonly Func<string, Color> _assigneeColorProvider;
+        private readonly Action<TabDocument.AssigneeBadgeBounds>? _badgeRecorder;
+        private readonly Action? _badgeRecorderReset;
         private readonly Func<int, bool> _lineSelectionProvider;
         private readonly Func<int> _caretLineProvider;
         private readonly Func<Brush> _selectedLineBrushProvider;
@@ -446,7 +455,7 @@ public partial class MainWindow : Window
         public HighlightLineRenderer(
             Func<IReadOnlyCollection<int>> lineProvider,
             Func<IReadOnlyCollection<int>> criticalLineProvider,
-            Func<IReadOnlyDictionary<int, string>> assigneeProvider,
+            Func<IReadOnlyDictionary<int, (string Person, DateTime? CreatedUtc)>> assigneeProvider,
             Func<string, Color> assigneeColorProvider,
             Func<int, bool> lineSelectionProvider,
             Func<int> caretLineProvider,
@@ -460,7 +469,9 @@ public partial class MainWindow : Window
             Func<bool> showSmileysProvider,
             Func<FancyBulletStyle> fancyBulletStyleProvider,
             Func<bool> showStyledTagsProvider,
-            Func<bool> showLineAssignmentsProvider)
+            Func<bool> showLineAssignmentsProvider,
+            Action? badgeRecorderReset = null,
+            Action<TabDocument.AssigneeBadgeBounds>? badgeRecorder = null)
         {
             _lineProvider = lineProvider;
             _criticalLineProvider = criticalLineProvider;
@@ -479,6 +490,8 @@ public partial class MainWindow : Window
             _fancyBulletStyleProvider = fancyBulletStyleProvider;
             _showStyledTagsProvider = showStyledTagsProvider;
             _showLineAssignmentsProvider = showLineAssignmentsProvider;
+            _badgeRecorderReset = badgeRecorderReset;
+            _badgeRecorder = badgeRecorder;
         }
 
         private static Color ContrastTextColor(Color background)
@@ -703,6 +716,10 @@ public partial class MainWindow : Window
                 }
             }
 
+            // Always reset the recorder cache (even when assignments are hidden), so a stale
+            // hover from a prior render doesn't fire a tooltip after the badges disappear.
+            _badgeRecorderReset?.Invoke();
+
             if (!_showLineAssignmentsProvider())
                 return;
 
@@ -720,7 +737,7 @@ public partial class MainWindow : Window
                 if (lineNumber < 1 || lineNumber > textView.Document.LineCount)
                     continue;
 
-                var person = pair.Value?.Trim();
+                var person = pair.Value.Person?.Trim();
                 if (string.IsNullOrWhiteSpace(person))
                     continue;
 
@@ -774,6 +791,14 @@ public partial class MainWindow : Window
                 var badgeRect = new Rect(x, y, badgeWidth, badgeHeight);
                 drawingContext.DrawRoundedRectangle(style.Background, style.Border, badgeRect, 4, 4);
                 drawingContext.DrawText(formattedText, new Point(x + paddingX, y + Math.Max(0, (badgeHeight - formattedText.Height) / 2)));
+
+                _badgeRecorder?.Invoke(new TabDocument.AssigneeBadgeBounds
+                {
+                    Bounds = badgeRect,
+                    LineNumber = lineNumber,
+                    Person = person,
+                    CreatedUtc = pair.Value.CreatedUtc
+                });
             }
         }
 
@@ -1267,7 +1292,7 @@ public partial class MainWindow : Window
         var highlightRenderer = new HighlightLineRenderer(
             () => GetHighlightedLineNumbers(doc),
             () => GetCriticalHighlightedLineNumbers(doc),
-            () => GetLineAssignments(doc),
+            () => GetLineAssigneeDetails(doc),
             person => GetUserColor(person),
             line => IsLineSelected(doc.Editor, line),
             () => doc.Editor.TextArea.Caret.Line,
@@ -1281,7 +1306,9 @@ public partial class MainWindow : Window
             () => _showSmileys,
             () => _fancyBulletStyle,
             () => _renderStyledTags,
-            () => _showLineAssignments);
+            () => _showLineAssignments,
+            badgeRecorderReset: () => doc.AssigneeBadgeBoundsCache.Clear(),
+            badgeRecorder: bounds => doc.AssigneeBadgeBoundsCache.Add(bounds));
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
@@ -1292,19 +1319,26 @@ public partial class MainWindow : Window
             doc.LastChangedUtc = DateTime.UtcNow;
             MarkDirty(doc);
             RedrawHighlight(doc);
+            HideAssigneeHoverTooltip();
         };
         editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
             UpdateStatusBar(doc);
             RedrawHighlight(doc);
         };
+        editor.TextArea.TextView.ScrollOffsetChanged += (_, _) => HideAssigneeHoverTooltip();
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
         editor.PreviewKeyDown += (_, e) => HandleEditorPreviewKeyDown(doc, e);
         editor.PreviewMouseRightButtonDown += (_, e) => MoveCaretToMousePosition(editor, e);
         editor.PreviewMouseLeftButtonDown += (_, e) => BeginSelectionCursorClip(editor, e);
-        editor.PreviewMouseMove += (_, e) => UpdateSelectionCursorClip(editor, e);
+        editor.PreviewMouseMove += (_, e) =>
+        {
+            UpdateSelectionCursorClip(editor, e);
+            UpdateAssigneeHoverTooltip(doc, e);
+        };
         editor.PreviewMouseLeftButtonUp += (_, _) => EndSelectionCursorClip(editor);
         editor.LostMouseCapture += (_, _) => EndSelectionCursorClip(editor);
+        editor.MouseLeave += (_, _) => HideAssigneeHoverTooltip();
         editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
         editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
 
@@ -2392,8 +2426,12 @@ public partial class MainWindow : Window
                 highlightKind = HighlightKind.Normal;
 
             string? assignee = null;
-            if (TryGetLineAssignee(doc, line, out var person) && !string.IsNullOrWhiteSpace(person))
+            DateTime? assigneeCreatedUtc = null;
+            if (TryGetLineAssignee(doc, line, out var person, out var personCreatedUtc) && !string.IsNullOrWhiteSpace(person))
+            {
                 assignee = person;
+                assigneeCreatedUtc = personCreatedUtc;
+            }
 
             if (highlightKind == null && assignee == null)
                 continue;
@@ -2406,7 +2444,8 @@ public partial class MainWindow : Window
             {
                 RelativeLineOffset = line - firstClipboardLine,
                 Highlight = highlightKind,
-                Assignee = assignee
+                Assignee = assignee,
+                AssigneeCreatedUtc = assigneeCreatedUtc
             });
         }
 
@@ -2562,7 +2601,7 @@ public partial class MainWindow : Window
             }
 
             if (!string.IsNullOrWhiteSpace(entry.Assignee))
-                changed |= SetLineAssignee(doc, targetLine, entry.Assignee, markDirty: false, redraw: false);
+                changed |= SetLineAssignee(doc, targetLine, entry.Assignee, markDirty: false, redraw: false, createdUtc: entry.AssigneeCreatedUtc ?? DateTime.UtcNow);
         }
 
         // Keep _pendingCutLineMetadataTransfer so repeated Ctrl+V pastes the
@@ -3215,7 +3254,7 @@ public partial class MainWindow : Window
 
             bool changed = false;
             foreach (var entry in record.Entries)
-                changed |= SetLineAssignee(doc, entry.LineNumber, entry.Person, markDirty: false, redraw: false);
+                changed |= SetLineAssignee(doc, entry.LineNumber, entry.Person, markDirty: false, redraw: false, createdUtc: entry.CreatedUtc);
 
             if (changed)
                 RedrawHighlight(doc);
@@ -3362,13 +3401,14 @@ public partial class MainWindow : Window
                 });
             }
 
-            if (TryGetLineAssignee(doc, line, out var person))
+            if (TryGetLineAssignee(doc, line, out var person, out var personCreatedUtc))
             {
                 removedAssignees.Add(new LineAssigneeUndoEntry
                 {
                     LineNumber = line,
                     Person = person,
-                    LineText = GetLineText(doc, line)
+                    LineText = GetLineText(doc, line),
+                    CreatedUtc = personCreatedUtc
                 });
             }
 
@@ -3457,8 +3497,8 @@ public partial class MainWindow : Window
         bool currentCritical = IsLineCriticalHighlighted(doc, caretLineNumber);
         bool targetHighlighted = IsLineHighlighted(doc, targetLineNumber);
         bool targetCritical = IsLineCriticalHighlighted(doc, targetLineNumber);
-        TryGetLineAssignee(doc, caretLineNumber, out var currentAssignee);
-        TryGetLineAssignee(doc, targetLineNumber, out var targetAssignee);
+        TryGetLineAssignee(doc, caretLineNumber, out var currentAssignee, out var currentAssigneeCreatedUtc);
+        TryGetLineAssignee(doc, targetLineNumber, out var targetAssignee, out var targetAssigneeCreatedUtc);
 
         if (currentHighlighted)
             RemoveHighlightedLine(doc, caretLineNumber, HighlightKind.Normal, markDirty: false, redraw: false);
@@ -3498,9 +3538,9 @@ public partial class MainWindow : Window
         if (targetCritical)
             AddHighlightedLine(doc, caretLineNumber, HighlightKind.Critical, markDirty: false, redraw: false);
         if (!string.IsNullOrEmpty(currentAssignee))
-            SetLineAssignee(doc, targetLineNumber, currentAssignee, markDirty: false, redraw: false);
+            SetLineAssignee(doc, targetLineNumber, currentAssignee, markDirty: false, redraw: false, createdUtc: currentAssigneeCreatedUtc);
         if (!string.IsNullOrEmpty(targetAssignee))
-            SetLineAssignee(doc, caretLineNumber, targetAssignee, markDirty: false, redraw: false);
+            SetLineAssignee(doc, caretLineNumber, targetAssignee, markDirty: false, redraw: false, createdUtc: targetAssigneeCreatedUtc);
 
         RedrawHighlight(doc);
 
@@ -3563,9 +3603,177 @@ public partial class MainWindow : Window
         return result;
     }
 
+    private void UpdateAssigneeHoverTooltip(TabDocument doc, MouseEventArgs e)
+    {
+        var bounds = doc.AssigneeBadgeBoundsCache;
+        if (bounds.Count == 0)
+        {
+            HideAssigneeHoverTooltip();
+            return;
+        }
+
+        var textView = doc.Editor.TextArea.TextView;
+        var pos = e.GetPosition(textView);
+        TabDocument.AssigneeBadgeBounds? hit = null;
+        foreach (var badge in bounds)
+        {
+            if (badge.Bounds.Contains(pos))
+            {
+                hit = badge;
+                break;
+            }
+        }
+
+        if (hit == null)
+        {
+            HideAssigneeHoverTooltip();
+            return;
+        }
+
+        var key = BuildAssigneeHoverKey(hit);
+        if (_assigneeHoverTooltip != null
+            && _assigneeHoverTooltip.IsOpen
+            && _assigneeHoverTooltipDoc == doc
+            && _assigneeHoverTooltipKey == key)
+        {
+            return;
+        }
+
+        ShowAssigneeHoverTooltip(doc, hit, key);
+    }
+
+    private static string BuildAssigneeHoverKey(TabDocument.AssigneeBadgeBounds badge)
+        => string.Concat(
+            badge.LineNumber.ToString(CultureInfo.InvariantCulture),
+            "|",
+            badge.Person,
+            "|",
+            badge.CreatedUtc?.Ticks.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
+
+    private void ShowAssigneeHoverTooltip(TabDocument doc, TabDocument.AssigneeBadgeBounds badge, string key)
+    {
+        _assigneeHoverTooltip ??= new ToolTip
+        {
+            Placement = PlacementMode.MousePoint,
+            HorizontalOffset = 14,
+            VerticalOffset = 18,
+            HasDropShadow = true,
+            StaysOpen = true,
+            Focusable = false
+        };
+
+        // Force-close before reopening so the tooltip re-anchors to the new mouse point
+        // when moving between badges.
+        if (_assigneeHoverTooltip.IsOpen)
+            _assigneeHoverTooltip.IsOpen = false;
+
+        _assigneeHoverTooltip.PlacementTarget = doc.Editor;
+        _assigneeHoverTooltip.Content = BuildAssigneeHoverContent(badge);
+        _assigneeHoverTooltipDoc = doc;
+        _assigneeHoverTooltipKey = key;
+        _assigneeHoverTooltip.IsOpen = true;
+    }
+
+    private void HideAssigneeHoverTooltip()
+    {
+        if (_assigneeHoverTooltip != null && _assigneeHoverTooltip.IsOpen)
+            _assigneeHoverTooltip.IsOpen = false;
+        _assigneeHoverTooltipDoc = null;
+        _assigneeHoverTooltipKey = string.Empty;
+    }
+
+    private static UIElement BuildAssigneeHoverContent(TabDocument.AssigneeBadgeBounds badge)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Vertical, MaxWidth = 360 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"Assigned to: {badge.Person}",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 2)
+        });
+
+        if (badge.CreatedUtc is DateTime createdUtc)
+        {
+            var local = createdUtc.ToLocalTime();
+            var today = DateTime.Today;
+            int daysAgo = Math.Max(0, (int)(today - local.Date).TotalDays);
+            int weekdaysAgo = CountWeekdaysBetween(local.Date, today);
+
+            panel.Children.Add(new TextBlock { Text = $"Created: {local:yyyy-MM-dd HH:mm}" });
+            panel.Children.Add(new TextBlock { Text = $"Days ago: {daysAgo}" });
+            panel.Children.Add(new TextBlock { Text = $"Weekdays ago: {weekdaysAgo}" });
+        }
+        else
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Created: (unknown)",
+                Foreground = SystemColors.GrayTextBrush
+            });
+        }
+
+        return new Border
+        {
+            Padding = new Thickness(8, 5, 8, 5),
+            Child = panel
+        };
+    }
+
+    private static int CountWeekdaysBetween(DateTime startInclusive, DateTime endInclusive)
+    {
+        if (endInclusive <= startInclusive)
+            return 0;
+
+        int totalDays = (int)(endInclusive.Date - startInclusive.Date).TotalDays;
+        int fullWeeks = totalDays / 7;
+        int weekdays = fullWeeks * 5;
+        int remainder = totalDays - (fullWeeks * 7);
+        var startDow = (int)startInclusive.DayOfWeek;
+        for (int i = 1; i <= remainder; i++)
+        {
+            var day = (DayOfWeek)((startDow + i) % 7);
+            if (day != DayOfWeek.Saturday && day != DayOfWeek.Sunday)
+                weekdays++;
+        }
+        return weekdays;
+    }
+
+    private IReadOnlyDictionary<int, (string Person, DateTime? CreatedUtc)> GetLineAssigneeDetails(TabDocument doc)
+    {
+        if (doc.LineAssigneeAnchors.Count == 0)
+            return new Dictionary<int, (string, DateTime?)>();
+
+        var result = new Dictionary<int, (string, DateTime?)>();
+        for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineAssigneeAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            var person = entry.Person?.Trim();
+            if (string.IsNullOrWhiteSpace(person))
+            {
+                doc.LineAssigneeAnchors.RemoveAt(i);
+                continue;
+            }
+
+            result[anchor.Line] = (person, entry.CreatedUtc);
+        }
+
+        return result;
+    }
+
     private bool TryGetLineAssignee(TabDocument doc, int lineNumber, out string person)
+        => TryGetLineAssignee(doc, lineNumber, out person, out _);
+
+    private bool TryGetLineAssignee(TabDocument doc, int lineNumber, out string person, out DateTime? createdUtc)
     {
         person = string.Empty;
+        createdUtc = null;
         for (int i = doc.LineAssigneeAnchors.Count - 1; i >= 0; i--)
         {
             var entry = doc.LineAssigneeAnchors[i];
@@ -3586,13 +3794,14 @@ public partial class MainWindow : Window
                 return false;
             }
 
+            createdUtc = entry.CreatedUtc;
             return true;
         }
 
         return false;
     }
 
-    private bool SetLineAssignee(TabDocument doc, int lineNumber, string person, bool markDirty = true, bool redraw = true)
+    private bool SetLineAssignee(TabDocument doc, int lineNumber, string person, bool markDirty = true, bool redraw = true, DateTime? createdUtc = null)
     {
         var cleaned = person.Trim();
         if (cleaned.Length == 0)
@@ -3625,7 +3834,14 @@ public partial class MainWindow : Window
                 if (!string.Equals(entry.Person, cleaned, StringComparison.Ordinal))
                 {
                     entry.Person = cleaned;
+                    // Reassignment to a different person resets the creation timestamp.
+                    entry.CreatedUtc = createdUtc;
                     changed = true;
+                }
+                else if (createdUtc.HasValue && entry.CreatedUtc != createdUtc)
+                {
+                    // Restoring a known timestamp (e.g., loading from disk).
+                    entry.CreatedUtc = createdUtc;
                 }
             }
             else
@@ -3645,7 +3861,8 @@ public partial class MainWindow : Window
             doc.LineAssigneeAnchors.Add(new TabDocument.LineAssigneeAnchor
             {
                 Anchor = anchor,
-                Person = cleaned
+                Person = cleaned,
+                CreatedUtc = createdUtc
             });
             changed = true;
         }
@@ -3695,7 +3912,13 @@ public partial class MainWindow : Window
                 if (assignee == null || assignee.Line <= 0 || string.IsNullOrWhiteSpace(assignee.Person))
                     continue;
 
-                SetLineAssignee(doc, assignee.Line, assignee.Person, markDirty: false, redraw: false);
+                SetLineAssignee(
+                    doc,
+                    assignee.Line,
+                    assignee.Person,
+                    markDirty: false,
+                    redraw: false,
+                    createdUtc: assignee.CreatedUtc);
             }
         }
 
@@ -3734,10 +3957,11 @@ public partial class MainWindow : Window
         foreach (var entry in record.Entries)
         {
             var targetPerson = useBeforeState ? entry.BeforePerson : entry.AfterPerson;
+            var targetCreatedUtc = useBeforeState ? entry.BeforeCreatedUtc : entry.AfterCreatedUtc;
             if (string.IsNullOrWhiteSpace(targetPerson))
                 changed |= RemoveLineAssignee(doc, entry.LineNumber, markDirty: false, redraw: false);
             else
-                changed |= SetLineAssignee(doc, entry.LineNumber, targetPerson, markDirty: false, redraw: false);
+                changed |= SetLineAssignee(doc, entry.LineNumber, targetPerson, markDirty: false, redraw: false, createdUtc: targetCreatedUtc);
         }
 
         if (changed)
@@ -3837,17 +4061,21 @@ public partial class MainWindow : Window
 
         bool changed = false;
         var undoEntries = new List<LineAssigneeChangeEntry>();
+        var assignmentTimestamp = DateTime.UtcNow;
         foreach (var line in lines)
         {
-            string? beforePerson = TryGetLineAssignee(doc, line, out var owner) ? owner : null;
-            if (SetLineAssignee(doc, line, cleaned, markDirty: false, redraw: false))
+            string? beforePerson = TryGetLineAssignee(doc, line, out var owner, out var beforeCreatedUtc) ? owner : null;
+            DateTime? beforeCreated = beforePerson != null ? beforeCreatedUtc : null;
+            if (SetLineAssignee(doc, line, cleaned, markDirty: false, redraw: false, createdUtc: assignmentTimestamp))
             {
                 changed = true;
                 undoEntries.Add(new LineAssigneeChangeEntry
                 {
                     LineNumber = line,
                     BeforePerson = beforePerson,
-                    AfterPerson = cleaned
+                    AfterPerson = cleaned,
+                    BeforeCreatedUtc = beforeCreated,
+                    AfterCreatedUtc = assignmentTimestamp
                 });
             }
         }
@@ -3871,7 +4099,7 @@ public partial class MainWindow : Window
         var undoEntries = new List<LineAssigneeChangeEntry>();
         foreach (var line in lines)
         {
-            if (!TryGetLineAssignee(doc, line, out var beforePerson))
+            if (!TryGetLineAssignee(doc, line, out var beforePerson, out var beforeCreatedUtc))
                 continue;
 
             if (RemoveLineAssignee(doc, line, markDirty: false, redraw: false))
@@ -3879,6 +4107,7 @@ public partial class MainWindow : Window
                 changed = true;
                 undoEntries.Add(new LineAssigneeChangeEntry
                 {
+                    BeforeCreatedUtc = beforeCreatedUtc,
                     LineNumber = line,
                     BeforePerson = beforePerson,
                     AfterPerson = null
@@ -5576,9 +5805,14 @@ public partial class MainWindow : Window
     {
         var highlighted = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
         var criticalHighlighted = GetCriticalHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
-        var assignees = GetLineAssignments(doc)
-            .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value))
-            .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
+        var assignees = GetLineAssigneeDetails(doc)
+            .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value.Person))
+            .Select(pair => new FileLineAssignee
+            {
+                Line = pair.Key,
+                Person = pair.Value.Person,
+                CreatedUtc = pair.Value.CreatedUtc
+            })
             .OrderBy(entry => entry.Line)
             .ToList();
 
@@ -5619,9 +5853,14 @@ public partial class MainWindow : Window
                 int preservedLineNumber = doc == activeDoc ? doc.Editor.TextArea.Caret.Line : 0;
                 // Replacing Editor.Text creates a new document and invalidates TextAnchors.
                 // Snapshot line-based state first so assignees/highlights survive normalization.
-                var assigneeSnapshot = GetLineAssignments(doc)
-                    .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value))
-                    .Select(pair => new FileLineAssignee { Line = pair.Key, Person = pair.Value })
+                var assigneeSnapshot = GetLineAssigneeDetails(doc)
+                    .Where(pair => pair.Key > 0 && !string.IsNullOrWhiteSpace(pair.Value.Person))
+                    .Select(pair => new FileLineAssignee
+                    {
+                        Line = pair.Key,
+                        Person = pair.Value.Person,
+                        CreatedUtc = pair.Value.CreatedUtc
+                    })
                     .ToList();
                 var highlightSnapshot = GetHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
                 var criticalHighlightSnapshot = GetCriticalHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
@@ -5990,6 +6229,7 @@ public partial class MainWindow : Window
         }
 
         CloseTagCompletionIfAny();
+        HideAssigneeHoverTooltip();
         var doc = CurrentDoc();
         if (doc != null) UpdateStatusBar(doc);
     }

@@ -28,6 +28,9 @@ public sealed class FileLineAssignee
 {
     public int Line { get; set; }
     public string Person { get; set; } = string.Empty;
+
+    /// <summary>UTC timestamp when this line was assigned to the current person. Null for legacy entries.</summary>
+    public DateTime? CreatedUtc { get; set; }
 }
 
 public sealed class UserProfile

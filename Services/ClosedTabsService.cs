@@ -73,7 +73,8 @@ public sealed class ClosedTabsService
                 .Select(assignee => new FileLineAssignee
                 {
                     Line = assignee.Line,
-                    Person = assignee.Person.Trim()
+                    Person = assignee.Person.Trim(),
+                    CreatedUtc = assignee.CreatedUtc
                 })
                 .OrderBy(assignee => assignee.Line)
                 .ToList();

@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Windows;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
@@ -11,6 +13,17 @@ public class TabDocument
     {
         public TextAnchor Anchor { get; init; } = null!;
         public string Person { get; set; } = string.Empty;
+
+        /// <summary>UTC timestamp when the current person was assigned to this line.</summary>
+        public DateTime? CreatedUtc { get; set; }
+    }
+
+    public sealed class AssigneeBadgeBounds
+    {
+        public Rect Bounds { get; init; }
+        public int LineNumber { get; init; }
+        public string Person { get; init; } = string.Empty;
+        public DateTime? CreatedUtc { get; init; }
     }
 
     /// <summary>Display name shown on the tab header (e.g. "file1").</summary>
@@ -42,6 +55,13 @@ public class TabDocument
 
     /// <summary>Anchors for line assignees (track edits as text shifts).</summary>
     public List<LineAssigneeAnchor> LineAssigneeAnchors { get; } = [];
+
+    /// <summary>
+    /// Live cache of the on-screen rectangles for assignee badges, populated by the
+    /// background renderer on each draw. Used by the editor to show an instant hover
+    /// tooltip with assignment metadata.
+    /// </summary>
+    public List<AssigneeBadgeBounds> AssigneeBadgeBoundsCache { get; } = [];
 
     /// <summary>Renderer used to paint the full-width highlighted line background.</summary>
     public IBackgroundRenderer? HighlightRenderer { get; set; }
