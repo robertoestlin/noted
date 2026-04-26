@@ -57,6 +57,7 @@ public partial class MainWindow
     private Action? _midiPlayerDockAction;
     private Action? _midiPlayerRestoreAction;
     private Action? _midiPlayerNextAction;
+    private Action? _midiPlayerPauseToggleAction;
     private bool _midiPlayerIsPlaying;
     private string? _midiPlayerCurrentTitle;
     private string? _midiPlayerCurrentGroup;
@@ -2260,6 +2261,7 @@ public partial class MainWindow
             _midiPlayerDockAction = null;
             _midiPlayerRestoreAction = null;
             _midiPlayerNextAction = null;
+            _midiPlayerPauseToggleAction = null;
             _midiPlayerDocked = false;
             _midiPlayerIsPlaying = false;
             _midiPlayerCurrentTitle = null;
@@ -2289,6 +2291,22 @@ public partial class MainWindow
         _midiPlayerDockAction = DockMidiPlayerWindow;
         _midiPlayerRestoreAction = RestoreMidiPlayerWindow;
         _midiPlayerNextAction = PlayNext;
+        _midiPlayerPauseToggleAction = () =>
+        {
+            if (!isOpen)
+            {
+                if (playlist.Count == 0)
+                    return;
+                var startIndex = ResolveStartPlayIndex();
+                if (startIndex >= 0)
+                    PlayIndex(startIndex);
+                return;
+            }
+            if (isPlaying)
+                Pause();
+            else
+                Play();
+        };
         UpdateMidiPlayerDockedIndicator();
         dlg.Show();
     }

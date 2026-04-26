@@ -51,6 +51,7 @@ public partial class MainWindow
     private int _messageOverlayCountdownSeconds;
     private DispatcherTimer? _messageOverlayCountdownTimer;
     private DateTime _messageOverlayCountdownEndUtc;
+    private int _messageOverlayCountdownInitialSeconds;
     private bool _messageOverlayShowNowPlaying;
     private bool _messageOverlayEffectEnabled;
     private string _messageOverlayEffect = DefaultMessageOverlayEffect;
@@ -1105,10 +1106,12 @@ public partial class MainWindow
         StopMessageOverlayCountdownExpiredBlink();
         if (totalSeconds <= 0)
         {
+            _messageOverlayCountdownInitialSeconds = 0;
             MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
             return;
         }
 
+        _messageOverlayCountdownInitialSeconds = totalSeconds;
         MessageOverlayCountdown.Foreground = foreground;
         MessageOverlayCountdownContainer.Visibility = Visibility.Visible;
         _messageOverlayCountdownEndUtc = DateTime.UtcNow.AddSeconds(totalSeconds);
@@ -1119,6 +1122,13 @@ public partial class MainWindow
         };
         _messageOverlayCountdownTimer.Tick += (_, _) => UpdateMessageOverlayCountdownText();
         _messageOverlayCountdownTimer.Start();
+    }
+
+    private void ResetMessageOverlayCountdown()
+    {
+        if (_messageOverlayCountdownInitialSeconds <= 0)
+            return;
+        StartMessageOverlayCountdown(_messageOverlayCountdownInitialSeconds, MessageOverlayText.Foreground);
     }
 
     private void StartMessageOverlayCountdownExpiredBlink()
@@ -1383,6 +1393,25 @@ public partial class MainWindow
         if (key == Key.N && _midiPlayerNextAction != null)
         {
             _midiPlayerNextAction.Invoke();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.M && _midiPlayerPauseToggleAction != null)
+        {
+            // Toggling pause from inside the overlay also turns on the
+            // Now Playing pill so it follows the player state: visible
+            // while audio is playing, hidden the moment we pause.
+            _messageOverlayShowNowPlaying = true;
+            _midiPlayerPauseToggleAction.Invoke();
+            RefreshMessageOverlayNowPlaying();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.R && _messageOverlayCountdownInitialSeconds > 0)
+        {
+            ResetMessageOverlayCountdown();
             e.Handled = true;
             return true;
         }
