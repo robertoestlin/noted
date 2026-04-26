@@ -1102,6 +1102,13 @@ public partial class MainWindow
             return true;
         }
 
+        if (key == Key.N && _midiPlayerNextAction != null)
+        {
+            _midiPlayerNextAction.Invoke();
+            e.Handled = true;
+            return true;
+        }
+
         HideQuickMessageOverlay();
         e.Handled = true;
         return true;

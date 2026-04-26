@@ -294,7 +294,7 @@
                         Background="#33000000"
                         BorderBrush="#55FFFFFF"
                         BorderThickness="1"
-                        Width="420"
+                        Width="600"
                         Visibility="Collapsed">
                     <StackPanel>
                         <TextBlock x:Name="MessageOverlayNowPlayingLabel"
