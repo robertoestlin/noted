@@ -846,9 +846,6 @@ public partial class MainWindow
 
         MessageOverlayNowPlayingTitle.Text = _midiPlayerCurrentTitle ?? string.Empty;
         MessageOverlayNowPlayingMeta.Text = _midiPlayerCurrentGroup ?? string.Empty;
-        var brush = MessageOverlayText.Foreground ?? ResolveQuickMessageBrush();
-        MessageOverlayNowPlayingLabel.Foreground = brush;
-        MessageOverlayNowPlayingTitle.Foreground = brush;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Visible;
     }
 
@@ -1131,11 +1128,6 @@ public partial class MainWindow
         _messageOverlayCharacterForeground = nextBrush;
         if (MessageOverlayCountdownContainer.Visibility == Visibility.Visible)
             MessageOverlayCountdown.Foreground = nextBrush;
-        if (MessageOverlayNowPlayingContainer.Visibility == Visibility.Visible)
-        {
-            MessageOverlayNowPlayingLabel.Foreground = nextBrush;
-            MessageOverlayNowPlayingTitle.Foreground = nextBrush;
-        }
         if (_isMessageOverlayBlinking
             && string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
         {

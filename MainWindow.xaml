@@ -294,19 +294,19 @@
                         Background="#33000000"
                         BorderBrush="#55FFFFFF"
                         BorderThickness="1"
-                        MaxWidth="560"
+                        Width="420"
                         Visibility="Collapsed">
                     <StackPanel>
                         <TextBlock x:Name="MessageOverlayNowPlayingLabel"
                                    Text="NOW PLAYING"
                                    FontSize="11"
                                    FontWeight="SemiBold"
-                                   Foreground="#62E5FF"/>
+                                   Foreground="#5FD4FF"/>
                         <TextBlock x:Name="MessageOverlayNowPlayingTitle"
                                    Text=""
-                                   FontSize="22"
+                                   FontSize="24"
                                    FontWeight="SemiBold"
-                                   Foreground="#62E5FF"
+                                   Foreground="White"
                                    Margin="0,2,0,0"
                                    TextTrimming="CharacterEllipsis"/>
                         <TextBlock x:Name="MessageOverlayNowPlayingMeta"
