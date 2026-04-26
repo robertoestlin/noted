@@ -915,6 +915,8 @@ public partial class MainWindow
         StartMessageOverlayCountdown(countdownSeconds, foreground);
         RefreshMessageOverlayNowPlaying();
         StartMessageOverlayEffect();
+        if (MessageOverlayHelpContainer != null)
+            MessageOverlayHelpContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Focus();
         Keyboard.Focus(MessageOverlay);
     }
@@ -927,7 +929,57 @@ public partial class MainWindow
         StopMessageOverlayEffect();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
+        if (MessageOverlayHelpContainer != null)
+            MessageOverlayHelpContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void ToggleMessageOverlayHelp()
+    {
+        if (MessageOverlayHelpContainer == null)
+            return;
+        MessageOverlayHelpContainer.Visibility = MessageOverlayHelpContainer.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Cycles the overlay effect: off → first effect → ... → last effect → off → ...
+    /// </summary>
+    private void CycleMessageOverlayEffect()
+    {
+        if (MessageOverlayEffectOptions.Length == 0)
+            return;
+
+        if (!_messageOverlayEffectEnabled)
+        {
+            _messageOverlayEffectEnabled = true;
+            _messageOverlayEffect = MessageOverlayEffectOptions[0].Value;
+        }
+        else
+        {
+            var currentIndex = Array.FindIndex(
+                MessageOverlayEffectOptions,
+                option => string.Equals(option.Value, _messageOverlayEffect, StringComparison.OrdinalIgnoreCase));
+            if (currentIndex < 0)
+            {
+                _messageOverlayEffect = MessageOverlayEffectOptions[0].Value;
+            }
+            else if (currentIndex + 1 < MessageOverlayEffectOptions.Length)
+            {
+                _messageOverlayEffect = MessageOverlayEffectOptions[currentIndex + 1].Value;
+            }
+            else
+            {
+                _messageOverlayEffectEnabled = false;
+            }
+        }
+
+        if (_messageOverlayEffectEnabled)
+            StartMessageOverlayEffect();
+        else
+            StopMessageOverlayEffect();
+        SaveWindowSettings();
     }
 
     private void StartMessageOverlayEffect()
@@ -1412,6 +1464,20 @@ public partial class MainWindow
         if (key == Key.R && _messageOverlayCountdownInitialSeconds > 0)
         {
             ResetMessageOverlayCountdown();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.H)
+        {
+            ToggleMessageOverlayHelp();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.E)
+        {
+            CycleMessageOverlayEffect();
             e.Handled = true;
             return true;
         }

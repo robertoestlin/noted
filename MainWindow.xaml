@@ -319,6 +319,65 @@
                                    TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                 </Border>
+                <Border x:Name="MessageOverlayHelpContainer"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Margin="0,32,32,0"
+                        Padding="18,12,18,12"
+                        CornerRadius="14"
+                        Background="#33000000"
+                        BorderBrush="#55FFFFFF"
+                        BorderThickness="1"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="SHORTCUTS"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="#5FD4FF"
+                                   Margin="0,0,0,8"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0"  Grid.Column="0" Text="H"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="0"  Grid.Column="1" Text="Toggle this help panel"                                                   Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="1"  Grid.Column="0" Text="Up / Down"   FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="1"  Grid.Column="1" Text="Cycle text color"                                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="2"  Grid.Column="0" Text="Left / Right" FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"    Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="2"  Grid.Column="1" Text="Cycle saved messages"                                                     Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="3"  Grid.Column="0" Text="B"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="3"  Grid.Column="1" Text="Toggle blinking"                                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="4"  Grid.Column="0" Text="T"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="4"  Grid.Column="1" Text="Toggle blink type (whole / sweep)"                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="5"  Grid.Column="0" Text="E"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="5"  Grid.Column="1" Text="Cycle effect (Snow / Rain / Off)"                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="6"  Grid.Column="0" Text="R"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="6"  Grid.Column="1" Text="Reset countdown"                                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="7"  Grid.Column="0" Text="M"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="7"  Grid.Column="1" Text="Pause / play music"                                                       Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="8"  Grid.Column="0" Text="N"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="8"  Grid.Column="1" Text="Next track"                                                               Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="9"  Grid.Column="0" Text="Esc"         FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="9"  Grid.Column="1" Text="Close overlay"                                                            Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="10" Grid.Column="0" Text="Other"       FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="10" Grid.Column="1" Text="Any other key closes the overlay"                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
             </Grid>
         </Border>
     </Grid>
