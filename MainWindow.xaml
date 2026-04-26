@@ -364,7 +364,7 @@
                             <TextBlock Grid.Row="4"  Grid.Column="0" Text="T"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="4"  Grid.Column="1" Text="Toggle blink type (whole / sweep)"                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="5"  Grid.Column="0" Text="E"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
-                            <TextBlock Grid.Row="5"  Grid.Column="1" Text="Cycle effect (Snow / Rain / Off)"                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="5"  Grid.Column="1" Text="Cycle effect (Snowy / Rainy / Off)"                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="6"  Grid.Column="0" Text="R"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="6"  Grid.Column="1" Text="Reset countdown"                                                          Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="7"  Grid.Column="0" Text="M"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>

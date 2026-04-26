@@ -74,8 +74,8 @@ public partial class MainWindow
     ];
     private static readonly (string Label, string Value)[] MessageOverlayEffectOptions =
     [
-        ("Snow", MessageOverlayEffectSnow),
-        ("Rain", MessageOverlayEffectRain)
+        ("Snowy", MessageOverlayEffectSnow),
+        ("Rainy", MessageOverlayEffectRain)
     ];
 
     private sealed class MessageOverlayEffectParticle
