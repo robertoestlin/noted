@@ -2172,6 +2172,13 @@ public partial class MainWindow
                         e.Handled = true;
                     }
                     break;
+                case Key.S:
+                    if (Keyboard.Modifiers == ModifierKeys.None)
+                    {
+                        btnShuffle.IsChecked = btnShuffle.IsChecked != true;
+                        e.Handled = true;
+                    }
+                    break;
                 case Key.F:
                     if (Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control)
                     {
