@@ -9,6 +9,18 @@ public sealed class AudioSessionSnapshotService
     private const float ActivePeakThreshold = 0.0001f;
     private const int ClsCtxAll = 23; // InprocServer | InprocHandler | LocalServer
 
+    public void TrySetCurrentProcessSessionDisplayName(string displayName)
+    {
+        try
+        {
+            SetCurrentProcessSessionDisplayName(displayName);
+        }
+        catch
+        {
+            // Best effort only.
+        }
+    }
+
     public string CaptureOutputAudioSummary()
     {
         try
@@ -28,6 +40,70 @@ public sealed class AudioSessionSnapshotService
         {
             // Best effort diagnostics only.
             return "0";
+        }
+    }
+
+    private static void SetCurrentProcessSessionDisplayName(string displayName)
+    {
+        var target = (displayName ?? string.Empty).Trim();
+        if (target.Length == 0)
+            return;
+
+        var currentProcessId = (uint)Environment.ProcessId;
+        IMMDeviceEnumerator? deviceEnumerator = null;
+        IMMDevice? defaultDevice = null;
+        IAudioSessionManager2? sessionManager = null;
+        IAudioSessionEnumerator? sessionEnumerator = null;
+
+        try
+        {
+            var deviceEnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!;
+            deviceEnumerator = (IMMDeviceEnumerator)Activator.CreateInstance(deviceEnumeratorType)!;
+            Marshal.ThrowExceptionForHR(deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out defaultDevice));
+            var sessionManagerGuid = typeof(IAudioSessionManager2).GUID;
+            Marshal.ThrowExceptionForHR(defaultDevice.Activate(ref sessionManagerGuid, ClsCtxAll, IntPtr.Zero, out var sessionManagerObj));
+            sessionManager = (IAudioSessionManager2)sessionManagerObj;
+            Marshal.ThrowExceptionForHR(sessionManager.GetSessionEnumerator(out sessionEnumerator));
+            Marshal.ThrowExceptionForHR(sessionEnumerator.GetCount(out var count));
+
+            for (var index = 0; index < count; index++)
+            {
+                IAudioSessionControl? sessionControl = null;
+                IAudioSessionControl2? sessionControl2 = null;
+                try
+                {
+                    Marshal.ThrowExceptionForHR(sessionEnumerator.GetSession(index, out sessionControl));
+                    sessionControl2 = (IAudioSessionControl2)sessionControl;
+                    Marshal.ThrowExceptionForHR(sessionControl2.GetProcessId(out var processId));
+                    if (processId != currentProcessId)
+                        continue;
+
+                    if (sessionControl2.GetDisplayName(out var currentDisplayName) == 0
+                        && string.Equals(currentDisplayName, target, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var context = Guid.Empty;
+                    sessionControl2.SetDisplayName(target, ref context);
+                }
+                catch
+                {
+                    // Skip this session and continue with the next.
+                }
+                finally
+                {
+                    ReleaseComObject(sessionControl2);
+                    ReleaseComObject(sessionControl);
+                }
+            }
+        }
+        finally
+        {
+            ReleaseComObject(sessionEnumerator);
+            ReleaseComObject(sessionManager);
+            ReleaseComObject(defaultDevice);
+            ReleaseComObject(deviceEnumerator);
         }
     }
 

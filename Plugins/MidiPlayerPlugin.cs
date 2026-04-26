@@ -365,6 +365,9 @@ public partial class MainWindow
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
+        void NormalizeAudioSessionDisplayName()
+            => _audioSessionSnapshotService.TrySetCurrentProcessSessionDisplayName("Noted");
+
         // The "docked" indicator beside the version tag is only meaningful
         // while music is actually playing - hiding the window while idle
         // simply tucks it away without flagging it as docked.
@@ -378,6 +381,7 @@ public partial class MainWindow
         {
             dlg.Hide();
             RefreshDockedIndicator();
+            NormalizeAudioSessionDisplayName();
         }
 
         void RestoreMidiPlayerWindow()
@@ -389,6 +393,7 @@ public partial class MainWindow
             dlg.Activate();
             dlg.Focus();
             RefreshDockedIndicator();
+            NormalizeAudioSessionDisplayName();
         }
 
         var layout = new Grid();
@@ -1242,6 +1247,7 @@ public partial class MainWindow
             TryMci($"set {alias} time format milliseconds", null, out _);
             lengthMs = QueryStatusNumber("length");
             positionMs = 0;
+            NormalizeAudioSessionDisplayName();
 
             seekSlider.Maximum = Math.Max(1, lengthMs);
             seekSlider.Value = 0;
@@ -1305,6 +1311,7 @@ public partial class MainWindow
             isPlaying = true;
             isPaused = false;
             timer.Start();
+            NormalizeAudioSessionDisplayName();
             UpdateButtons();
         }
 
@@ -1349,6 +1356,7 @@ public partial class MainWindow
             TryMci($"set {warmupAlias} time format milliseconds", null, out _);
             TryMci($"seek {warmupAlias} to start", null, out _);
             preloadedNextDeviceOpen = true;
+            NormalizeAudioSessionDisplayName();
             return true;
         }
 
@@ -1388,6 +1396,7 @@ public partial class MainWindow
             TryMci($"set {alias} time format milliseconds", null, out _);
             lengthMs = QueryStatusNumber("length");
             positionMs = 0;
+            NormalizeAudioSessionDisplayName();
             currentIndex = index;
             currentLoadedPath = song.Path;
             preloadedStartIndex = index;
