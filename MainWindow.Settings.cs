@@ -118,6 +118,8 @@ public partial class MainWindow
             MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
             MessageOverlayFadeMs = _messageOverlayFadeMs,
             MessageOverlayBlinkMode = _messageOverlayBlinkMode,
+            MessageOverlayCountdownMinutes = _messageOverlayCountdownMinutes,
+            MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
             SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot(),
             TaskPanelTitle = _taskPanelTitle,
             TaskAreas = BuildTaskAreasSnapshot(),

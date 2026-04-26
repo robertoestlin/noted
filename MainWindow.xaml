@@ -257,16 +257,35 @@
                 MouseDown="MessageOverlay_DismissByMouseDown"
                 PreviewKeyDown="MessageOverlay_DismissByKeyDown"
                 Focusable="True">
-            <Viewbox Stretch="Uniform" StretchDirection="Both" Margin="30">
-                <TextBlock x:Name="MessageOverlayText"
-                           Text="GG"
-                           Foreground="#62E5FF"
-                           FontWeight="Black"
-                           FontFamily="Segoe UI Black, Segoe UI, Arial"
-                           TextAlignment="Center"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Center"/>
-            </Viewbox>
+            <Grid>
+                <Viewbox Stretch="Uniform" StretchDirection="Both" Margin="30">
+                    <TextBlock x:Name="MessageOverlayText"
+                               Text="GG"
+                               Foreground="#62E5FF"
+                               FontWeight="Black"
+                               FontFamily="Segoe UI Black, Segoe UI, Arial"
+                               TextAlignment="Center"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                </Viewbox>
+                <Border x:Name="MessageOverlayCountdownContainer"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,32,56"
+                        Padding="18,8,18,8"
+                        CornerRadius="14"
+                        Background="#33000000"
+                        BorderBrush="#55FFFFFF"
+                        BorderThickness="1"
+                        Visibility="Collapsed">
+                    <TextBlock x:Name="MessageOverlayCountdown"
+                               Text="00:00"
+                               FontSize="36"
+                               Foreground="#62E5FF"
+                               FontWeight="Bold"
+                               FontFamily="Segoe UI, Segoe UI Variable, Arial"/>
+                </Border>
+            </Grid>
         </Border>
     </Grid>
 </Window>

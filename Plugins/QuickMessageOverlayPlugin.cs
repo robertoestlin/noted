@@ -42,6 +42,12 @@ public partial class MainWindow
     private string _messageOverlayActiveBlinkMode = BlinkModeWholeText;
     private List<string> _messageOverlaySavedMessages = [];
     private int _messageOverlaySavedMessageIndex = -1;
+    private const int MaxMessageOverlayCountdownMinutes = 59;
+    private const int MaxMessageOverlayCountdownSeconds = 59;
+    private int _messageOverlayCountdownMinutes;
+    private int _messageOverlayCountdownSeconds;
+    private DispatcherTimer? _messageOverlayCountdownTimer;
+    private DateTime _messageOverlayCountdownEndUtc;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -65,6 +71,17 @@ public partial class MainWindow
         _messageOverlayBlinkIntervalMs = DefaultMessageOverlayBlinkIntervalMs;
         _messageOverlayFadeMs = DefaultMessageOverlayFadeMs;
         _messageOverlayBlinkMode = BlinkModeWholeText;
+        _messageOverlayCountdownMinutes = 0;
+        _messageOverlayCountdownSeconds = 0;
+    }
+
+    private static int ClampMessageOverlayCountdown(int? value, int max)
+    {
+        if (value is null)
+            return 0;
+        if (value < 0)
+            return 0;
+        return value > max ? max : value.Value;
     }
 
     private List<string> BuildQuickMessagePresetsSnapshot()
@@ -86,6 +103,12 @@ public partial class MainWindow
             state.MessageOverlayFadeMs ?? state.MessageOverlayBlinkPhaseMs,
             DefaultMessageOverlayFadeMs);
         _messageOverlayBlinkMode = NormalizeMessageOverlayBlinkMode(state.MessageOverlayBlinkMode);
+        _messageOverlayCountdownMinutes = ClampMessageOverlayCountdown(
+            state.MessageOverlayCountdownMinutes,
+            MaxMessageOverlayCountdownMinutes);
+        _messageOverlayCountdownSeconds = ClampMessageOverlayCountdown(
+            state.MessageOverlayCountdownSeconds,
+            MaxMessageOverlayCountdownSeconds);
     }
 
     private static List<string> NormalizeQuickMessagePresets(IEnumerable<string>? presets)
@@ -216,6 +239,52 @@ public partial class MainWindow
         DockPanel.SetDock(colorRow, Dock.Top);
         root.Children.Add(colorRow);
 
+        // ---- Countdown row -----------------------------------------------
+        var countdownRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var chkCountdown = new CheckBox
+        {
+            Content = "Show countdown",
+            IsChecked = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 12, 0)
+        };
+        countdownRow.Children.Add(chkCountdown);
+        var cmbCountdownMinutes = new ComboBox { Width = 60 };
+        for (var i = 0; i <= MaxMessageOverlayCountdownMinutes; i++)
+            cmbCountdownMinutes.Items.Add(i);
+        cmbCountdownMinutes.SelectedItem = ClampMessageOverlayCountdown(
+            _messageOverlayCountdownMinutes, MaxMessageOverlayCountdownMinutes);
+        if (cmbCountdownMinutes.SelectedItem == null)
+            cmbCountdownMinutes.SelectedIndex = 0;
+        countdownRow.Children.Add(cmbCountdownMinutes);
+        countdownRow.Children.Add(new TextBlock
+        {
+            Text = "min",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 12, 0)
+        });
+        var cmbCountdownSeconds = new ComboBox { Width = 60 };
+        for (var i = 0; i <= MaxMessageOverlayCountdownSeconds; i++)
+            cmbCountdownSeconds.Items.Add(i);
+        cmbCountdownSeconds.SelectedItem = ClampMessageOverlayCountdown(
+            _messageOverlayCountdownSeconds, MaxMessageOverlayCountdownSeconds);
+        if (cmbCountdownSeconds.SelectedItem == null)
+            cmbCountdownSeconds.SelectedIndex = 0;
+        countdownRow.Children.Add(cmbCountdownSeconds);
+        countdownRow.Children.Add(new TextBlock
+        {
+            Text = "sec",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 0, 0)
+        });
+        DockPanel.SetDock(countdownRow, Dock.Top);
+        root.Children.Add(countdownRow);
+
         var messagesWrap = new WrapPanel
         {
             Margin = new Thickness(0, 0, 0, 10)
@@ -262,10 +331,21 @@ public partial class MainWindow
         root.Children.Add(customRow);
         root.Children.Add(messagesWrap);
 
+        int CurrentCountdownTotalSeconds()
+        {
+            if (chkCountdown.IsChecked != true)
+                return 0;
+            var minutes = cmbCountdownMinutes.SelectedItem is int m ? m : 0;
+            var seconds = cmbCountdownSeconds.SelectedItem is int s ? s : 0;
+            minutes = ClampMessageOverlayCountdown(minutes, MaxMessageOverlayCountdownMinutes);
+            seconds = ClampMessageOverlayCountdown(seconds, MaxMessageOverlayCountdownSeconds);
+            return minutes * 60 + seconds;
+        }
+
         void ShowAndClose(string text)
         {
             var message = string.IsNullOrWhiteSpace(text) ? "..." : text.Trim();
-            ShowQuickMessageOverlay(message, ResolveQuickMessageBrush());
+            ShowQuickMessageOverlay(message, ResolveQuickMessageBrush(), CurrentCountdownTotalSeconds());
             dlg.Close();
         }
 
@@ -331,6 +411,25 @@ public partial class MainWindow
             _quickMessageColorHex = NormalizeQuickMessageColorHex(GetSelectedColorHex());
             RebuildPresetButtons();
             SaveWindowSettings();
+        };
+
+        cmbCountdownMinutes.SelectionChanged += (_, _) =>
+        {
+            if (cmbCountdownMinutes.SelectedItem is int minutes)
+            {
+                _messageOverlayCountdownMinutes = ClampMessageOverlayCountdown(
+                    minutes, MaxMessageOverlayCountdownMinutes);
+                SaveWindowSettings();
+            }
+        };
+        cmbCountdownSeconds.SelectionChanged += (_, _) =>
+        {
+            if (cmbCountdownSeconds.SelectedItem is int seconds)
+            {
+                _messageOverlayCountdownSeconds = ClampMessageOverlayCountdown(
+                    seconds, MaxMessageOverlayCountdownSeconds);
+                SaveWindowSettings();
+            }
         };
 
         txtCustom.TextChanged += (_, _) =>
@@ -684,6 +783,9 @@ public partial class MainWindow
     }
 
     private void ShowQuickMessageOverlay(string text, Brush foreground)
+        => ShowQuickMessageOverlay(text, foreground, 0);
+
+    private void ShowQuickMessageOverlay(string text, Brush foreground, int countdownSeconds)
     {
         SetMessageOverlayBlinking(false);
         _messageOverlayCharacterBaseText = text;
@@ -696,6 +798,7 @@ public partial class MainWindow
         MessageOverlayText.Text = text;
         MessageOverlayText.Foreground = foreground;
         MessageOverlay.Visibility = Visibility.Visible;
+        StartMessageOverlayCountdown(countdownSeconds, foreground);
         MessageOverlay.Focus();
         Keyboard.Focus(MessageOverlay);
     }
@@ -703,7 +806,53 @@ public partial class MainWindow
     private void HideQuickMessageOverlay()
     {
         SetMessageOverlayBlinking(false);
+        StopMessageOverlayCountdown();
+        MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void StartMessageOverlayCountdown(int totalSeconds, Brush foreground)
+    {
+        StopMessageOverlayCountdown();
+        if (totalSeconds <= 0)
+        {
+            MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MessageOverlayCountdown.Foreground = foreground;
+        MessageOverlayCountdownContainer.Visibility = Visibility.Visible;
+        _messageOverlayCountdownEndUtc = DateTime.UtcNow.AddSeconds(totalSeconds);
+        UpdateMessageOverlayCountdownText();
+        _messageOverlayCountdownTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(250)
+        };
+        _messageOverlayCountdownTimer.Tick += (_, _) => UpdateMessageOverlayCountdownText();
+        _messageOverlayCountdownTimer.Start();
+    }
+
+    private void StopMessageOverlayCountdown()
+    {
+        if (_messageOverlayCountdownTimer == null)
+            return;
+        _messageOverlayCountdownTimer.Stop();
+        _messageOverlayCountdownTimer = null;
+    }
+
+    private void UpdateMessageOverlayCountdownText()
+    {
+        var remaining = _messageOverlayCountdownEndUtc - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            MessageOverlayCountdown.Text = "00:00";
+            StopMessageOverlayCountdown();
+            return;
+        }
+        var totalSec = (int)Math.Ceiling(remaining.TotalSeconds);
+        var minutes = totalSec / 60;
+        var seconds = totalSec % 60;
+        MessageOverlayCountdown.Text = $"{minutes:D2}:{seconds:D2}";
     }
 
     private void SetMessageOverlayBlinking(bool enabled)
@@ -939,6 +1088,8 @@ public partial class MainWindow
         var nextBrush = new SolidColorBrush(color);
         MessageOverlayText.Foreground = nextBrush;
         _messageOverlayCharacterForeground = nextBrush;
+        if (MessageOverlayCountdownContainer.Visibility == Visibility.Visible)
+            MessageOverlayCountdown.Foreground = nextBrush;
         if (_isMessageOverlayBlinking
             && string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
         {

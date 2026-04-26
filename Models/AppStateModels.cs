@@ -238,6 +238,8 @@ public sealed class WindowSettings
     public int? MessageOverlayBlinkPhaseMs { get; set; }
     public int? MessageOverlayHoldMs { get; set; }
     public string? MessageOverlayBlinkMode { get; set; }
+    public int? MessageOverlayCountdownMinutes { get; set; }
+    public int? MessageOverlayCountdownSeconds { get; set; }
     public List<SafePasteKeyRecord>? SafePasteKeyRecords { get; set; }
     public List<string>? SafePasteKeys { get; set; }
     public string? TaskPanelTitle { get; set; }
