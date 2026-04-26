@@ -823,6 +823,7 @@ public partial class MainWindow
     {
         SetMessageOverlayBlinking(false);
         StopMessageOverlayCountdown();
+        StopMessageOverlayCountdownExpiredBlink();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Visibility = Visibility.Collapsed;
@@ -852,6 +853,7 @@ public partial class MainWindow
     private void StartMessageOverlayCountdown(int totalSeconds, Brush foreground)
     {
         StopMessageOverlayCountdown();
+        StopMessageOverlayCountdownExpiredBlink();
         if (totalSeconds <= 0)
         {
             MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
@@ -870,6 +872,32 @@ public partial class MainWindow
         _messageOverlayCountdownTimer.Start();
     }
 
+    private void StartMessageOverlayCountdownExpiredBlink()
+    {
+        var fadeMs = NormalizeMessageOverlayTimingMs(_messageOverlayFadeMs, DefaultMessageOverlayFadeMs);
+        var intervalMs = NormalizeMessageOverlayTimingMs(_messageOverlayBlinkIntervalMs, DefaultMessageOverlayBlinkIntervalMs);
+        var holdMs = intervalMs;
+        var cycleMs = holdMs + fadeMs;
+        var halfFadeMs = fadeMs / 2.0;
+
+        var animation = new DoubleAnimationUsingKeyFrames
+        {
+            Duration = TimeSpan.FromMilliseconds(cycleMs),
+            RepeatBehavior = RepeatBehavior.Forever
+        };
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs + halfFadeMs))));
+        animation.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(cycleMs))));
+        MessageOverlayCountdown.BeginAnimation(UIElement.OpacityProperty, animation);
+    }
+
+    private void StopMessageOverlayCountdownExpiredBlink()
+    {
+        MessageOverlayCountdown.BeginAnimation(UIElement.OpacityProperty, null);
+        MessageOverlayCountdown.Opacity = 1.0;
+    }
+
     private void StopMessageOverlayCountdown()
     {
         if (_messageOverlayCountdownTimer == null)
@@ -885,6 +913,7 @@ public partial class MainWindow
         {
             MessageOverlayCountdown.Text = "00:00";
             StopMessageOverlayCountdown();
+            StartMessageOverlayCountdownExpiredBlink();
             return;
         }
         var totalSec = (int)Math.Ceiling(remaining.TotalSeconds);
