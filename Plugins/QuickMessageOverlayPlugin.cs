@@ -48,6 +48,7 @@ public partial class MainWindow
     private int _messageOverlayCountdownSeconds;
     private DispatcherTimer? _messageOverlayCountdownTimer;
     private DateTime _messageOverlayCountdownEndUtc;
+    private bool _messageOverlayShowNowPlaying;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -73,6 +74,7 @@ public partial class MainWindow
         _messageOverlayBlinkMode = BlinkModeWholeText;
         _messageOverlayCountdownMinutes = 0;
         _messageOverlayCountdownSeconds = 0;
+        _messageOverlayShowNowPlaying = false;
     }
 
     private static int ClampMessageOverlayCountdown(int? value, int max)
@@ -254,6 +256,18 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 12, 0)
         };
         countdownRow.Children.Add(chkCountdown);
+        _messageOverlayShowNowPlaying = false;
+        var chkNowPlaying = new CheckBox
+        {
+            Content = "Now playing",
+            IsChecked = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 12, 0),
+            Visibility = _midiPlayerIsPlaying ? Visibility.Visible : Visibility.Collapsed
+        };
+        chkNowPlaying.Checked += (_, _) => _messageOverlayShowNowPlaying = true;
+        chkNowPlaying.Unchecked += (_, _) => _messageOverlayShowNowPlaying = false;
         var cmbCountdownMinutes = new ComboBox { Width = 60 };
         for (var i = 0; i <= MaxMessageOverlayCountdownMinutes; i++)
             cmbCountdownMinutes.Items.Add(i);
@@ -280,8 +294,9 @@ public partial class MainWindow
         {
             Text = "sec",
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(4, 0, 0, 0)
+            Margin = new Thickness(4, 0, 16, 0)
         });
+        countdownRow.Children.Add(chkNowPlaying);
         DockPanel.SetDock(countdownRow, Dock.Top);
         root.Children.Add(countdownRow);
 
@@ -799,6 +814,7 @@ public partial class MainWindow
         MessageOverlayText.Foreground = foreground;
         MessageOverlay.Visibility = Visibility.Visible;
         StartMessageOverlayCountdown(countdownSeconds, foreground);
+        RefreshMessageOverlayNowPlaying();
         MessageOverlay.Focus();
         Keyboard.Focus(MessageOverlay);
     }
@@ -808,7 +824,32 @@ public partial class MainWindow
         SetMessageOverlayBlinking(false);
         StopMessageOverlayCountdown();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
+        MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void RefreshMessageOverlayNowPlaying()
+    {
+        if (MessageOverlayNowPlayingContainer == null)
+            return;
+
+        var shouldShow = MessageOverlay.Visibility == Visibility.Visible
+            && _messageOverlayShowNowPlaying
+            && _midiPlayerIsPlaying
+            && !string.IsNullOrWhiteSpace(_midiPlayerCurrentTitle);
+
+        if (!shouldShow)
+        {
+            MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MessageOverlayNowPlayingTitle.Text = _midiPlayerCurrentTitle ?? string.Empty;
+        MessageOverlayNowPlayingMeta.Text = _midiPlayerCurrentGroup ?? string.Empty;
+        var brush = MessageOverlayText.Foreground ?? ResolveQuickMessageBrush();
+        MessageOverlayNowPlayingLabel.Foreground = brush;
+        MessageOverlayNowPlayingTitle.Foreground = brush;
+        MessageOverlayNowPlayingContainer.Visibility = Visibility.Visible;
     }
 
     private void StartMessageOverlayCountdown(int totalSeconds, Brush foreground)
@@ -1090,6 +1131,11 @@ public partial class MainWindow
         _messageOverlayCharacterForeground = nextBrush;
         if (MessageOverlayCountdownContainer.Visibility == Visibility.Visible)
             MessageOverlayCountdown.Foreground = nextBrush;
+        if (MessageOverlayNowPlayingContainer.Visibility == Visibility.Visible)
+        {
+            MessageOverlayNowPlayingLabel.Foreground = nextBrush;
+            MessageOverlayNowPlayingTitle.Foreground = nextBrush;
+        }
         if (_isMessageOverlayBlinking
             && string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.OrdinalIgnoreCase))
         {

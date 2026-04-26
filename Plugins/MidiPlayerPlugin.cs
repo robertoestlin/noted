@@ -56,6 +56,9 @@ public partial class MainWindow
     private bool _midiPlayerDocked;
     private Action? _midiPlayerDockAction;
     private Action? _midiPlayerRestoreAction;
+    private bool _midiPlayerIsPlaying;
+    private string? _midiPlayerCurrentTitle;
+    private string? _midiPlayerCurrentGroup;
 
     private void UpdateMidiPlayerDockedIndicator()
     {
@@ -1077,6 +1080,10 @@ public partial class MainWindow
             btnPrev.IsEnabled = playlist.Count > 0;
             btnNext.IsEnabled = playlist.Count > 0;
             RefreshDockedIndicator();
+            _midiPlayerIsPlaying = isPlaying;
+            _midiPlayerCurrentTitle = isPlaying ? lblNowPlaying.Text : null;
+            _midiPlayerCurrentGroup = isPlaying ? lblNowPlayingMeta.Text : null;
+            RefreshMessageOverlayNowPlaying();
         }
 
         void UpdateInfo(string path, MidiHeaderInfo? info)
@@ -2252,6 +2259,10 @@ public partial class MainWindow
             _midiPlayerDockAction = null;
             _midiPlayerRestoreAction = null;
             _midiPlayerDocked = false;
+            _midiPlayerIsPlaying = false;
+            _midiPlayerCurrentTitle = null;
+            _midiPlayerCurrentGroup = null;
+            RefreshMessageOverlayNowPlaying();
             UpdateMidiPlayerDockedIndicator();
         };
         dlg.ContentRendered += (_, _) =>

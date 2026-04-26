@@ -285,6 +285,37 @@
                                FontWeight="Bold"
                                FontFamily="Segoe UI, Segoe UI Variable, Arial"/>
                 </Border>
+                <Border x:Name="MessageOverlayNowPlayingContainer"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Bottom"
+                        Margin="32,0,0,56"
+                        Padding="18,10,18,12"
+                        CornerRadius="14"
+                        Background="#33000000"
+                        BorderBrush="#55FFFFFF"
+                        BorderThickness="1"
+                        MaxWidth="560"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock x:Name="MessageOverlayNowPlayingLabel"
+                                   Text="NOW PLAYING"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   Foreground="#62E5FF"/>
+                        <TextBlock x:Name="MessageOverlayNowPlayingTitle"
+                                   Text=""
+                                   FontSize="22"
+                                   FontWeight="SemiBold"
+                                   Foreground="#62E5FF"
+                                   Margin="0,2,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBlock x:Name="MessageOverlayNowPlayingMeta"
+                                   Text=""
+                                   FontSize="13"
+                                   Foreground="#A9B9D8"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Border>
             </Grid>
         </Border>
     </Grid>
