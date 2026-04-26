@@ -26,6 +26,9 @@ public partial class MainWindow
     [DllImport("winmm.dll", CharSet = CharSet.Unicode, EntryPoint = "mciGetErrorStringW")]
     private static extern bool MidiPlayerMciGetErrorString(int errorCode, StringBuilder buffer, int bufferLength);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathName(string lpszLongPath, StringBuilder lpszShortPath, uint cchBuffer);
+
     private sealed class MidiHeaderInfo
     {
         public int FormatType { get; init; }
@@ -191,6 +194,47 @@ public partial class MainWindow
             return new SolidColorBrush(Color.FromRgb(0x42, 0x6E, 0x9E));
         var hue = 300.0 * orderIndex / Math.Max(1, totalGroups);
         return new SolidColorBrush(HslToRgb(hue, 0.55, 0.45));
+    }
+
+    private static string GetMidiMciPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return path;
+
+        // MCI sequencer can report "file not found" for longer absolute paths.
+        // Prefer the filesystem short path (8.3) when available. Some locked
+        // down environments may restrict unmanaged calls, so this is best-effort
+        // only and should never block playback.
+        try
+        {
+            var shortPath = new StringBuilder(512);
+            var written = GetShortPathName(path, shortPath, (uint)shortPath.Capacity);
+            if (written > 0 && written < shortPath.Capacity)
+                return shortPath.ToString();
+        }
+        catch
+        {
+            // Ignore and continue to managed-only fallbacks below.
+        }
+
+        // If short names are unavailable (e.g. 8.3 disabled), use a relative
+        // path for files under the app base to keep the command short.
+        try
+        {
+            var baseDir = AppContext.BaseDirectory;
+            if (!string.IsNullOrWhiteSpace(baseDir))
+            {
+                var relative = Path.GetRelativePath(baseDir, path);
+                if (!relative.StartsWith("..", StringComparison.Ordinal)
+                    && !Path.IsPathRooted(relative))
+                    return relative;
+            }
+        }
+        catch
+        {
+            // Keep original path fallback below.
+        }
+        return path;
     }
 
     private void ShowMidiPlayerDialog()
@@ -1186,7 +1230,8 @@ public partial class MainWindow
                 return false;
             }
 
-            var openCommand = $"open \"{path}\" type sequencer alias {alias}";
+            var openPath = GetMidiMciPath(path);
+            var openCommand = $"open \"{openPath}\" type sequencer alias {alias}";
             if (!TryMci(openCommand, null, out var err))
             {
                 SetStatus($"Failed to open MIDI: {GetMciError(err)}", Brushes.IndianRed);
@@ -1297,7 +1342,8 @@ public partial class MainWindow
                 return false;
 
             ClosePreloadedNextDevice();
-            if (!TryMci($"open \"{path}\" type sequencer alias {warmupAlias}", null, out _))
+            var openPath = GetMidiMciPath(path);
+            if (!TryMci($"open \"{openPath}\" type sequencer alias {warmupAlias}", null, out _))
                 return false;
 
             TryMci($"set {warmupAlias} time format milliseconds", null, out _);
@@ -1331,7 +1377,8 @@ public partial class MainWindow
             if (isPlaying)
                 return false;
 
-            var openCommand = $"open \"{song.Path}\" type sequencer alias {alias}";
+            var openPath = GetMidiMciPath(song.Path);
+            var openCommand = $"open \"{openPath}\" type sequencer alias {alias}";
             if (!TryMci(openCommand, null, out _))
                 return false;
 
