@@ -12,7 +12,7 @@ This document is an attribution / status summary, not legal advice.
 ## 1. Originals created for Noted
 
 Every file **except** those whose name begins with `Bach - `,
-`Mozart - ` or `Albeniz - ` is an original made for this project,
+`Mozart - `, `Albeniz - ` or `Brahms - ` is an original made for this project,
 produced procedurally by the script `gen_retro_midi.py` in this same
 folder (developed with AI assistance). They are short, looping
 retro / disco / jazz / hip-hop / flute / focus / 70s tracks created
@@ -45,6 +45,7 @@ transcriptions of public-domain piano works**:
 Bach - *.mid       (Preludes from BWV 846, 847, 850)
 Mozart - *.mid     (Piano Sonatas K.311, K.330, K.331, K.332, K.333, K.545, K.570)
 Albeniz - *.mid    (España Op.165 selections; Suite Espanola Op.47 in full)
+Brahms - *.mid     (Sonata Op.1; Fantasien Op.116; Intermezzi Op.117; Klavierstücke Op.119)
 ```
 
 Each file embeds its original copyright and source information as
@@ -55,9 +56,9 @@ authoritative attribution and source URL for that specific file.
 ### What is and is not in the public domain
 
 * The **musical compositions** themselves — the notes, melodies and
-  harmonies written by J. S. Bach, W. A. Mozart and Isaac Albéniz —
-  are in the public domain worldwide. Anyone is free to perform,
-  re-record or independently transcribe them.
+  harmonies written by J. S. Bach, W. A. Mozart, Isaac Albéniz and
+  Johannes Brahms — are in the public domain worldwide. Anyone is
+  free to perform, re-record or independently transcribe them.
 
 * The **specific MIDI realisations** in this folder are *not* simply
   the public-domain works on their own. They are the result of
