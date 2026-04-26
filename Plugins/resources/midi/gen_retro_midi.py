@@ -5294,6 +5294,719 @@ def make_trance_hard(reps: int = 10) -> bytes:
     return seq.to_smf()
 
 
+# =============================================================================
+# Shared chiptune helpers (square lead + triangle bass + simple noise drums).
+# =============================================================================
+def _chiptune_drums(seq: Sequence, drums: Track, bar_start: float,
+                    aggressive: bool = False) -> None:
+    """NES-style minimal drum kit: kick on 1+3, snare on 2+4, hat 8ths."""
+    seq.add_drum(drums, bar_start + 0, KICK, vel=104)
+    seq.add_drum(drums, bar_start + 2, KICK, vel=92)
+    seq.add_drum(drums, bar_start + 1, SNARE, vel=98)
+    seq.add_drum(drums, bar_start + 3, SNARE, vel=98)
+    for i in range(8):
+        seq.add_drum(drums, bar_start + i * 0.5, CLOSED_HAT, vel=52)
+    if aggressive:
+        seq.add_drum(drums, bar_start + 1.5, KICK, vel=78)
+        seq.add_drum(drums, bar_start + 3.5, KICK, vel=78)
+
+
+def _chiptune_octave_bass(seq: Sequence, bass: Track, bar_start: float,
+                          root: int, beats: int = 4, vel: int = 88) -> None:
+    """Octave-bouncing bass like NES triangle channel."""
+    eighths = beats * 2
+    for i in range(eighths):
+        p = root if i % 2 == 0 else root + 12
+        seq.add_note(bass, bar_start + i * 0.5, 0.42, p, vel)
+
+
+# =============================================================================
+# 76. PLUMBER GROOVE - OVERWORLD ADVENTURE (C major, 138 BPM)
+# =============================================================================
+def make_plumber_overworld_adventure(reps: int = 9) -> bytes:
+    seq = Sequence(bpm=138)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    harmony = seq.add_track("Square Harmony", GM_SQUARE_LEAD, 1)
+    bass = seq.add_track("Triangle Bass", GM_SYNTH_BASS_1, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # C - F - G - Am - F - C - G - C, 1 bar each = 8 bars (~13.9s/cycle).
+    progression = [
+        ("C",  "C2", ["C4", "E4", "G4"]),
+        ("F",  "F2", ["F4", "A4", "C5"]),
+        ("G",  "G2", ["G4", "B4", "D5"]),
+        ("Am", "A2", ["A4", "C5", "E5"]),
+        ("F",  "F2", ["F4", "A4", "C5"]),
+        ("C",  "C2", ["C4", "E4", "G4"]),
+        ("G",  "G2", ["G4", "B4", "D5"]),
+        ("C",  "C2", ["C4", "E4", "G4"]),
+    ]
+
+    melody = [
+        ("E5", 0.5),  ("G5", 0.5),  ("C6", 1),    ("E5", 0.5), ("D5", 0.5),  ("E5", 1),    # C
+        ("F5", 0.5),  ("A5", 0.5),  ("C6", 1),    ("F5", 0.5), ("E5", 0.5),  ("F5", 1),    # F
+        ("G5", 0.5),  ("B5", 0.5),  ("D6", 1),    ("G5", 0.5), ("F5", 0.5),  ("E5", 1),    # G
+        ("A5", 0.5),  ("C6", 0.5),  ("E6", 1),    ("D6", 0.5), ("C6", 0.5),  ("A5", 1),    # Am
+        ("F5", 0.5),  ("A5", 0.5),  ("C6", 1),    ("E6", 0.5), ("F6", 0.5),  ("A5", 1),    # F
+        ("G5", 0.5),  ("E5", 0.5),  ("C5", 1),    ("E5", 0.5), ("G5", 0.5),  ("C6", 1),    # C
+        ("D6", 0.5),  ("B5", 0.5),  ("G5", 1),    ("F5", 0.5), ("E5", 0.5),  ("D5", 1),    # G
+        ("C5", 0.5),  ("E5", 0.5),  ("G5", 1),    ("E5", 0.5), ("D5", 0.5),  ("C5", 1),    # C
+    ]
+
+    harm_line = [
+        ("C5", 1.5),  ("E5", 0.5),  ("G5", 2),
+        ("A4", 1.5),  ("C5", 0.5),  ("F5", 2),
+        ("B4", 1.5),  ("D5", 0.5),  ("G5", 2),
+        ("C5", 1.5),  ("E5", 0.5),  ("A5", 2),
+        ("A4", 1.5),  ("C5", 0.5),  ("F5", 2),
+        ("E5", 1.5),  ("G5", 0.5),  ("C6", 2),
+        ("B4", 1.5),  ("D5", 0.5),  ("G5", 2),
+        ("E5", 1.5),  ("G5", 0.5),  ("C6", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=98)
+        seq.play_line(harmony, rep_start, harm_line, vel=68)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            _chiptune_octave_bass(seq, bass, bar_start, n(root) + 12)
+            _chiptune_drums(seq, drums, bar_start)
+
+    final = reps * 32
+    seq.add_chord(harmony, final, 6, [n("C4"), n("E4"), n("G4"), n("C5")], vel=86)
+    seq.add_note(bass, final, 6, n("C2"), vel=104)
+    seq.add_note(lead, final, 5, n("C6"), vel=110)
+    seq.add_drum(drums, final, CRASH, vel=120)
+    seq.add_drum(drums, final, KICK, vel=110)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 77. PLUMBER GROOVE - UNDERGROUND TUNNELS (D minor, 100 BPM)
+# =============================================================================
+def make_plumber_underground_tunnels(reps: int = 7) -> bytes:
+    seq = Sequence(bpm=100)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_NEW_AGE, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Dm - Dm - Gm - Gm - Dm - A7 - Dm - A7
+    progression = [
+        ("Dm", "D2", ["D3", "F3",  "A3"]),
+        ("Dm", "D2", ["D3", "F3",  "A3"]),
+        ("Gm", "G2", ["G3", "Bb3", "D4"]),
+        ("Gm", "G2", ["G3", "Bb3", "D4"]),
+        ("Dm", "D2", ["D3", "F3",  "A3"]),
+        ("A7", "A1", ["A3", "C#4", "E4", "G4"]),
+        ("Dm", "D2", ["D3", "F3",  "A3"]),
+        ("A7", "A1", ["A3", "C#4", "E4", "G4"]),
+    ]
+
+    melody = [
+        ("D5", 0.5),  ("F5", 0.5),  ("A5", 1),    ("F5", 0.5),  ("E5", 0.5),  ("D5", 1),
+        ("C5", 0.5),  ("E5", 0.5),  ("G5", 1),    ("E5", 0.5),  ("D5", 0.5),  ("C5", 1),
+        ("Bb4", 0.5), ("D5", 0.5),  ("G5", 1),    ("Bb5", 0.5), ("A5", 0.5),  ("G5", 1),
+        ("F5", 0.5),  ("D5", 0.5),  ("Bb4", 1),   ("D5", 0.5),  ("F5", 0.5),  ("G5", 1),
+        ("A5", 0.5),  ("F5", 0.5),  ("D5", 1),    ("F5", 0.5),  ("E5", 0.5),  ("D5", 1),
+        ("C#5", 0.5), ("E5", 0.5),  ("G5", 1),    ("E5", 0.5),  ("C#5", 0.5), ("A4", 1),
+        ("D5", 0.5),  ("F5", 0.5),  ("A5", 1),    ("D6", 0.5),  ("C6", 0.5),  ("Bb5", 1),
+        ("A5", 0.5),  ("E5", 0.5),  ("C#5", 1),   ("E5", 0.5),  ("G5", 0.5),  ("A5", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=92)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+
+            # Pad: held chord softly.
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in voicing], vel=44)
+
+            # Bass: low + octave bounce.
+            seq.add_note(bass, bar_start + 0,   1.4, n(root) + 12, vel=86)
+            seq.add_note(bass, bar_start + 1.5, 0.5, n(root) + 24, vel=72)
+            seq.add_note(bass, bar_start + 2,   1.4, n(root) + 12, vel=84)
+            seq.add_note(bass, bar_start + 3.5, 0.5, n(root) + 24, vel=72)
+
+            # Sparse drums: kick on 1, snare on 3, light hat.
+            seq.add_drum(drums, bar_start + 0, KICK, vel=88)
+            seq.add_drum(drums, bar_start + 2, SNARE, vel=82)
+            for h in range(4):
+                seq.add_drum(drums, bar_start + h, CLOSED_HAT, vel=44)
+
+    final = reps * 32
+    seq.add_chord(pad, final, 6, [n("D3"), n("F3"), n("A3"), n("D4")], vel=68)
+    seq.add_note(bass, final, 6, n("D1"), vel=104)
+    seq.add_note(lead, final, 5, n("D5"), vel=104)
+    seq.add_drum(drums, final, CRASH, vel=110)
+    seq.add_drum(drums, final, KICK, vel=98)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 78. PLUMBER GROOVE - UNDERWATER DIVE (G major, 120 BPM, 6/8)
+# =============================================================================
+def make_plumber_underwater_dive(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=120, time_sig=(6, 3))
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_WARM, 2)
+    bell = seq.add_track("Bell", GM_FX_CRYSTAL, 3)
+
+    # 16 bars in 6/8 (each bar = 3 beats). G - Em - C - D - G - Em - Am - D (x2)
+    progression = [
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("C",   "C2",  ["C3",  "E3",  "G3"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("Em",  "E2",  ["E3",  "G3",  "B3"]),
+        ("Am",  "A2",  ["A3",  "C4",  "E4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+    ]
+
+    # Wave-like melody, 6 eighths per bar (16 bars * 3 beats = 48 beats per cycle).
+    melody = [
+        # Bar 1 (G)
+        ("D5", 1.5),  ("G5", 1),    ("B5", 0.5),
+        # Bar 2 (Em)
+        ("D5", 1),    ("E5", 0.5),  ("G5", 1),    ("B5", 0.5),
+        # Bar 3 (C)
+        ("C5", 1.5),  ("E5", 1),    ("G5", 0.5),
+        # Bar 4 (D)
+        ("F#5", 1),   ("A5", 0.5),  ("D6", 1),    ("A5", 0.5),
+        # Bar 5 (G)
+        ("D5", 1),    ("G5", 0.5),  ("B5", 1),    ("D6", 0.5),
+        # Bar 6 (Em)
+        ("E5", 1),    ("G5", 0.5),  ("B5", 1),    ("E6", 0.5),
+        # Bar 7 (Am)
+        ("E5", 1),    ("A5", 0.5),  ("C6", 1),    ("E6", 0.5),
+        # Bar 8 (D)
+        ("D5", 1.5),  ("F#5", 1),   ("A5", 0.5),
+        # Bar 9 (G)
+        ("B5", 0.5),  ("D6", 0.5),  ("G6", 0.5),  ("D6", 0.5),  ("B5", 0.5),  ("G5", 0.5),
+        # Bar 10 (Em)
+        ("E5", 0.5),  ("G5", 0.5),  ("B5", 0.5),  ("E6", 0.5),  ("B5", 0.5),  ("G5", 0.5),
+        # Bar 11 (C)
+        ("C5", 0.5),  ("E5", 0.5),  ("G5", 0.5),  ("C6", 0.5),  ("G5", 0.5),  ("E5", 0.5),
+        # Bar 12 (D)
+        ("D5", 0.5),  ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5),  ("A5", 0.5),  ("F#5", 0.5),
+        # Bar 13 (G)
+        ("G5", 1),    ("B5", 0.5),  ("D6", 1),    ("G6", 0.5),
+        # Bar 14 (Em)
+        ("E5", 0.5),  ("G5", 1),    ("B5", 0.5),  ("D6", 1),
+        # Bar 15 (Am)
+        ("A5", 1),    ("C6", 0.5),  ("E6", 1),    ("C6", 0.5),
+        # Bar 16 (D) - turnaround
+        ("F#5", 1),   ("A5", 0.5),  ("D5", 1),    ("F#5", 0.5),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 48
+        seq.play_line(lead, rep_start, melody, vel=92)
+
+        # Run through 8-chord progression twice to cover all 16 bars.
+        for half in range(2):
+            half_start = rep_start + half * 24
+            for ci, (cname, root, voicing) in enumerate(progression):
+                bar_start = half_start + ci * 3  # 1 bar = 3 beats
+
+                seq.add_chord(pad, bar_start, 3, [n(p) for p in voicing], vel=46)
+
+                # Bass: 6 eighths, root + 5th alternating (water-bubble feel).
+                root_p = n(root) + 12
+                fifth_p = root_p + 7
+                bass_pattern = [root_p, root_p, fifth_p, root_p, root_p, fifth_p]
+                for i, p in enumerate(bass_pattern):
+                    seq.add_note(bass, bar_start + i * 0.5, 0.42, p, vel=80)
+
+                # Bell shimmer on bar 1 of each chord.
+                if ci % 2 == 0:
+                    seq.add_note(bell, bar_start + 0,   0.5, n(voicing[2]) + 12, vel=44)
+                    seq.add_note(bell, bar_start + 1.5, 0.5, n(voicing[1]) + 12, vel=42)
+
+    final = reps * 48
+    seq.add_chord(pad, final, 6, [n("G3"), n("B3"), n("D4"), n("G4")], vel=68)
+    seq.add_note(bass, final, 6, n("G2"), vel=92)
+    seq.add_note(lead, final, 5, n("G5"), vel=98)
+    for i, p in enumerate(["G5", "B5", "D6", "G6"]):
+        seq.add_note(bell, final + i * 0.4, 2.5, n(p), vel=58 - i * 4)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 79. PLUMBER GROOVE - CASTLE STOMP (E minor, 130 BPM)
+# =============================================================================
+def make_plumber_castle_stomp(reps: int = 9) -> bytes:
+    seq = Sequence(bpm=130)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_HALO, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Em - Em - F - F - G - G - F - E (descending then back)
+    progression = [
+        ("Em", "E2",  ["E3",  "G3",  "B3"]),
+        ("Em", "E2",  ["E3",  "G3",  "B3"]),
+        ("F",  "F2",  ["F3",  "A3",  "C4"]),
+        ("F",  "F2",  ["F3",  "A3",  "C4"]),
+        ("G",  "G2",  ["G3",  "B3",  "D4"]),
+        ("G",  "G2",  ["G3",  "B3",  "D4"]),
+        ("F",  "F2",  ["F3",  "A3",  "C4"]),
+        ("E",  "E2",  ["E3",  "G#3", "B3"]),
+    ]
+
+    melody = [
+        ("E5", 0.5),  ("G5", 0.5),  ("B5", 1),    ("G5", 0.5),  ("E5", 0.5),  ("B4", 1),
+        ("E5", 0.5),  ("F#5", 0.5), ("G5", 1),    ("E5", 0.5),  ("D5", 0.5),  ("E5", 1),
+        ("F5", 0.5),  ("A5", 0.5),  ("C6", 1),    ("A5", 0.5),  ("F5", 0.5),  ("C5", 1),
+        ("F5", 0.5),  ("G5", 0.5),  ("A5", 1),    ("F5", 0.5),  ("E5", 0.5),  ("F5", 1),
+        ("G5", 0.5),  ("B5", 0.5),  ("D6", 1),    ("B5", 0.5),  ("G5", 0.5),  ("D5", 1),
+        ("G5", 0.5),  ("A5", 0.5),  ("B5", 1),    ("G5", 0.5),  ("F5", 0.5),  ("G5", 1),
+        ("F5", 0.5),  ("A5", 0.5),  ("C6", 1),    ("A5", 0.5),  ("F5", 0.5),  ("C5", 1),
+        ("E5", 1),    ("G#5", 0.5), ("B5", 1.5),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=98)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in voicing], vel=48)
+
+            # Pumping octave bass.
+            for i in range(8):
+                p = n(root) + 12 if i % 2 == 0 else n(root) + 24
+                seq.add_note(bass, bar_start + i * 0.5, 0.42, p, vel=92)
+
+            _chiptune_drums(seq, drums, bar_start, aggressive=True)
+
+    final = reps * 32
+    seq.add_chord(pad, final, 6, [n("E3"), n("G3"), n("B3"), n("E4")], vel=78)
+    seq.add_note(bass, final, 6, n("E1"), vel=110)
+    seq.add_note(lead, final, 5, n("E6"), vel=110)
+    seq.add_drum(drums, final, CRASH, vel=125)
+    seq.add_drum(drums, final, KICK, vel=115)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 80. PLUMBER GROOVE - SKY BONUS (F major, 160 BPM)
+# =============================================================================
+def make_plumber_sky_bonus(reps: int = 11) -> bytes:
+    seq = Sequence(bpm=160)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    harmony = seq.add_track("Square Harmony", GM_SQUARE_LEAD, 1)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 2)
+    bell = seq.add_track("Bell", GM_GLOCKENSPIEL, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # F - C - Bb - F - F - C - Gm - C
+    progression = [
+        ("F",  "F2", ["F3",  "A3",  "C4"]),
+        ("C",  "C2", ["C3",  "E3",  "G3"]),
+        ("Bb", "Bb1",["Bb3", "D4",  "F4"]),
+        ("F",  "F2", ["F3",  "A3",  "C4"]),
+        ("F",  "F2", ["F3",  "A3",  "C4"]),
+        ("C",  "C2", ["C3",  "E3",  "G3"]),
+        ("Gm", "G2", ["G3",  "Bb3", "D4"]),
+        ("C",  "C2", ["C3",  "E3",  "G3"]),
+    ]
+
+    melody = [
+        ("F5", 0.25), ("A5", 0.25), ("C6", 0.5),  ("F6", 0.25), ("E6", 0.25), ("D6", 0.5),
+        ("C6", 0.25), ("A5", 0.25), ("F5", 0.5),  ("A5", 0.25), ("C6", 0.25), ("F6", 0.5),
+        ("E6", 0.25), ("G5", 0.25), ("C6", 0.5),  ("E6", 0.25), ("D6", 0.25), ("C6", 0.5),
+        ("G5", 0.25), ("E5", 0.25), ("C5", 0.5),  ("E5", 0.25), ("G5", 0.25), ("C6", 0.5),
+        ("D6", 0.25), ("F5", 0.25), ("Bb5", 0.5), ("D6", 0.25), ("C6", 0.25), ("Bb5", 0.5),
+        ("F5", 0.25), ("D5", 0.25), ("Bb4", 0.5), ("D5", 0.25), ("F5", 0.25), ("Bb5", 0.5),
+        ("C6", 0.25), ("A5", 0.25), ("F5", 0.5),  ("A5", 0.25), ("C6", 0.25), ("F6", 0.5),
+        ("E6", 0.25), ("D6", 0.25), ("C6", 0.5),  ("A5", 0.25), ("F5", 0.25), ("A4", 0.5),
+        ("F5", 0.25), ("A5", 0.25), ("C6", 0.5),  ("F6", 0.25), ("E6", 0.25), ("D6", 0.5),
+        ("E6", 0.25), ("G6", 0.25), ("C6", 0.5),  ("E6", 0.25), ("G5", 0.25), ("C5", 0.5),
+        ("Bb4", 0.25),("D5", 0.25), ("G5", 0.5),  ("Bb5", 0.25),("D6", 0.25), ("G6", 0.5),
+        ("E6", 0.25), ("G5", 0.25), ("C6", 0.5),  ("E6", 0.25), ("C6", 0.25), ("G5", 0.5),
+    ]
+
+    harm = [
+        ("C5", 1),    ("F5", 1),    ("A5", 1),    ("F5", 1),
+        ("E5", 1),    ("C5", 1),    ("G5", 1),    ("E5", 1),
+        ("D5", 1),    ("Bb4", 1),   ("F5", 1),    ("D5", 1),
+        ("C5", 1),    ("F5", 1),    ("C6", 1),    ("F5", 1),
+        ("A4", 1),    ("F5", 1),    ("A5", 1),    ("F5", 1),
+        ("G4", 1),    ("E5", 1),    ("G5", 1),    ("E5", 1),
+        ("Bb4", 1),   ("D5", 1),    ("G5", 1),    ("Bb5", 1),
+        ("G5", 1),    ("E5", 1),    ("C5", 1),    ("E5", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=92)
+        seq.play_line(harmony, rep_start, harm, vel=58)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            _chiptune_octave_bass(seq, bass, bar_start, n(root) + 12, vel=80)
+
+            # Light drums: kick on 1+3, hat 8ths.
+            seq.add_drum(drums, bar_start + 0, KICK, vel=78)
+            seq.add_drum(drums, bar_start + 2, KICK, vel=68)
+            for h in range(8):
+                seq.add_drum(drums, bar_start + h * 0.5, CLOSED_HAT, vel=42)
+
+            # Bell sparkle on bar 1.
+            seq.add_note(bell, bar_start + 0, 0.4, n(voicing[2]) + 12, vel=46)
+
+    final = reps * 32
+    seq.add_chord(harmony, final, 5, [n("F4"), n("A4"), n("C5"), n("F5")], vel=78)
+    seq.add_note(bass, final, 5, n("F2"), vel=98)
+    seq.add_note(lead, final, 4, n("F6"), vel=104)
+    for i, p in enumerate(["F5", "A5", "C6", "F6"]):
+        seq.add_note(bell, final + i * 0.3, 2, n(p), vel=58 - i * 4)
+    seq.add_drum(drums, final, CRASH, vel=110)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 81. PLUMBER GROOVE - BOSS LAIR (B minor, 150 BPM)
+# =============================================================================
+def make_plumber_boss_lair(reps: int = 10) -> bytes:
+    seq = Sequence(bpm=150)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_HALO, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Bm - F# - Bm - F# - G - D - Em - F#7
+    progression = [
+        ("Bm",   "B1",  ["B3",  "D4",  "F#4"]),
+        ("F#",   "F#2", ["F#3", "A#3", "C#4"]),
+        ("Bm",   "B1",  ["B3",  "D4",  "F#4"]),
+        ("F#",   "F#2", ["F#3", "A#3", "C#4"]),
+        ("G",    "G2",  ["G3",  "B3",  "D4"]),
+        ("D",    "D2",  ["D3",  "F#3", "A3"]),
+        ("Em",   "E2",  ["E3",  "G3",  "B3"]),
+        ("F#7",  "F#1", ["F#3", "A#3", "C#4", "E4"]),
+    ]
+
+    melody = [
+        ("B5", 0.5),  ("F#5", 0.5), ("B5", 0.5),  ("D6", 0.5),  ("F#6", 0.5), ("D6", 0.5), ("B5", 1),
+        ("F#5", 0.5), ("A#5", 0.5), ("C#6", 0.5), ("F#5", 0.5), ("C#6", 0.5), ("F#5", 0.5),("E5", 1),
+        ("D6", 0.5),  ("B5", 0.5),  ("F#5", 0.5), ("B5", 0.5),  ("D6", 0.5),  ("B5", 0.5), ("D6", 1),
+        ("C#6", 0.5), ("A#5", 0.5), ("F#5", 0.5), ("A#5", 0.5), ("C#6", 0.5), ("E6", 0.5), ("F#6", 1),
+        ("G5", 0.5),  ("B5", 0.5),  ("D6", 0.5),  ("G6", 0.5),  ("D6", 0.5),  ("B5", 0.5), ("G5", 1),
+        ("F#5", 0.5), ("A5", 0.5),  ("D6", 0.5),  ("F#6", 0.5), ("D6", 0.5),  ("A5", 0.5), ("F#5", 1),
+        ("E5", 0.5),  ("G5", 0.5),  ("B5", 0.5),  ("E6", 0.5),  ("G6", 0.5),  ("E6", 0.5), ("B5", 1),
+        ("F#5", 0.5), ("A#5", 0.5), ("C#6", 0.5), ("E6", 0.5),  ("F#6", 1),   ("E6", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=104)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in voicing], vel=52)
+
+            # Pumping 16th bass.
+            root_p = n(root) + 12
+            for i in range(16):
+                p = root_p if i % 4 != 2 else root_p + 12
+                v = 100 if i % 4 == 0 else 84
+                seq.add_note(bass, bar_start + i * 0.25, 0.22, p, vel=v)
+
+            # Heavy drums: kick on every beat, snare 2/4, hat 8ths.
+            for k in range(4):
+                seq.add_drum(drums, bar_start + k, KICK, vel=115)
+            seq.add_drum(drums, bar_start + 1, SNARE, vel=104)
+            seq.add_drum(drums, bar_start + 3, SNARE, vel=104)
+            for h in range(8):
+                seq.add_drum(drums, bar_start + h * 0.5, CLOSED_HAT, vel=64)
+
+    final = reps * 32
+    seq.add_chord(pad, final, 6, [n("B2"), n("D3"), n("F#3"), n("B3"), n("D4"), n("F#4")], vel=88)
+    seq.add_note(bass, final, 6, n("B0"), vel=120)
+    seq.add_note(lead, final, 5, n("B6"), vel=115)
+    seq.add_drum(drums, final, CRASH, vel=127)
+    seq.add_drum(drums, final, KICK, vel=120)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 82. PLUMBER GROOVE - STAR POWER (C major, 220 BPM)
+# =============================================================================
+def make_plumber_star_power(reps: int = 15) -> bytes:
+    seq = Sequence(bpm=220)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    harmony = seq.add_track("Saw Harmony", GM_SAW_LEAD, 1)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Quick C - F - G - C loop.
+    progression = [
+        ("C",  "C2", ["C4", "E4", "G4"]),
+        ("F",  "F2", ["F4", "A4", "C5"]),
+        ("G",  "G2", ["G4", "B4", "D5"]),
+        ("C",  "C2", ["C4", "E4", "G4"]),
+        ("C",  "C2", ["C4", "E4", "G4"]),
+        ("F",  "F2", ["F4", "A4", "C5"]),
+        ("G",  "G2", ["G4", "B4", "D5"]),
+        ("C",  "C2", ["C4", "E4", "G4"]),
+    ]
+
+    melody = [
+        ("E5", 0.25), ("G5", 0.25), ("C6", 0.25), ("E6", 0.25), ("G6", 0.25), ("C7", 0.25), ("G6", 0.25), ("E6", 0.25),
+        ("F5", 0.25), ("A5", 0.25), ("C6", 0.25), ("F6", 0.25), ("A6", 0.25), ("C7", 0.25), ("A6", 0.25), ("F6", 0.25),
+        ("D5", 0.25), ("G5", 0.25), ("B5", 0.25), ("D6", 0.25), ("G6", 0.25), ("B6", 0.25), ("D7", 0.25), ("B6", 0.25),
+        ("E6", 0.25), ("C6", 0.25), ("G5", 0.25), ("E5", 0.25), ("C5", 0.25), ("E5", 0.25), ("G5", 0.25), ("C6", 0.25),
+        ("E6", 0.25), ("G6", 0.25), ("E6", 0.25), ("C6", 0.25), ("E5", 0.25), ("G5", 0.25), ("C6", 0.25), ("E6", 0.25),
+        ("F6", 0.25), ("A6", 0.25), ("F6", 0.25), ("C6", 0.25), ("F5", 0.25), ("A5", 0.25), ("C6", 0.25), ("F6", 0.25),
+        ("G6", 0.25), ("D6", 0.25), ("B5", 0.25), ("G5", 0.25), ("D5", 0.25), ("G5", 0.25), ("B5", 0.25), ("D6", 0.25),
+        ("E6", 0.25), ("C6", 0.25), ("G5", 0.25), ("E5", 0.25), ("C6", 0.5),  ("G5", 0.5),  ("C6", 1),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=104)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+
+            # Sustained harmony pad chord.
+            seq.add_chord(harmony, bar_start, 4, [n(p) for p in voicing], vel=58)
+
+            # Driving 16th bass.
+            root_p = n(root) + 12
+            for i in range(16):
+                seq.add_note(bass, bar_start + i * 0.25, 0.22, root_p, vel=92)
+
+            # Pumping 4-on-floor.
+            for k in range(4):
+                seq.add_drum(drums, bar_start + k, KICK, vel=108)
+            seq.add_drum(drums, bar_start + 1, SNARE, vel=98)
+            seq.add_drum(drums, bar_start + 3, SNARE, vel=98)
+            for h in range(8):
+                seq.add_drum(drums, bar_start + h * 0.5, CLOSED_HAT, vel=58)
+
+    final = reps * 32
+    seq.add_chord(harmony, final, 5, [n("C4"), n("E4"), n("G4"), n("C5")], vel=92)
+    seq.add_note(bass, final, 5, n("C2"), vel=110)
+    seq.add_note(lead, final, 4, n("C7"), vel=115)
+    seq.add_drum(drums, final, CRASH, vel=125)
+    seq.add_drum(drums, final, KICK, vel=115)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 83. PLUMBER GROOVE - GAME OVER REPRISE (G minor, 80 BPM)
+# =============================================================================
+def make_plumber_game_over_reprise(reps: int = 6) -> bytes:
+    seq = Sequence(bpm=80)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 1)
+    pad = seq.add_track("Pad", GM_PAD_WARM, 2)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # Gm - Eb - Bb - F - Gm - Cm - D7 - Gm
+    progression = [
+        ("Gm",  "G2",  ["G3",  "Bb3", "D4"]),
+        ("Eb",  "Eb2", ["Eb3", "G3",  "Bb3"]),
+        ("Bb",  "Bb1", ["Bb3", "D4",  "F4"]),
+        ("F",   "F2",  ["F3",  "A3",  "C4"]),
+        ("Gm",  "G2",  ["G3",  "Bb3", "D4"]),
+        ("Cm",  "C2",  ["C3",  "Eb3", "G3"]),
+        ("D7",  "D2",  ["D3",  "F#3", "A3", "C4"]),
+        ("Gm",  "G2",  ["G3",  "Bb3", "D4"]),
+    ]
+
+    melody = [
+        ("D5", 1),    ("G5", 1),    ("Bb5", 1),   ("G5", 1),     # Gm
+        ("Eb5", 1),   ("G5", 1),    ("Bb5", 2),                  # Eb
+        ("F5", 1),    ("Bb5", 1),   ("D6", 2),                   # Bb
+        ("C5", 1),    ("F5", 1),    ("A5", 2),                   # F
+        ("D5", 1),    ("G5", 1),    ("Bb5", 1),   ("D6", 1),     # Gm
+        ("Eb5", 1),   ("G5", 1),    ("C6", 1),    ("Eb5", 1),    # Cm
+        ("D5", 1),    ("F#5", 1),   ("A5", 1),    ("C6", 1),     # D7
+        ("D5", 1),    ("G5", 1),    ("Bb5", 1),   ("D5", 1),     # Gm
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=92)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in voicing], vel=46)
+
+            # Slow bass: half + half.
+            seq.add_note(bass, bar_start + 0, 1.9, n(root) + 12, vel=82)
+            seq.add_note(bass, bar_start + 2, 1.9, n(root) + 19, vel=72)
+
+            # Soft drums: kick on 1, snare on 3, gentle hat.
+            seq.add_drum(drums, bar_start + 0, KICK, vel=78)
+            seq.add_drum(drums, bar_start + 2, SNARE, vel=72)
+            for h in range(4):
+                seq.add_drum(drums, bar_start + h, CLOSED_HAT, vel=44)
+
+    final = reps * 32
+    seq.add_chord(pad, final, 8, [n("G2"), n("Bb2"), n("D3"), n("G3"), n("Bb3"), n("D4")], vel=70)
+    seq.add_note(bass, final, 8, n("G1"), vel=92)
+    seq.add_note(lead, final, 6, n("G5"), vel=98)
+    seq.add_drum(drums, final, CRASH, vel=98)
+    seq.add_drum(drums, final, KICK, vel=86)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 84. PLUMBER GROOVE - PRINCESS THEME (A major, 95 BPM)
+# =============================================================================
+def make_plumber_princess_theme(reps: int = 7) -> bytes:
+    seq = Sequence(bpm=95)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    harmony = seq.add_track("Square Harmony", GM_SQUARE_LEAD, 1)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 2)
+    bell = seq.add_track("Bell", GM_GLOCKENSPIEL, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # A - F#m - D - E - A - D - A - E
+    progression = [
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+        ("F#m", "F#2", ["F#3", "A3",  "C#4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("E",   "E2",  ["E3",  "G#3", "B3"]),
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+        ("E",   "E2",  ["E3",  "G#3", "B3"]),
+    ]
+
+    melody = [
+        ("E5", 1),    ("A5", 1),    ("C#6", 2),                  # A
+        ("B5", 1),    ("A5", 1),    ("F#5", 2),                  # F#m
+        ("D5", 1),    ("F#5", 1),   ("A5", 2),                   # D
+        ("G#5", 0.5), ("A5", 0.5),  ("B5", 1),    ("E5", 2),     # E
+        ("E5", 1),    ("C#5", 1),   ("E5", 2),                   # A
+        ("F#5", 1),   ("A5", 1),    ("D6", 2),                   # D
+        ("C#6", 1),   ("E6", 1),    ("A5", 2),                   # A
+        ("B5", 1),    ("G#5", 1),   ("E5", 2),                   # E
+    ]
+
+    harm = [
+        ("A4", 2),    ("E5", 2),
+        ("F#4", 2),   ("C#5", 2),
+        ("D4", 2),    ("A4", 2),
+        ("E4", 2),    ("B4", 2),
+        ("E4", 2),    ("A4", 2),
+        ("D4", 2),    ("F#4", 2),
+        ("E4", 2),    ("C#5", 2),
+        ("B4", 2),    ("E5", 2),
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=88)
+        seq.play_line(harmony, rep_start, harm, vel=58)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+
+            # Bass: 8ths octave bounce.
+            _chiptune_octave_bass(seq, bass, bar_start, n(root) + 12, vel=78)
+
+            # Light drums.
+            seq.add_drum(drums, bar_start + 0, KICK, vel=82)
+            seq.add_drum(drums, bar_start + 2, SNARE, vel=72)
+            for h in range(4):
+                seq.add_drum(drums, bar_start + h, CLOSED_HAT, vel=46)
+
+            # Bell sparkle on bar 1 of every chord.
+            seq.add_note(bell, bar_start + 0, 0.5, n(voicing[2]) + 12, vel=44)
+
+    final = reps * 32
+    seq.add_chord(harmony, final, 6, [n("A4"), n("C#5"), n("E5"), n("A5")], vel=82)
+    seq.add_note(bass, final, 6, n("A1"), vel=98)
+    seq.add_note(lead, final, 5, n("A6"), vel=104)
+    for i, p in enumerate(["A5", "C#6", "E6", "A6"]):
+        seq.add_note(bell, final + i * 0.4, 2.5, n(p), vel=58 - i * 4)
+    seq.add_drum(drums, final, CRASH, vel=104)
+    return seq.to_smf()
+
+
+# =============================================================================
+# 85. PLUMBER GROOVE - FINAL RUN (D major, 165 BPM)
+# =============================================================================
+def make_plumber_final_run(reps: int = 12) -> bytes:
+    seq = Sequence(bpm=165)
+    lead = seq.add_track("Square Lead", GM_SQUARE_LEAD, 0)
+    harmony = seq.add_track("Saw Harmony", GM_SAW_LEAD, 1)
+    bass = seq.add_track("Bass", GM_SYNTH_BASS_1, 2)
+    pad = seq.add_track("Pad", GM_PAD_POLYSYNTH, 3)
+    drums = seq.add_track("Drums", 0, 9)
+
+    # D - A - Bm - F#m - G - D - G - A
+    progression = [
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+        ("Bm",  "B1",  ["B3",  "D4",  "F#4"]),
+        ("F#m", "F#2", ["F#3", "A3",  "C#4"]),
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("D",   "D2",  ["D3",  "F#3", "A3"]),
+        ("G",   "G2",  ["G3",  "B3",  "D4"]),
+        ("A",   "A2",  ["A3",  "C#4", "E4"]),
+    ]
+
+    melody = [
+        ("D5", 0.5),  ("F#5", 0.5), ("A5", 1),    ("D6", 0.5),  ("A5", 0.5),  ("F#5", 1),    # D
+        ("E5", 0.5),  ("A5", 0.5),  ("C#6", 1),   ("E6", 0.5),  ("C#6", 0.5), ("A5", 1),    # A
+        ("D5", 0.5),  ("F#5", 0.5), ("B5", 1),    ("D6", 0.5),  ("B5", 0.5),  ("F#5", 1),   # Bm
+        ("C#5", 0.5), ("F#5", 0.5), ("A5", 1),    ("C#6", 0.5), ("A5", 0.5),  ("F#5", 1),   # F#m
+        ("D5", 0.5),  ("G5", 0.5),  ("B5", 1),    ("D6", 0.5),  ("B5", 0.5),  ("G5", 1),    # G
+        ("D5", 0.5),  ("F#5", 0.5), ("A5", 1),    ("D6", 1),    ("A5", 1),                  # D
+        ("B5", 0.5),  ("G5", 0.5),  ("D6", 1),    ("G6", 0.5),  ("D6", 0.5),  ("B5", 1),    # G
+        ("C#6", 0.5), ("E6", 0.5),  ("A5", 1),    ("E6", 1),    ("A6", 1),                  # A - climax
+    ]
+
+    for rep in range(reps):
+        rep_start = rep * 32
+        seq.play_line(lead, rep_start, melody, vel=104)
+
+        for ci, (cname, root, voicing) in enumerate(progression):
+            bar_start = rep_start + ci * 4
+            seq.add_chord(pad, bar_start, 4, [n(p) for p in voicing], vel=54)
+
+            # Harmony: power chord stabs on every beat.
+            for i in range(4):
+                seq.add_chord(harmony, bar_start + i, 0.85, [n(p) for p in voicing], vel=68)
+
+            # Driving octave bass.
+            for i in range(8):
+                p = n(root) + 12 if i % 2 == 0 else n(root) + 24
+                seq.add_note(bass, bar_start + i * 0.5, 0.42, p, vel=96)
+
+            # Heavy drums.
+            for k in range(4):
+                seq.add_drum(drums, bar_start + k, KICK, vel=110)
+            seq.add_drum(drums, bar_start + 1, SNARE, vel=100)
+            seq.add_drum(drums, bar_start + 3, SNARE, vel=100)
+            for h in range(8):
+                seq.add_drum(drums, bar_start + h * 0.5, CLOSED_HAT, vel=58)
+
+    final = reps * 32
+    big_chord = [n("D2"), n("A2"), n("D3"), n("F#3"), n("A3"), n("D4"), n("F#4"), n("A4"), n("D5")]
+    seq.add_chord(harmony, final, 6, big_chord, vel=104)
+    seq.add_chord(pad, final, 6, [n("D3"), n("F#3"), n("A3"), n("D4")], vel=86)
+    seq.add_note(bass, final, 6, n("D1"), vel=120)
+    seq.add_note(lead, final, 5, n("D7"), vel=115)
+    seq.add_drum(drums, final, CRASH, vel=127)
+    seq.add_drum(drums, final, KICK, vel=120)
+    return seq.to_smf()
+
+
 CATEGORIES: dict[str, list[tuple[str, "Callable[[], bytes]", str]]] = {  # type: ignore[name-defined]
     # Retro game tunes, all >= 2 minutes (~125-130s, looped from short phrases).
     "retro": [
@@ -5389,6 +6102,19 @@ CATEGORIES: dict[str, list[tuple[str, "Callable[[], bytes]", str]]] = {  # type:
         ("Focus - Quiet Storm.mid",           lambda: make_focus_quiet_storm(),           "Quiet Storm (~133s, 75 BPM, Bb maj)"),
         ("Focus - Zen Loop.mid",              lambda: make_focus_zen_loop(),              "Zen Loop (~125s, 65 BPM, D maj)"),
         ("Focus - Desk Lamp.mid",             lambda: make_focus_desk_lamp(),             "Desk Lamp (~127s, 78 BPM, A min)"),
+    ],
+    # Plumber Groove - chiptune-style platformer originals (NES-era spirit).
+    "plumbergroove": [
+        ("Plumber Groove - Overworld Adventure.mid",  lambda: make_plumber_overworld_adventure(),   "Overworld Adventure (~125s, 138 BPM, C maj)"),
+        ("Plumber Groove - Underground Tunnels.mid",  lambda: make_plumber_underground_tunnels(),   "Underground Tunnels (~134s, 100 BPM, D min)"),
+        ("Plumber Groove - Underwater Dive.mid",      lambda: make_plumber_underwater_dive(),       "Underwater Dive (~144s, 120 BPM, G maj 6/8)"),
+        ("Plumber Groove - Castle Stomp.mid",         lambda: make_plumber_castle_stomp(),          "Castle Stomp (~133s, 130 BPM, E min)"),
+        ("Plumber Groove - Sky Bonus.mid",            lambda: make_plumber_sky_bonus(),             "Sky Bonus (~132s, 160 BPM, F maj)"),
+        ("Plumber Groove - Boss Lair.mid",            lambda: make_plumber_boss_lair(),             "Boss Lair (~128s, 150 BPM, B min)"),
+        ("Plumber Groove - Star Power.mid",           lambda: make_plumber_star_power(),            "Star Power (~131s, 220 BPM, C maj)"),
+        ("Plumber Groove - Game Over Reprise.mid",    lambda: make_plumber_game_over_reprise(),     "Game Over Reprise (~144s, 80 BPM, G min)"),
+        ("Plumber Groove - Princess Theme.mid",       lambda: make_plumber_princess_theme(),        "Princess Theme (~141s, 95 BPM, A maj)"),
+        ("Plumber Groove - Final Run.mid",            lambda: make_plumber_final_run(),             "Final Run (~139s, 165 BPM, D maj)"),
     ],
     # Trance - 10 subgenres of electronic dance trance (uplifting/progressive/Goa/etc.).
     "trance": [
