@@ -6,7 +6,8 @@
         mc:Ignorable="d"
         Title="Noted" Height="700" Width="1100" MinWidth="600" MinHeight="300"
         Icon="logo/logo.png"
-        Closing="Window_Closing">
+        Closing="Window_Closing"
+        Closed="Window_Closed">
 
     <Grid>
         <Grid.RowDefinitions>

@@ -64,6 +64,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _nextBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private DateTimeOffset _lastBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private bool _uptimeHeartbeatStartupBeatWritten;
+    private int _uptimeHeartbeatShutdownBeatWritten;
     private Point _tabDragStartPoint;
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
@@ -6156,6 +6157,34 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TryAppendUptimeHeartbeatShutdownBeat()
+    {
+        if (!_writeUptimeHeartbeatInNoted || string.IsNullOrWhiteSpace(_backupFolder))
+            return;
+
+        if (Interlocked.Exchange(ref _uptimeHeartbeatShutdownBeatWritten, 1) != 0)
+            return;
+
+        try
+        {
+            var last = _lastBackupHeartbeatAtLocal;
+            if (last == DateTimeOffset.MinValue)
+                last = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(GetUptimeHeartbeatFilePath(DateTimeOffset.Now)) ?? DateTimeOffset.MinValue;
+
+            UptimeHeartbeatService.AppendHeartbeatTimestamp(
+                _backupFolder,
+                DateTimeOffset.Now,
+                _audioSessionSnapshotService.CaptureOutputAudioSummary,
+                "n",
+                ref last,
+                markAsShutdown: true);
+        }
+        catch
+        {
+            // Best-effort activity marker; ignore failures.
+        }
+    }
+
     private void AppendBackupHeartbeatTimestamp(DateTimeOffset timestampLocal)
     {
         UptimeHeartbeatService.AppendHeartbeatTimestamp(
@@ -6528,5 +6557,8 @@ public partial class MainWindow : Window
         if (!_sessionSaved)
             SaveSession(updateStatus: false);
     }
+
+    private void Window_Closed(object sender, EventArgs e)
+        => TryAppendUptimeHeartbeatShutdownBeat();
 
 }

@@ -40,7 +40,8 @@ public static class UptimeHeartbeatService
         Func<string> captureAudioSummary,
         string source,
         ref DateTimeOffset lastHeartbeatAtLocal,
-        bool markAsStartup = false)
+        bool markAsStartup = false,
+        bool markAsShutdown = false)
     {
         if (string.IsNullOrWhiteSpace(backupFolder))
             return;
@@ -78,8 +79,8 @@ public static class UptimeHeartbeatService
             var audioSummary = captureAudioSummary();
             var sourceTag = NormalizeSource(source);
             var delayedFlag = isDelayed ? ",delayed=1" : string.Empty;
-            var startFlag = markAsStartup ? ",start=1" : string.Empty;
-            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary},source={sourceTag}{delayedFlag}{startFlag}{Environment.NewLine}");
+            var eventFlag = markAsShutdown ? ",stop=1" : markAsStartup ? ",start=1" : string.Empty;
+            File.AppendAllText(path, $"{timestamp},idle={idleSeconds}s,audio={audioSummary},source={sourceTag}{delayedFlag}{eventFlag}{Environment.NewLine}");
             lastHeartbeatAtLocal = timestampLocal;
         }
         finally
