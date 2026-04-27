@@ -12,6 +12,20 @@ namespace Noted;
 
 public partial class MainWindow
 {
+    /// <summary>Minutes from 1–10 (1-minute steps) where 3600 seconds is evenly divisible by (minutes × 60).</summary>
+    private static readonly int[] UptimeHeartbeatIntervalMinutes = [1, 2, 3, 4, 5, 6, 10];
+
+    private static int SnapUptimeHeartbeatToIntervalMinute(int uptimeHeartbeatSeconds)
+    {
+        foreach (var m in UptimeHeartbeatIntervalMinutes)
+        {
+            if (uptimeHeartbeatSeconds == m * 60)
+                return m;
+        }
+
+        return DefaultUptimeHeartbeatSeconds / 60;
+    }
+
     private static List<TaskAreaState> CloneTaskAreas(IEnumerable<TaskAreaState>? source)
     {
         if (source == null)
@@ -239,14 +253,28 @@ public partial class MainWindow
         };
         heartbeatPanel.Children.Add(chkWriteUptimeHeartbeatInNoted);
         heartbeatPanel.Children.Add(chkUseStandaloneHeartbeatApp);
-        heartbeatPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval (seconds):" });
-        var txtUptimeHeartbeat = new TextBox { Text = _uptimeHeartbeatSeconds.ToString(), Margin = new Thickness(0, 4, 0, 8) };
-        heartbeatPanel.Children.Add(txtUptimeHeartbeat);
-        heartbeatPanel.Children.Add(new TextBlock
+        heartbeatPanel.Children.Add(new TextBlock { Text = "Uptime heartbeat interval:" });
+        var cmbUptimeHeartbeatMinutes = new ComboBox { Margin = new Thickness(0, 4, 0, 8) };
+        foreach (var m in UptimeHeartbeatIntervalMinutes)
         {
-            Text = "Allowed values: 60-3600, and must divide evenly into 3600.",
-            Foreground = Brushes.DimGray
-        });
+            cmbUptimeHeartbeatMinutes.Items.Add(new ComboBoxItem
+            {
+                Content = m == 1 ? "1 minute" : $"{m} minutes",
+                Tag = m
+            });
+        }
+
+        var intervalMinute = SnapUptimeHeartbeatToIntervalMinute(_uptimeHeartbeatSeconds);
+        foreach (ComboBoxItem item in cmbUptimeHeartbeatMinutes.Items)
+        {
+            if (item.Tag is int tag && tag == intervalMinute)
+            {
+                cmbUptimeHeartbeatMinutes.SelectedItem = item;
+                break;
+            }
+        }
+
+        heartbeatPanel.Children.Add(cmbUptimeHeartbeatMinutes);
         tabControl.Items.Add(new TabItem
         {
             Header = "Heartbeat",
@@ -1442,10 +1470,16 @@ public partial class MainWindow
                 selectedFancyBulletStyle = selectedStyle;
             }
 
+            var uptimeHeartbeatSeconds = 0;
+            if (cmbUptimeHeartbeatMinutes.SelectedItem is ComboBoxItem uptimeItem
+                && uptimeItem.Tag is int uptimeMinutes
+                && UptimeHeartbeatIntervalMinutes.Contains(uptimeMinutes))
+            {
+                uptimeHeartbeatSeconds = uptimeMinutes * 60;
+            }
+
             if (int.TryParse(txtAutoSave.Text, out int secs) && secs >= 5
-                && int.TryParse(txtUptimeHeartbeat.Text, out int uptimeHeartbeatSeconds)
-                && uptimeHeartbeatSeconds >= 60 && uptimeHeartbeatSeconds <= 3600
-                && 3600 % uptimeHeartbeatSeconds == 0
+                && uptimeHeartbeatSeconds > 0
                 && int.TryParse(txtLines.Text, out int lines) && lines >= 1
                 && double.TryParse(txtFontSize.Text, out double fsize) && fsize >= 6
                 && !string.IsNullOrWhiteSpace(cmbFont.Text)
@@ -1564,7 +1598,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat must be 60-3600 seconds and divide evenly into 3600 (3600/value must be a whole number).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.",
+                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat interval must be selected (1, 2, 3, 4, 5, 6, or 10 minutes — each divides evenly into one hour).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };
