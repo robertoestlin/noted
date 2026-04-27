@@ -2297,6 +2297,26 @@ public partial class MainWindow
                 }
             }
 
+            void MoveResultSelection(int delta)
+            {
+                var n = resultList.Items.Count;
+                if (n == 0)
+                    return;
+                var i = resultList.SelectedIndex;
+                if (i < 0 || i >= n)
+                    i = 0;
+                i = Math.Clamp(i + delta, 0, n - 1);
+                resultList.SelectedIndex = i;
+                if (resultList.SelectedItem != null)
+                    resultList.ScrollIntoView(resultList.SelectedItem);
+            }
+
+            void FocusResultList()
+            {
+                resultList.Focus();
+                Keyboard.Focus(resultList);
+            }
+
             txtFilter.TextChanged += (_, _) => RefreshResults();
             txtFilter.PreviewKeyDown += (_, e) =>
             {
@@ -2304,10 +2324,20 @@ public partial class MainWindow
                 {
                     PlaySelectedAndClose();
                     e.Handled = true;
+                    return;
                 }
-                else if (e.Key == Key.Down && resultList.Items.Count > 0)
+
+                if (resultList.Items.Count == 0)
+                    return;
+
+                if (e.Key == Key.Down)
                 {
-                    resultList.Focus();
+                    // First Down from the filter moves from the first match to the second
+                    // (then focuses the list). Further Down keys are handled on the ListBox.
+                    if (resultList.SelectedIndex < 0 || resultList.SelectedIndex >= resultList.Items.Count)
+                        resultList.SelectedIndex = 0;
+                    MoveResultSelection(1);
+                    FocusResultList();
                     e.Handled = true;
                 }
             };
@@ -2323,6 +2353,22 @@ public partial class MainWindow
                 else if (e.Key == Key.Escape)
                 {
                     filterWindow.Close();
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Down && resultList.Items.Count > 0)
+                {
+                    MoveResultSelection(1);
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Up && resultList.Items.Count > 0)
+                {
+                    if (resultList.SelectedIndex <= 0)
+                    {
+                        txtFilter.Focus();
+                        Keyboard.Focus(txtFilter);
+                    }
+                    else
+                        MoveResultSelection(-1);
                     e.Handled = true;
                 }
             };
