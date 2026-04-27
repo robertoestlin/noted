@@ -27,6 +27,7 @@ public partial class MainWindow
     private const string BlinkModeCharacterSweep = "character-sweep";
     private const string MessageOverlayEffectSnow = "snow";
     private const string MessageOverlayEffectRain = "rain";
+    private const string MessageOverlayEffectSunny = "sunny";
     private const string DefaultMessageOverlayEffect = MessageOverlayEffectSnow;
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
@@ -58,6 +59,8 @@ public partial class MainWindow
     private DispatcherTimer? _messageOverlayEffectTimer;
     private readonly List<MessageOverlayEffectParticle> _messageOverlayEffectParticles = [];
     private DateTime _messageOverlayEffectLastTickUtc;
+    private RotateTransform? _messageOverlaySunRayRotation;
+    private double _messageOverlaySunRayAngle;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -75,7 +78,8 @@ public partial class MainWindow
     private static readonly (string Label, string Value)[] MessageOverlayEffectOptions =
     [
         ("Snowy", MessageOverlayEffectSnow),
-        ("Rainy", MessageOverlayEffectRain)
+        ("Rainy", MessageOverlayEffectRain),
+        ("Sunny", MessageOverlayEffectSunny)
     ];
 
     private sealed class MessageOverlayEffectParticle
@@ -145,9 +149,11 @@ public partial class MainWindow
 
     private static string NormalizeMessageOverlayEffect(string? value)
     {
-        return string.Equals(value, MessageOverlayEffectRain, StringComparison.OrdinalIgnoreCase)
-            ? MessageOverlayEffectRain
-            : MessageOverlayEffectSnow;
+        if (string.Equals(value, MessageOverlayEffectRain, StringComparison.OrdinalIgnoreCase))
+            return MessageOverlayEffectRain;
+        if (string.Equals(value, MessageOverlayEffectSunny, StringComparison.OrdinalIgnoreCase))
+            return MessageOverlayEffectSunny;
+        return MessageOverlayEffectSnow;
     }
 
     private static List<string> NormalizeQuickMessagePresets(IEnumerable<string>? presets)
@@ -1029,12 +1035,21 @@ public partial class MainWindow
             MessageOverlayEffectCanvas.Children.Clear();
         }
         _messageOverlayEffectParticles.Clear();
+        _messageOverlaySunRayRotation = null;
+        _messageOverlaySunRayAngle = 0;
     }
 
     private void SpawnMessageOverlayEffectParticles(double width, double height)
     {
         MessageOverlayEffectCanvas.Children.Clear();
         _messageOverlayEffectParticles.Clear();
+        _messageOverlaySunRayRotation = null;
+
+        if (string.Equals(_messageOverlayEffect, MessageOverlayEffectSunny, StringComparison.OrdinalIgnoreCase))
+        {
+            BuildMessageOverlaySun(width, height);
+            return;
+        }
 
         var isRain = string.Equals(_messageOverlayEffect, MessageOverlayEffectRain, StringComparison.OrdinalIgnoreCase);
         var count = isRain ? 160 : 90;
@@ -1091,6 +1106,124 @@ public partial class MainWindow
         }
     }
 
+    private void BuildMessageOverlaySun(double width, double height)
+    {
+        // Sun center is tucked just outside the upper-left so only a wedge of
+        // the disc is visible — like the sun peeking into the corner.
+        var sunCenterX = -40.0;
+        var sunCenterY = -30.0;
+        var coreRadius = 150.0;
+        var rayLength = Math.Max(width, height) + 200;
+        var rayFieldSize = rayLength * 2;
+        var haloRadius = Math.Min(Math.Max(width, height) * 0.9, 1200);
+
+        var halo = new System.Windows.Shapes.Ellipse
+        {
+            Width = haloRadius * 2,
+            Height = haloRadius * 2,
+            IsHitTestVisible = false,
+            Fill = new RadialGradientBrush
+            {
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(150, 255, 225, 150), 0.0),
+                    new GradientStop(Color.FromArgb(80, 255, 195, 90), 0.35),
+                    new GradientStop(Color.FromArgb(30, 255, 170, 60), 0.7),
+                    new GradientStop(Color.FromArgb(0, 255, 150, 40), 1.0)
+                }
+            }
+        };
+        Canvas.SetLeft(halo, sunCenterX - haloRadius);
+        Canvas.SetTop(halo, sunCenterY - haloRadius);
+        MessageOverlayEffectCanvas.Children.Add(halo);
+
+        var rayCanvas = new Canvas
+        {
+            Width = rayFieldSize,
+            Height = rayFieldSize,
+            IsHitTestVisible = false
+        };
+        Canvas.SetLeft(rayCanvas, sunCenterX - rayLength);
+        Canvas.SetTop(rayCanvas, sunCenterY - rayLength);
+        var rotation = new RotateTransform(0, rayLength, rayLength);
+        rayCanvas.RenderTransform = rotation;
+        _messageOverlaySunRayRotation = rotation;
+        _messageOverlaySunRayAngle = 0;
+
+        // Aim the beams from the corner toward the text in the center of the
+        // overlay, fanning out in a wedge across that direction.
+        var aimDeg = Math.Atan2(height / 2.0 - sunCenterY, width / 2.0 - sunCenterX) * 180.0 / Math.PI;
+        const double rayArcSpan = 75.0;
+        const int rayCount = 9;
+        var rayBrush = new SolidColorBrush(Color.FromArgb(150, 255, 225, 130));
+        var shortRayBrush = new SolidColorBrush(Color.FromArgb(110, 255, 210, 110));
+        for (var i = 0; i < rayCount; i++)
+        {
+            var t = rayCount == 1 ? 0.5 : (double)i / (rayCount - 1);
+            var angleDeg = aimDeg - rayArcSpan / 2 + t * rayArcSpan;
+            var isLong = i % 2 == 0;
+            var thisLength = isLong ? rayLength : rayLength * 0.55;
+            var halfWidth = isLong ? 8.0 : 5.0;
+            var ray = new System.Windows.Shapes.Polygon
+            {
+                Points =
+                {
+                    new Point(coreRadius * 0.9, -halfWidth),
+                    new Point(coreRadius * 0.9, halfWidth),
+                    new Point(thisLength, 0)
+                },
+                Fill = isLong ? rayBrush : shortRayBrush,
+                IsHitTestVisible = false,
+                RenderTransform = new RotateTransform(angleDeg)
+            };
+            Canvas.SetLeft(ray, rayLength);
+            Canvas.SetTop(ray, rayLength);
+            rayCanvas.Children.Add(ray);
+        }
+        MessageOverlayEffectCanvas.Children.Add(rayCanvas);
+
+        var coreGlow = new System.Windows.Shapes.Ellipse
+        {
+            Width = coreRadius * 2.6,
+            Height = coreRadius * 2.6,
+            IsHitTestVisible = false,
+            Fill = new RadialGradientBrush
+            {
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(180, 255, 240, 170), 0.0),
+                    new GradientStop(Color.FromArgb(80, 255, 210, 110), 0.55),
+                    new GradientStop(Color.FromArgb(0, 255, 180, 60), 1.0)
+                }
+            }
+        };
+        Canvas.SetLeft(coreGlow, sunCenterX - coreRadius * 1.3);
+        Canvas.SetTop(coreGlow, sunCenterY - coreRadius * 1.3);
+        MessageOverlayEffectCanvas.Children.Add(coreGlow);
+
+        var core = new System.Windows.Shapes.Ellipse
+        {
+            Width = coreRadius * 2,
+            Height = coreRadius * 2,
+            IsHitTestVisible = false,
+            Fill = new RadialGradientBrush
+            {
+                GradientOrigin = new Point(0.4, 0.35),
+                Center = new Point(0.4, 0.35),
+                GradientStops =
+                {
+                    new GradientStop(Color.FromArgb(255, 255, 255, 240), 0.0),
+                    new GradientStop(Color.FromArgb(255, 255, 235, 140), 0.45),
+                    new GradientStop(Color.FromArgb(255, 255, 175, 70), 0.85),
+                    new GradientStop(Color.FromArgb(255, 250, 140, 40), 1.0)
+                }
+            }
+        };
+        Canvas.SetLeft(core, sunCenterX - coreRadius);
+        Canvas.SetTop(core, sunCenterY - coreRadius);
+        MessageOverlayEffectCanvas.Children.Add(core);
+    }
+
     private void MessageOverlayEffectTimer_Tick(object? sender, EventArgs e)
     {
         if (MessageOverlayEffectCanvas == null)
@@ -1105,6 +1238,16 @@ public partial class MainWindow
         var height = MessageOverlayEffectCanvas.ActualHeight;
         if (width <= 0 || height <= 0)
             return;
+
+        if (_messageOverlaySunRayRotation != null)
+        {
+            // Gentle shimmer: oscillate a few degrees side-to-side instead of spinning.
+            _messageOverlaySunRayAngle += dt;
+            const double swayDegrees = 4.0;
+            const double swaySpeed = 0.9;
+            _messageOverlaySunRayRotation.Angle = Math.Sin(_messageOverlaySunRayAngle * swaySpeed) * swayDegrees;
+            return;
+        }
 
         var rng = Random.Shared;
         foreach (var p in _messageOverlayEffectParticles)
