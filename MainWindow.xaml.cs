@@ -6185,7 +6185,8 @@ public partial class MainWindow : Window
         int lineStart = 0;
         while (lineStart < text.Length)
         {
-            if (text[lineStart] == '-' && lineStart + 1 < text.Length && text[lineStart + 1] == ' ')
+            if (lineStart + 1 < text.Length && text[lineStart + 1] == ' ' &&
+                (text[lineStart] == '-' || text[lineStart] == '*'))
                 count++;
 
             int nextLineBreak = text.IndexOf('\n', lineStart);
