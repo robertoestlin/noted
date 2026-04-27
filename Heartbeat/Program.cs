@@ -8,7 +8,7 @@ const string AppLogFileName = "noted.log";
 
 var runtime = LoadRuntimeSettings();
 var audioSnapshotService = new AudioSessionSnapshotService();
-var startupMessage = "Heartbeat started. Version=0.5.1";
+var startupMessage = $"Heartbeat started. Version=0.5.1 UptimeHeartbeatSeconds={runtime.UptimeHeartbeatSeconds}";
 
 Console.WriteLine(startupMessage);
 AppendAppLog(runtime.BackupFolder, startupMessage);
