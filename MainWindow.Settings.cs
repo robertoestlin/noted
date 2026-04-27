@@ -113,6 +113,7 @@ public partial class MainWindow
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
             ClosedTabsRetentionDays = _closedTabsRetentionDays,
+            SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-",
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
             QuickMessageCustom = _quickMessageCustom,
@@ -253,6 +254,7 @@ public partial class MainWindow
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         _closedTabsMaxCount = DefaultClosedTabsMaxCount;
         _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
+        _saveBulletsAsMarker = '-';
         _todoItems.Clear();
         _taskPanelTitle = DefaultTaskPanelTitle;
         _taskAreas = BuildDefaultTaskAreas();
@@ -355,6 +357,7 @@ public partial class MainWindow
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
         _closedTabsMaxCount = NormalizeClosedTabsMaxCount(state.ClosedTabsMaxCount);
         _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
+        _saveBulletsAsMarker = string.Equals(state.SaveBulletsAs, "*", StringComparison.Ordinal) ? '*' : '-';
         ApplyQuickMessageOverlaySettings(state);
         ApplyTaskPanelSettings(state);
         _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);

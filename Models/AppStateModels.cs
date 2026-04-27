@@ -235,6 +235,8 @@ public sealed class WindowSettings
     public int TabCleanupStaleDays { get; set; } = 30;
     public int ClosedTabsMaxCount { get; set; } = 10;
     public int ClosedTabsRetentionDays { get; set; }
+    /// <summary>Unify <c>* </c> / <c>- </c> list markers on backup save: <c>"-"</c> (default) or <c>"*"</c>.</summary>
+    public string SaveBulletsAs { get; set; } = "-";
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }
     public string? QuickMessageCustom { get; set; }

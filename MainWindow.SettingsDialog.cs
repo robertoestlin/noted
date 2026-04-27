@@ -825,6 +825,24 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 0)
         };
         tabsSettingsPanel.Children.Add(txtClosedTabsRetentionDays);
+        tabsSettingsPanel.Children.Add(new TextBlock
+        {
+            Text = "Save bullets as:",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 12, 0, 4)
+        });
+        var cmbSaveBulletsAs = new ComboBox
+        {
+            Width = 120,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 0)
+        };
+        cmbSaveBulletsAs.Items.Add(new ComboBoxItem { Content = "-", Tag = '-' });
+        cmbSaveBulletsAs.Items.Add(new ComboBoxItem { Content = "*", Tag = '*' });
+        cmbSaveBulletsAs.SelectedItem = _saveBulletsAsMarker == '*'
+            ? cmbSaveBulletsAs.Items[1]
+            : cmbSaveBulletsAs.Items[0];
+        tabsSettingsPanel.Children.Add(cmbSaveBulletsAs);
         tabControl.Items.Add(new TabItem
         {
             Header = "Tabs",
@@ -1518,6 +1536,11 @@ public partial class MainWindow
                 _tabCleanupStaleDays = staleDays;
                 _closedTabsMaxCount = closedTabsMaxCount;
                 _closedTabsRetentionDays = closedTabsRetentionDays;
+                _saveBulletsAsMarker = cmbSaveBulletsAs.SelectedItem is ComboBoxItem saveBulletItem
+                    && saveBulletItem.Tag is char saveBulletTag
+                    && saveBulletTag == '*'
+                    ? '*'
+                    : '-';
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors

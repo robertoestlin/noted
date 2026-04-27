@@ -199,6 +199,7 @@ public partial class MainWindow : Window
     private int _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
     private int _closedTabsMaxCount = DefaultClosedTabsMaxCount;
     private int _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
+    private char _saveBulletsAsMarker = '-';
     private string _fontFamily = DefaultFontFamily;
     private double _fontSize = DefaultFontSize;
     /// <summary>Session-only offset for Ctrl+wheel zoom; not saved to settings.</summary>
@@ -2782,6 +2783,50 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
+    }
+
+    /// <summary>Rewrites line-leading <c>- </c>/<c>* </c> list markers (after spaces/tabs) to <paramref name="saveAsMarker"/>.</summary>
+    private static string UnifyMarkdownListBulletMarkersForSave(string text, char saveAsMarker)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+        if (saveAsMarker != '-' && saveAsMarker != '*')
+            saveAsMarker = '-';
+
+        var sb = new StringBuilder(text.Length);
+        int lineStart = 0;
+        while (lineStart < text.Length)
+        {
+            int nextNl = text.IndexOf('\n', lineStart);
+            int segmentEnd = nextNl >= 0 ? nextNl : text.Length;
+            string line = text.Substring(lineStart, segmentEnd - lineStart);
+
+            int indentEnd = 0;
+            while (indentEnd < line.Length && (line[indentEnd] == ' ' || line[indentEnd] == '\t'))
+                indentEnd++;
+
+            if (indentEnd + 1 < line.Length)
+            {
+                char marker = line[indentEnd];
+                if ((marker == '-' || marker == '*') && char.IsWhiteSpace(line[indentEnd + 1]) && marker != saveAsMarker)
+                {
+                    sb.Append(line, 0, indentEnd);
+                    sb.Append(saveAsMarker);
+                    sb.Append(line, indentEnd + 1, line.Length - indentEnd - 1);
+                }
+                else
+                    sb.Append(line);
+            }
+            else
+                sb.Append(line);
+
+            if (nextNl < 0)
+                break;
+            sb.Append('\n');
+            lineStart = nextNl + 1;
+        }
+
+        return sb.ToString();
     }
 
     private static string RemoveTrailingWhitespaces(string text)
@@ -5868,6 +5913,7 @@ public partial class MainWindow : Window
                 var criticalHighlightSnapshot = GetCriticalHighlightedLineNumbers(doc).OrderBy(line => line).ToList();
 
                 var normalizedText = RemoveTrailingWhitespacesExceptLine(originalText, preservedLineNumber);
+                normalizedText = UnifyMarkdownListBulletMarkersForSave(normalizedText, _saveBulletsAsMarker);
                 if (!string.Equals(originalText, normalizedText, StringComparison.Ordinal))
                 {
                     int caretOffset = Math.Min(doc.Editor.CaretOffset, normalizedText.Length);
