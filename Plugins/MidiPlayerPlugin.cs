@@ -423,8 +423,21 @@ public partial class MainWindow
         void DockMidiPlayerWindow()
         {
             dlg.Hide();
+            dlg.WindowState = WindowState.Normal;
             RefreshDockedIndicator();
             NormalizeAudioSessionDisplayName();
+            // Hide() does not reliably return keyboard focus to the owner; bring
+            // Noted forward after dock (Ctrl+M, header dock, or system minimize).
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                Activate();
+                var doc = CurrentDoc();
+                if (doc != null)
+                {
+                    doc.Editor.Focus();
+                    Keyboard.Focus(doc.Editor);
+                }
+            });
         }
 
         void RestoreMidiPlayerWindow()
@@ -438,6 +451,13 @@ public partial class MainWindow
             RefreshDockedIndicator();
             NormalizeAudioSessionDisplayName();
         }
+
+        dlg.StateChanged += (_, _) =>
+        {
+            if (dlg.WindowState != WindowState.Minimized)
+                return;
+            DockMidiPlayerWindow();
+        };
 
         var layout = new Grid();
         layout.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
