@@ -154,6 +154,7 @@ public partial class MainWindow : Window
     private const string DefaultShortcutGoToLine = "Ctrl+G";
     private const string DefaultShortcutGoToTab = "Ctrl+P";
     private const string DefaultShortcutMidiPlayer = "Ctrl+M";
+    private const int DefaultMidiPlayerVolumePercent = 100;
     private const string DefaultShortcutSwitchToPreviousTab = "Ctrl+Q";
     private const string DefaultShortcutFakeSave = "Ctrl+S";
     private static readonly string[] FakeSaveStatusMessages =
@@ -214,6 +215,7 @@ public partial class MainWindow : Window
     private string _shortcutGoToLine = DefaultShortcutGoToLine;
     private string _shortcutGoToTab = DefaultShortcutGoToTab;
     private string _shortcutMidiPlayer = DefaultShortcutMidiPlayer;
+    private int _midiPlayerVolumePercent = DefaultMidiPlayerVolumePercent;
     private Color _selectedLineColor = DefaultSelectedLineColor;
     private Color _highlightedLineColor = DefaultHighlightedLineColor;
     private Color _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;

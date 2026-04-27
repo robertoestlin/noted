@@ -72,6 +72,7 @@ public partial class MainWindow
             ShortcutGoToLine = _shortcutGoToLine,
             ShortcutGoToTab = _shortcutGoToTab,
             ShortcutMidiPlayer = _shortcutMidiPlayer,
+            MidiPlayerVolumePercent = _midiPlayerVolumePercent,
             SelectedLineColor = ColorToHex(_selectedLineColor),
             HighlightedLineColor = ColorToHex(_highlightedLineColor),
             SelectedHighlightedLineColor = ColorToHex(_selectedHighlightedLineColor),
@@ -220,6 +221,7 @@ public partial class MainWindow
         _shortcutGoToLine = DefaultShortcutGoToLine;
         _shortcutGoToTab = DefaultShortcutGoToTab;
         _shortcutMidiPlayer = DefaultShortcutMidiPlayer;
+        _midiPlayerVolumePercent = DefaultMidiPlayerVolumePercent;
         _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
         _writeUptimeHeartbeatInNoted = true;
         _useStandaloneHeartbeatApp = false;
@@ -355,6 +357,7 @@ public partial class MainWindow
         _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
         ApplyQuickMessageOverlaySettings(state);
         ApplyTaskPanelSettings(state);
+        _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);
 
         ApplyThemeColorsFromSettings(state);
         _startMaximized = state.Maximized;
@@ -868,5 +871,12 @@ public partial class MainWindow
         foreach (var doc in _docs.Values)
             RedrawHighlight(doc);
         SaveWindowSettings();
+    }
+
+    private static int NormalizeMidiPlayerVolumePercent(int? value)
+    {
+        if (value is >= 0 and <= 100)
+            return value.Value;
+        return DefaultMidiPlayerVolumePercent;
     }
 }

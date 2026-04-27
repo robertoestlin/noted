@@ -26,6 +26,15 @@ public partial class MainWindow
     [DllImport("winmm.dll", CharSet = CharSet.Unicode, EntryPoint = "mciGetErrorStringW")]
     private static extern bool MidiPlayerMciGetErrorString(int errorCode, StringBuilder buffer, int bufferLength);
 
+    // Master volume of the MIDI Mapper (device id 0). Directly scales the MIDI
+    // synth output so it works for MCI sequencer playback without requiring us
+    // to find any WASAPI session. Low word = left channel, high word = right.
+    [DllImport("winmm.dll", EntryPoint = "midiOutSetVolume")]
+    private static extern uint MidiPlayerMidiOutSetVolume(uint deviceId, uint dwVolume);
+
+    [DllImport("winmm.dll", EntryPoint = "midiOutGetVolume")]
+    private static extern uint MidiPlayerMidiOutGetVolume(uint deviceId, out uint pdwVolume);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathName(string lpszLongPath, StringBuilder lpszShortPath, uint cchBuffer);
 
@@ -370,8 +379,37 @@ public partial class MainWindow
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
+        // Tags this process's render session(s) as "Noted" in Volume Mixer and
+        // sets the MIDI Mapper master volume so MCI sequencer playback honours
+        // _midiPlayerVolumePercent. midiOutSetVolume is what actually changes
+        // the audible MIDI output level; the WASAPI session master is set in
+        // parallel so the Volume Mixer "Noted" slider tracks the popup too.
         void NormalizeAudioSessionDisplayName()
-            => _audioSessionSnapshotService.TrySetCurrentProcessSessionDisplayName("Noted");
+        {
+            _audioSessionSnapshotService.TrySetCurrentProcessSessionDisplayName("Noted");
+            ApplyMidiOutVolume(_midiPlayerVolumePercent);
+            var linear = Math.Clamp(_midiPlayerVolumePercent, 0, 100) / 100f;
+            _audioSessionSnapshotService.TrySetCurrentProcessSessionsMasterVolume(linear);
+        }
+
+        static void ApplyMidiOutVolume(int percent)
+        {
+            var clamped = Math.Clamp(percent, 0, 100);
+            // 0..100 % → 0..0xFFFF per channel, packed as right<<16 | left.
+            var perChannel = (uint)Math.Round(clamped * 65535.0 / 100.0);
+            var packed = (perChannel << 16) | perChannel;
+            MidiPlayerMidiOutSetVolume(0, packed);
+        }
+
+        static int? ReadMidiOutVolumePercent()
+        {
+            if (MidiPlayerMidiOutGetVolume(0, out var packed) != 0)
+                return null;
+            var leftLevel = packed & 0xFFFFu;
+            var rightLevel = (packed >> 16) & 0xFFFFu;
+            var level = Math.Max(leftLevel, rightLevel);
+            return (int)Math.Round(level * 100.0 / 65535.0);
+        }
 
         // The "docked" indicator beside the version tag is only meaningful
         // while music is actually playing - hiding the window while idle
@@ -630,6 +668,62 @@ public partial class MainWindow
             </Style>
             """);
 
+        // Same look as the playlist scrollbar, but Value increases upward (quiet
+        // at bottom, loud at top) for use as a vertical volume control. Thumb is
+        // larger than the playlist bar for easier dragging.
+        var volumePopupBarStyle = (Style)XamlReader.Parse(
+            """
+            <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                   TargetType="ScrollBar">
+              <Setter Property="Width" Value="16"/>
+              <Setter Property="Background" Value="#0D1627"/>
+              <Setter Property="BorderBrush" Value="#1F2D49"/>
+              <Setter Property="BorderThickness" Value="1"/>
+              <Setter Property="Template">
+                <Setter.Value>
+                  <ControlTemplate TargetType="ScrollBar">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            Padding="2">
+                      <Track x:Name="PART_Track" IsDirectionReversed="False">
+                        <Track.DecreaseRepeatButton>
+                          <RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0"/>
+                        </Track.DecreaseRepeatButton>
+                        <Track.Thumb>
+                          <Thumb MinHeight="36" MinWidth="14">
+                            <Thumb.Template>
+                              <ControlTemplate TargetType="Thumb">
+                                <Border x:Name="ThumbBorder"
+                                        Background="#4A6A9D"
+                                        CornerRadius="5"
+                                        MinHeight="32"
+                                        MinWidth="12"/>
+                                <ControlTemplate.Triggers>
+                                  <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#5E83BF"/>
+                                  </Trigger>
+                                  <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="ThumbBorder" Property="Background" Value="#73A0E5"/>
+                                  </Trigger>
+                                </ControlTemplate.Triggers>
+                              </ControlTemplate>
+                            </Thumb.Template>
+                          </Thumb>
+                        </Track.Thumb>
+                        <Track.IncreaseRepeatButton>
+                          <RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0"/>
+                        </Track.IncreaseRepeatButton>
+                      </Track>
+                    </Border>
+                  </ControlTemplate>
+                </Setter.Value>
+              </Setter>
+            </Style>
+            """);
+
         var listScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -838,10 +932,126 @@ public partial class MainWindow
             Height = 8,
             CornerRadius = new CornerRadius(4),
             Background = preloadDotIdleBrush,
-            Margin = new Thickness(2, 14, 0, 0),
-            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
             ToolTip = "Preload pending"
         };
+        var volumeBarPopup = new ScrollBar
+        {
+            Orientation = Orientation.Vertical,
+            Style = volumePopupBarStyle,
+            Width = 16,
+            Minimum = 0,
+            Maximum = 100,
+            Value = Math.Clamp(_midiPlayerVolumePercent, 0, 100),
+            SmallChange = 2,
+            LargeChange = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        var btnVolume = new Button
+        {
+            Content = "\uE767",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Width = 36,
+            Height = 36,
+            FontSize = 16,
+            Style = iconButtonStyle,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = $"Volume: {_midiPlayerVolumePercent}%"
+        };
+        var volumePopupBorder = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 10, 8),
+            SnapsToDevicePixels = true,
+            Child = volumeBarPopup
+        };
+        var volumePopup = new Popup
+        {
+            AllowsTransparency = true,
+            StaysOpen = false,
+            Placement = PlacementMode.Top,
+            PopupAnimation = PopupAnimation.Fade,
+            Child = volumePopupBorder
+        };
+
+        void SyncMidiPlayerVolumeFromPopupUi()
+        {
+            var pct = (int)Math.Round(volumeBarPopup.Value);
+            pct = Math.Clamp(pct, 0, 100);
+            _midiPlayerVolumePercent = pct;
+            btnVolume.ToolTip = $"Volume: {pct}%";
+            NormalizeAudioSessionDisplayName();
+        }
+
+        // The MIDI Mapper master volume can be changed by other apps (or by the
+        // user via Volume Mixer on some Windows versions). Re-read it here so
+        // the popup reflects the actual playback level rather than stale JSON.
+        void SyncMidiPlayerVolumeFromWindowsMixer()
+        {
+            _audioSessionSnapshotService.TrySetCurrentProcessSessionDisplayName("Noted");
+            var current = ReadMidiOutVolumePercent();
+            if (current is not int pct)
+                return;
+            pct = Math.Clamp(pct, 0, 100);
+            _midiPlayerVolumePercent = pct;
+            volumeBarPopup.Value = pct;
+            btnVolume.ToolTip = $"Volume: {pct}%";
+        }
+
+        // Thumb drag captures the mouse on the thumb, not the ScrollBar. Tunnel
+        // PreviewMouseUp on the border still runs on release so we always apply the
+        // final level (in addition to ValueChanged while the thumb moves).
+        volumePopupBorder.PreviewMouseLeftButtonUp += (_, _) =>
+        {
+            if (!volumePopup.IsOpen)
+                return;
+            SyncMidiPlayerVolumeFromPopupUi();
+        };
+
+        volumeBarPopup.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (e.OriginalSource is not DependencyObject src)
+                return;
+            for (var n = src; n != null; n = VisualTreeHelper.GetParent(n))
+            {
+                if (n is Thumb)
+                    return;
+                if (ReferenceEquals(n, volumeBarPopup))
+                    break;
+            }
+
+            var y = e.GetPosition(volumeBarPopup).Y;
+            var h = volumeBarPopup.ActualHeight;
+            if (h < 1)
+                return;
+            var ratio = (h - y) / h;
+            var v = volumeBarPopup.Minimum + ratio * (volumeBarPopup.Maximum - volumeBarPopup.Minimum);
+            volumeBarPopup.Value = Math.Clamp(v, volumeBarPopup.Minimum, volumeBarPopup.Maximum);
+            SyncMidiPlayerVolumeFromPopupUi();
+            e.Handled = true;
+        };
+
+        void SyncVolumePopupBarLength()
+        {
+            var listH = listScroll.ActualHeight;
+            if (listH <= 1 && queueCard.ActualHeight > 1)
+                listH = Math.Max(1, queueCard.ActualHeight - 80);
+            var h = Math.Max(100, listH / 2.0);
+            volumeBarPopup.Height = h;
+        }
+        var preloadVolumeHost = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 0)
+        };
+        preloadVolumeHost.Children.Add(btnVolume);
+        preloadVolumeHost.Children.Add(preloadDot);
         btnShuffle.Checked += (_, _) =>
         {
             ClearNextPreload();
@@ -858,7 +1068,46 @@ public partial class MainWindow
         btnLoop.Unchecked += (_, _) => ClearNextPreload();
         modeRow.Children.Add(btnShuffle);
         modeRow.Children.Add(btnLoop);
-        modeRow.Children.Add(preloadDot);
+        modeRow.Children.Add(preloadVolumeHost);
+        volumePopup.PlacementTarget = btnVolume;
+        btnVolume.Click += (_, _) =>
+        {
+            volumePopup.IsOpen = !volumePopup.IsOpen;
+            if (volumePopup.IsOpen)
+            {
+                SyncMidiPlayerVolumeFromWindowsMixer();
+                dlg.Dispatcher.BeginInvoke(
+                    () =>
+                    {
+                        SyncVolumePopupBarLength();
+                        volumePopup.HorizontalOffset =
+                            -(volumePopupBorder.ActualWidth > 1
+                                ? volumePopupBorder.ActualWidth
+                                : 32) / 2
+                            + btnVolume.ActualWidth / 2;
+                    },
+                    DispatcherPriority.Loaded);
+            }
+        };
+        volumePopup.Opened += (_, _) =>
+        {
+            SyncMidiPlayerVolumeFromWindowsMixer();
+            SyncVolumePopupBarLength();
+            volumePopup.HorizontalOffset =
+                -(volumePopupBorder.ActualWidth > 1 ? volumePopupBorder.ActualWidth : 32) / 2
+                + btnVolume.ActualWidth / 2;
+        };
+        listScroll.SizeChanged += (_, _) =>
+        {
+            if (volumePopup.IsOpen)
+                SyncVolumePopupBarLength();
+        };
+        queueCard.SizeChanged += (_, _) =>
+        {
+            if (volumePopup.IsOpen)
+                SyncVolumePopupBarLength();
+        };
+        volumeBarPopup.ValueChanged += (_, _) => SyncMidiPlayerVolumeFromPopupUi();
         controlsRoot.Children.Add(modeRow);
 
         var lblStatus = new TextBlock
@@ -1576,6 +1825,7 @@ public partial class MainWindow
                     isPlaying = true;
                     isPaused = false;
                     timer.Start();
+                    NormalizeAudioSessionDisplayName();
                 }
             }
             else
@@ -2256,6 +2506,11 @@ public partial class MainWindow
 
         dlg.Closed += (_, _) =>
         {
+            _midiPlayerVolumePercent = Math.Clamp(
+                (int)Math.Round(volumeBarPopup.Value),
+                0,
+                100);
+            SaveWindowSettings();
             CloseDevice();
             _midiPlayerWindow = null;
             _midiPlayerDockAction = null;
@@ -2274,6 +2529,7 @@ public partial class MainWindow
             if (hasDialogShown)
                 return;
             hasDialogShown = true;
+            SyncMidiPlayerVolumeFromWindowsMixer();
             PrimeInitialPreload();
         };
 

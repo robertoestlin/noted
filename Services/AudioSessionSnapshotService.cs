@@ -21,6 +21,68 @@ public sealed class AudioSessionSnapshotService
         }
     }
 
+    /// <summary>
+    /// Sets linear master volume (0–1) on every **WASAPI render session** owned
+    /// by this **process** on each output device — the same per-app level as in
+    /// Volume Mixer for "Noted". This is not device-wide / master-knob volume.
+    /// MCI MIDI must be routed through a session for this process for it to take
+    /// effect; we enumerate **all** active render endpoints because MIDI often
+    /// does not use the default role endpoint alone.
+    /// </summary>
+    public void TrySetCurrentProcessSessionsMasterVolume(float level)
+    {
+        try
+        {
+            SetCurrentProcessSessionsMasterVolume(level);
+        }
+        catch
+        {
+            // Best effort only.
+        }
+    }
+
+    /// <summary>
+    /// Reads the highest session master level (0–1) among this process's render
+    /// sessions, matching what the Volume Mixer reflects better than JSON settings.
+    /// </summary>
+    public bool TryGetCurrentProcessSessionsMasterVolume(out float level)
+    {
+        level = 1f;
+        try
+        {
+            var deviceEnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!;
+            IMMDeviceEnumerator? deviceEnumerator = null;
+            try
+            {
+                deviceEnumerator = (IMMDeviceEnumerator)Activator.CreateInstance(deviceEnumeratorType)!;
+                var maxLinear = -1f;
+                var found = false;
+                if (TryReadMasterVolumeOnAllActiveRenderEndpoints(deviceEnumerator, ref maxLinear, ref found)
+                    && found)
+                {
+                    level = Math.Clamp(maxLinear, 0f, 1f);
+                    return true;
+                }
+
+                TryReadMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eMultimedia, ref maxLinear, ref found);
+                TryReadMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eConsole, ref maxLinear, ref found);
+                TryReadMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eCommunications, ref maxLinear, ref found);
+                if (!found)
+                    return false;
+                level = Math.Clamp(maxLinear, 0f, 1f);
+                return true;
+            }
+            finally
+            {
+                ReleaseComObject(deviceEnumerator);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public string CaptureOutputAudioSummary()
     {
         try
@@ -49,19 +111,103 @@ public sealed class AudioSessionSnapshotService
         if (target.Length == 0)
             return;
 
-        var currentProcessId = (uint)Environment.ProcessId;
+        var deviceEnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!;
         IMMDeviceEnumerator? deviceEnumerator = null;
+        try
+        {
+            deviceEnumerator = (IMMDeviceEnumerator)Activator.CreateInstance(deviceEnumeratorType)!;
+            if (TryRenameOurProcessSessionsOnAllActiveRenderEndpoints(deviceEnumerator, target))
+                return;
+
+            TryRenameOurProcessSessionsOnDefaultRenderEndpoint(deviceEnumerator, ERole.eMultimedia, target);
+            TryRenameOurProcessSessionsOnDefaultRenderEndpoint(deviceEnumerator, ERole.eConsole, target);
+            TryRenameOurProcessSessionsOnDefaultRenderEndpoint(deviceEnumerator, ERole.eCommunications, target);
+        }
+        finally
+        {
+            ReleaseComObject(deviceEnumerator);
+        }
+    }
+
+    private static bool TryRenameOurProcessSessionsOnAllActiveRenderEndpoints(
+        IMMDeviceEnumerator enumerator,
+        string target)
+    {
+        IMMDeviceCollection? collection = null;
+        try
+        {
+            if (enumerator.EnumAudioEndpoints(EDataFlow.eRender, DeviceStateActive, out collection) != 0
+                || collection is null)
+            {
+                return false;
+            }
+
+            if (collection.GetCount(out var count) != 0 || count <= 0)
+                return false;
+
+            for (var index = 0; index < count; index++)
+            {
+                IMMDevice? device = null;
+                try
+                {
+                    if (collection.Item(index, out device) != 0 || device is null)
+                        continue;
+                    RenameOurProcessSessionsOnDevice(device, target);
+                }
+                finally
+                {
+                    ReleaseComObject(device);
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            ReleaseComObject(collection);
+        }
+    }
+
+    private static void TryRenameOurProcessSessionsOnDefaultRenderEndpoint(
+        IMMDeviceEnumerator enumerator,
+        ERole role,
+        string target)
+    {
         IMMDevice? defaultDevice = null;
+        try
+        {
+            if (enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, role, out defaultDevice) != 0
+                || defaultDevice is null)
+            {
+                return;
+            }
+
+            RenameOurProcessSessionsOnDevice(defaultDevice, target);
+        }
+        catch
+        {
+            // Role or device may be unavailable — ignore.
+        }
+        finally
+        {
+            ReleaseComObject(defaultDevice);
+        }
+    }
+
+    private static void RenameOurProcessSessionsOnDevice(IMMDevice device, string target)
+    {
+        var currentProcessId = (uint)Environment.ProcessId;
         IAudioSessionManager2? sessionManager = null;
         IAudioSessionEnumerator? sessionEnumerator = null;
 
         try
         {
-            var deviceEnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!;
-            deviceEnumerator = (IMMDeviceEnumerator)Activator.CreateInstance(deviceEnumeratorType)!;
-            Marshal.ThrowExceptionForHR(deviceEnumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out defaultDevice));
             var sessionManagerGuid = typeof(IAudioSessionManager2).GUID;
-            Marshal.ThrowExceptionForHR(defaultDevice.Activate(ref sessionManagerGuid, ClsCtxAll, IntPtr.Zero, out var sessionManagerObj));
+            Marshal.ThrowExceptionForHR(device.Activate(ref sessionManagerGuid, ClsCtxAll, IntPtr.Zero, out var sessionManagerObj));
             sessionManager = (IAudioSessionManager2)sessionManagerObj;
             Marshal.ThrowExceptionForHR(sessionManager.GetSessionEnumerator(out sessionEnumerator));
             Marshal.ThrowExceptionForHR(sessionEnumerator.GetCount(out var count));
@@ -93,7 +239,8 @@ public sealed class AudioSessionSnapshotService
                 }
                 finally
                 {
-                    ReleaseComObject(sessionControl2);
+                    // sessionControl2 is a cast of the same RCW as sessionControl — do not
+                    // ReleaseComObject both or the COM refcount is decremented twice.
                     ReleaseComObject(sessionControl);
                 }
             }
@@ -102,8 +249,364 @@ public sealed class AudioSessionSnapshotService
         {
             ReleaseComObject(sessionEnumerator);
             ReleaseComObject(sessionManager);
-            ReleaseComObject(defaultDevice);
+        }
+    }
+
+    private const int DeviceStateActive = 0x1;
+
+    private static void SetCurrentProcessSessionsMasterVolume(float level)
+    {
+        var linear = level;
+        if (linear < 0f)
+            linear = 0f;
+        else if (linear > 1f)
+            linear = 1f;
+
+        var deviceEnumeratorType = Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"), throwOnError: true)!;
+        IMMDeviceEnumerator? deviceEnumerator = null;
+        try
+        {
+            deviceEnumerator = (IMMDeviceEnumerator)Activator.CreateInstance(deviceEnumeratorType)!;
+            if (TryApplyMasterVolumeOnAllActiveRenderEndpoints(deviceEnumerator, linear))
+                return;
+
+            TryApplyMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eMultimedia, linear);
+            TryApplyMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eConsole, linear);
+            TryApplyMasterVolumeOnDefaultRenderEndpoint(deviceEnumerator, ERole.eCommunications, linear);
+        }
+        finally
+        {
             ReleaseComObject(deviceEnumerator);
+        }
+    }
+
+    /// <summary>Returns true if at least one active render endpoint was enumerated.</summary>
+    private static bool TryApplyMasterVolumeOnAllActiveRenderEndpoints(
+        IMMDeviceEnumerator enumerator,
+        float linear)
+    {
+        IMMDeviceCollection? collection = null;
+        try
+        {
+            if (enumerator.EnumAudioEndpoints(EDataFlow.eRender, DeviceStateActive, out collection) != 0
+                || collection is null)
+            {
+                return false;
+            }
+
+            if (collection.GetCount(out var count) != 0 || count <= 0)
+                return false;
+
+            for (var index = 0; index < count; index++)
+            {
+                IMMDevice? device = null;
+                try
+                {
+                    if (collection.Item(index, out device) != 0 || device is null)
+                        continue;
+                    ApplyMasterVolumeToOurProcessSessionsOnDevice(device, linear);
+                }
+                finally
+                {
+                    ReleaseComObject(device);
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            ReleaseComObject(collection);
+        }
+    }
+
+    private static void TryApplyMasterVolumeOnDefaultRenderEndpoint(
+        IMMDeviceEnumerator enumerator,
+        ERole role,
+        float linear)
+    {
+        IMMDevice? defaultDevice = null;
+        try
+        {
+            if (enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, role, out defaultDevice) != 0
+                || defaultDevice is null)
+            {
+                return;
+            }
+
+            ApplyMasterVolumeToOurProcessSessionsOnDevice(defaultDevice, linear);
+        }
+        catch
+        {
+            // Role or device may be unavailable — ignore.
+        }
+        finally
+        {
+            ReleaseComObject(defaultDevice);
+        }
+    }
+
+    private static bool TryReadMasterVolumeOnAllActiveRenderEndpoints(
+        IMMDeviceEnumerator enumerator,
+        ref float maxLinear,
+        ref bool found)
+    {
+        IMMDeviceCollection? collection = null;
+        try
+        {
+            if (enumerator.EnumAudioEndpoints(EDataFlow.eRender, DeviceStateActive, out collection) != 0
+                || collection is null)
+            {
+                return false;
+            }
+
+            if (collection.GetCount(out var count) != 0 || count <= 0)
+                return false;
+
+            for (var index = 0; index < count; index++)
+            {
+                IMMDevice? device = null;
+                try
+                {
+                    if (collection.Item(index, out device) != 0 || device is null)
+                        continue;
+                    ReadMaxMasterVolumeFromOurProcessSessionsOnDevice(device, ref maxLinear, ref found);
+                }
+                finally
+                {
+                    ReleaseComObject(device);
+                }
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            ReleaseComObject(collection);
+        }
+    }
+
+    private static void TryReadMasterVolumeOnDefaultRenderEndpoint(
+        IMMDeviceEnumerator enumerator,
+        ERole role,
+        ref float maxLinear,
+        ref bool found)
+    {
+        IMMDevice? defaultDevice = null;
+        try
+        {
+            if (enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, role, out defaultDevice) != 0
+                || defaultDevice is null)
+            {
+                return;
+            }
+
+            ReadMaxMasterVolumeFromOurProcessSessionsOnDevice(defaultDevice, ref maxLinear, ref found);
+        }
+        catch
+        {
+            // Ignore.
+        }
+        finally
+        {
+            ReleaseComObject(defaultDevice);
+        }
+    }
+
+    private static void ReadMaxMasterVolumeFromOurProcessSessionsOnDevice(
+        IMMDevice device,
+        ref float maxLinear,
+        ref bool found)
+    {
+        var currentProcessId = (uint)Environment.ProcessId;
+        IAudioSessionManager2? sessionManager = null;
+        IAudioSessionEnumerator? sessionEnumerator = null;
+
+        try
+        {
+            var sessionManagerGuid = typeof(IAudioSessionManager2).GUID;
+            Marshal.ThrowExceptionForHR(device.Activate(ref sessionManagerGuid, ClsCtxAll, IntPtr.Zero, out var sessionManagerObj));
+            sessionManager = (IAudioSessionManager2)sessionManagerObj;
+            Marshal.ThrowExceptionForHR(sessionManager.GetSessionEnumerator(out sessionEnumerator));
+            Marshal.ThrowExceptionForHR(sessionEnumerator.GetCount(out var count));
+
+            for (var index = 0; index < count; index++)
+            {
+                IAudioSessionControl? sessionControl = null;
+                IAudioSessionControl2? sessionControl2 = null;
+                try
+                {
+                    Marshal.ThrowExceptionForHR(sessionEnumerator.GetSession(index, out sessionControl));
+                    sessionControl2 = (IAudioSessionControl2)sessionControl;
+                    Marshal.ThrowExceptionForHR(sessionControl2.GetProcessId(out var processId));
+                    if (!IsOurNotedSession(sessionControl2, processId, currentProcessId))
+                        continue;
+
+                    ISimpleAudioVolume? simpleVolume = null;
+                    var simpleVolumeIsSeparateRcw = false;
+                    try
+                    {
+                        simpleVolume = (ISimpleAudioVolume)(object)sessionControl2;
+                    }
+                    catch
+                    {
+                        var unknown = Marshal.GetIUnknownForObject(sessionControl2);
+                        try
+                        {
+                            var iid = typeof(ISimpleAudioVolume).GUID;
+                            if (Marshal.QueryInterface(unknown, in iid, out var volumePtr) != 0
+                                || volumePtr == IntPtr.Zero)
+                            {
+                                continue;
+                            }
+
+                            try
+                            {
+                                simpleVolume = (ISimpleAudioVolume)Marshal.GetObjectForIUnknown(volumePtr);
+                                simpleVolumeIsSeparateRcw = true;
+                            }
+                            finally
+                            {
+                                Marshal.Release(volumePtr);
+                            }
+                        }
+                        finally
+                        {
+                            Marshal.Release(unknown);
+                        }
+                    }
+
+                    if (simpleVolume is null)
+                        continue;
+
+                    simpleVolume.GetMasterVolume(out var linear);
+                    if (linear > maxLinear)
+                        maxLinear = linear;
+                    found = true;
+
+                    if (simpleVolumeIsSeparateRcw)
+                        ReleaseComObject(simpleVolume);
+                }
+                catch
+                {
+                    // Skip this session and continue with the next.
+                }
+                finally
+                {
+                    ReleaseComObject(sessionControl);
+                }
+            }
+        }
+        finally
+        {
+            ReleaseComObject(sessionEnumerator);
+            ReleaseComObject(sessionManager);
+        }
+    }
+
+    private static void ApplyMasterVolumeToOurProcessSessionsOnDevice(IMMDevice device, float linear)
+    {
+        var currentProcessId = (uint)Environment.ProcessId;
+        IAudioSessionManager2? sessionManager = null;
+        IAudioSessionEnumerator? sessionEnumerator = null;
+
+        try
+        {
+            var sessionManagerGuid = typeof(IAudioSessionManager2).GUID;
+            Marshal.ThrowExceptionForHR(device.Activate(ref sessionManagerGuid, ClsCtxAll, IntPtr.Zero, out var sessionManagerObj));
+            sessionManager = (IAudioSessionManager2)sessionManagerObj;
+            Marshal.ThrowExceptionForHR(sessionManager.GetSessionEnumerator(out sessionEnumerator));
+            Marshal.ThrowExceptionForHR(sessionEnumerator.GetCount(out var count));
+
+            for (var index = 0; index < count; index++)
+            {
+                IAudioSessionControl? sessionControl = null;
+                IAudioSessionControl2? sessionControl2 = null;
+                try
+                {
+                    Marshal.ThrowExceptionForHR(sessionEnumerator.GetSession(index, out sessionControl));
+                    sessionControl2 = (IAudioSessionControl2)sessionControl;
+                    Marshal.ThrowExceptionForHR(sessionControl2.GetProcessId(out var processId));
+                    if (!IsOurNotedSession(sessionControl2, processId, currentProcessId))
+                        continue;
+
+                    var eventContext = Guid.Empty;
+                    ISimpleAudioVolume? simpleVolume = null;
+                    var simpleVolumeIsSeparateRcw = false;
+                    try
+                    {
+                        simpleVolume = (ISimpleAudioVolume)(object)sessionControl2;
+                    }
+                    catch
+                    {
+                        var unknown = Marshal.GetIUnknownForObject(sessionControl2);
+                        try
+                        {
+                            var iid = typeof(ISimpleAudioVolume).GUID;
+                            if (Marshal.QueryInterface(unknown, in iid, out var volumePtr) != 0
+                                || volumePtr == IntPtr.Zero)
+                            {
+                                continue;
+                            }
+
+                            try
+                            {
+                                simpleVolume = (ISimpleAudioVolume)Marshal.GetObjectForIUnknown(volumePtr);
+                                simpleVolumeIsSeparateRcw = true;
+                            }
+                            finally
+                            {
+                                Marshal.Release(volumePtr);
+                            }
+                        }
+                        finally
+                        {
+                            Marshal.Release(unknown);
+                        }
+                    }
+
+                    if (simpleVolume is null)
+                        continue;
+
+                    if (linear > 0f)
+                    {
+                        try
+                        {
+                            simpleVolume.SetMute(false, ref eventContext);
+                        }
+                        catch
+                        {
+                            // Best effort — still try master volume.
+                        }
+                    }
+
+                    simpleVolume.SetMasterVolume(linear, ref eventContext);
+
+                    if (simpleVolumeIsSeparateRcw)
+                        ReleaseComObject(simpleVolume);
+                }
+                catch
+                {
+                    // Skip this session and continue with the next.
+                }
+                finally
+                {
+                    ReleaseComObject(sessionControl);
+                }
+            }
+        }
+        finally
+        {
+            ReleaseComObject(sessionEnumerator);
+            ReleaseComObject(sessionManager);
         }
     }
 
@@ -152,8 +655,7 @@ public sealed class AudioSessionSnapshotService
                 }
                 finally
                 {
-                    ReleaseComObject(meter);
-                    ReleaseComObject(sessionControl2);
+                    // meter and sessionControl2 are casts of the same RCW as sessionControl.
                     ReleaseComObject(sessionControl);
                 }
             }
@@ -201,6 +703,18 @@ public sealed class AudioSessionSnapshotService
         return sanitized;
     }
 
+    // MCI MIDI playback can register its render session under the audio service's
+    // PID rather than ours. We tag those sessions with display name "Noted" via
+    // SetDisplayName, so accept either a PID match or a name match here.
+    private static bool IsOurNotedSession(IAudioSessionControl2 sessionControl2, uint sessionProcessId, uint currentProcessId)
+    {
+        if (sessionProcessId == currentProcessId)
+            return true;
+        if (sessionControl2.GetDisplayName(out var displayName) != 0)
+            return false;
+        return string.Equals(displayName, "Noted", StringComparison.Ordinal);
+    }
+
     private static void ReleaseComObject(object? comObject)
     {
         if (comObject is not null && Marshal.IsComObject(comObject))
@@ -216,7 +730,21 @@ public sealed class AudioSessionSnapshotService
 
     private enum ERole
     {
-        eMultimedia = 1
+        eConsole = 0,
+        eMultimedia = 1,
+        eCommunications = 2
+    }
+
+    [ComImport]
+    [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B2E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IMMDeviceCollection
+    {
+        [PreserveSig]
+        int GetCount(out int pcDevices);
+
+        [PreserveSig]
+        int Item(int nDevice, out IMMDevice ppDevice);
     }
 
     [ComImport]
@@ -225,7 +753,7 @@ public sealed class AudioSessionSnapshotService
     private interface IMMDeviceEnumerator
     {
         [PreserveSig]
-        int EnumAudioEndpoints(EDataFlow dataFlow, int stateMask, out object devices);
+        int EnumAudioEndpoints(EDataFlow dataFlow, int stateMask, out IMMDeviceCollection? devices);
 
         [PreserveSig]
         int GetDefaultAudioEndpoint(EDataFlow dataFlow, ERole role, out IMMDevice endpoint);
@@ -376,6 +904,20 @@ public sealed class AudioSessionSnapshotService
 
         [PreserveSig]
         int SetDuckingPreference(bool shouldDuckingOptOut);
+    }
+
+    [ComImport]
+    [Guid("87CE5498-4680-4E82-9C7A-C98C566B364A")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ISimpleAudioVolume
+    {
+        void SetMasterVolume(float level, ref Guid eventContext);
+
+        void GetMasterVolume(out float level);
+
+        void SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
+
+        void GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
     [ComImport]
