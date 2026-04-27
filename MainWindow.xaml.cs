@@ -63,6 +63,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _backupHeartbeatTimer;
     private DateTimeOffset _nextBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private DateTimeOffset _lastBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
+    private bool _uptimeHeartbeatStartupBeatWritten;
     private Point _tabDragStartPoint;
     private TabItem? _dragSourceTab;
     private bool _startMaximized = false;
@@ -6091,10 +6092,33 @@ public partial class MainWindow : Window
     {
         _backupHeartbeatTimer.Stop();
         if (!_writeUptimeHeartbeatInNoted)
+        {
+            _uptimeHeartbeatStartupBeatWritten = false;
             return;
+        }
 
         if (!string.IsNullOrWhiteSpace(_backupFolder))
             _lastBackupHeartbeatAtLocal = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(GetUptimeHeartbeatFilePath(DateTimeOffset.Now)) ?? DateTimeOffset.MinValue;
+
+        if (!_uptimeHeartbeatStartupBeatWritten && !string.IsNullOrWhiteSpace(_backupFolder))
+        {
+            try
+            {
+                UptimeHeartbeatService.AppendHeartbeatTimestamp(
+                    _backupFolder,
+                    DateTimeOffset.Now,
+                    _audioSessionSnapshotService.CaptureOutputAudioSummary,
+                    "n",
+                    ref _lastBackupHeartbeatAtLocal,
+                    markAsStartup: true);
+            }
+            catch
+            {
+                // Best-effort activity marker; ignore failures.
+            }
+
+            _uptimeHeartbeatStartupBeatWritten = true;
+        }
 
         ScheduleNextBackupHeartbeatTick();
     }

@@ -8,13 +8,28 @@ const string AppLogFileName = "noted.log";
 
 var runtime = LoadRuntimeSettings();
 var audioSnapshotService = new AudioSessionSnapshotService();
-var startupMessage = "Heartbeat started. Version=0.5";
+var startupMessage = "Heartbeat started. Version=0.5.1";
 
 Console.WriteLine(startupMessage);
 AppendAppLog(runtime.BackupFolder, startupMessage);
 
 var path = UptimeHeartbeatService.GetHeartbeatFilePath(runtime.BackupFolder, DateTimeOffset.Now);
 var lastHeartbeatAtLocal = UptimeHeartbeatService.ReadLastHeartbeatTimestamp(path) ?? DateTimeOffset.MinValue;
+
+try
+{
+    UptimeHeartbeatService.AppendHeartbeatTimestamp(
+        runtime.BackupFolder,
+        DateTimeOffset.Now,
+        audioSnapshotService.CaptureOutputAudioSummary,
+        "s",
+        ref lastHeartbeatAtLocal,
+        markAsStartup: true);
+}
+catch
+{
+    // Best-effort activity marker; ignore failures and continue.
+}
 
 while (true)
 {
