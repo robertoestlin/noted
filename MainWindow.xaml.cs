@@ -2057,6 +2057,8 @@ public partial class MainWindow : Window
         assignLineOwnerItem.Click += (_, _) => AssignSelectedLines(editor);
         var clearLineOwnerItem = new MenuItem { Header = "Clear Selected Line Assignment(s)" };
         clearLineOwnerItem.Click += (_, _) => ClearSelectedLineAssignments(editor);
+        var bulletInfoItem = new MenuItem { Header = "Bullet info..." };
+        bulletInfoItem.Click += (_, _) => ShowBulletInfoAtCaret(editor);
         var resetImageSizeItem = new MenuItem { Header = "Reset Image Size to Original" };
         resetImageSizeItem.Click += (_, _) => ResetInlineImageSizeToOriginal(editor);
         var openImageFolderItem = new MenuItem { Header = "Show Image in Folder" };
@@ -2072,6 +2074,7 @@ public partial class MainWindow : Window
         menu.Items.Add(new Separator());
         menu.Items.Add(assignLineOwnerItem);
         menu.Items.Add(clearLineOwnerItem);
+        menu.Items.Add(bulletInfoItem);
 
         menu.Opened += (_, _) =>
         {
@@ -2088,9 +2091,186 @@ public partial class MainWindow : Window
             clearLineOwnerItem.IsEnabled = doc != null;
             resetImageSizeItem.IsEnabled = CanResetInlineImageSizeAtCaret(editor);
             openImageFolderItem.IsEnabled = CanShowInlineImageInFolderAtCaret(editor);
+
+            var isBulletLine = doc != null && TryGetBulletLineAtCaret(editor, out _, out _, out _);
+            bulletInfoItem.IsEnabled = isBulletLine;
+            bulletInfoItem.Visibility = isBulletLine ? Visibility.Visible : Visibility.Collapsed;
         };
 
         return menu;
+    }
+
+    private static bool TryGetBulletLineAtCaret(TextEditor editor, out int lineNumber, out char marker, out string lineText)
+    {
+        lineNumber = 0;
+        marker = default;
+        lineText = string.Empty;
+        if (editor.Document == null || editor.Document.LineCount == 0)
+            return false;
+
+        lineNumber = Math.Max(1, Math.Min(editor.TextArea.Caret.Line, editor.Document.LineCount));
+        var line = editor.Document.GetLineByNumber(lineNumber);
+        lineText = editor.Document.GetText(line.Offset, line.Length);
+        return TryGetBulletLineMarker(lineText, out marker);
+    }
+
+    private static bool TryGetBulletLineMarker(string lineText, out char marker)
+    {
+        marker = default;
+        if (string.IsNullOrEmpty(lineText) || lineText.Length < 2)
+            return false;
+        if (lineText[1] != ' ')
+            return false;
+        if (lineText[0] is '-' or '*')
+        {
+            marker = lineText[0];
+            return true;
+        }
+        return false;
+    }
+
+    private bool TryGetLineBullet(TabDocument doc, int lineNumber, out char marker, out DateTime? createdUtc)
+    {
+        marker = default;
+        createdUtc = null;
+        for (int i = doc.LineBulletAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineBulletAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line != lineNumber)
+                continue;
+
+            marker = entry.Marker;
+            createdUtc = entry.CreatedUtc;
+            return true;
+        }
+        return false;
+    }
+
+    private bool SetLineBullet(TabDocument doc, int lineNumber, char marker, DateTime? createdUtc = null)
+    {
+        if (marker is not ('-' or '*'))
+            return false;
+
+        int lineCount = doc.Editor.Document.LineCount;
+        if (lineCount <= 0)
+            lineCount = 1;
+        int line = Math.Max(1, Math.Min(lineNumber, lineCount));
+
+        bool changed = false;
+        bool foundExisting = false;
+
+        for (int i = doc.LineBulletAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineBulletAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (anchor.Line != line)
+                continue;
+
+            if (!foundExisting)
+            {
+                foundExisting = true;
+                if (entry.Marker != marker)
+                {
+                    entry.Marker = marker;
+                    entry.CreatedUtc = createdUtc ?? entry.CreatedUtc;
+                    changed = true;
+                }
+                else if (createdUtc.HasValue && entry.CreatedUtc != createdUtc)
+                {
+                    entry.CreatedUtc = createdUtc;
+                }
+            }
+            else
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                changed = true;
+            }
+        }
+
+        if (!foundExisting)
+        {
+            var docLine = doc.Editor.Document.GetLineByNumber(line);
+            var anchor = doc.Editor.Document.CreateAnchor(docLine.Offset);
+            anchor.MovementType = AnchorMovementType.AfterInsertion;
+            doc.LineBulletAnchors.Add(new TabDocument.LineBulletAnchor
+            {
+                Anchor = anchor,
+                Marker = marker,
+                CreatedUtc = createdUtc
+            });
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private void ShowBulletInfoAtCaret(TextEditor editor)
+    {
+        var doc = FindDocByEditor(editor);
+        if (doc == null)
+            return;
+
+        if (!TryGetBulletLineAtCaret(editor, out var lineNumber, out var marker, out var lineText))
+            return;
+
+        // Bullet CreatedUtc is persisted on SaveSession; if missing, show Unknown.
+        _ = TryGetLineBullet(doc, lineNumber, out _, out var createdUtc);
+        DateTime? createdLocal = createdUtc?.ToLocalTime();
+        var today = DateTime.Today;
+        int? daysAgo = createdLocal.HasValue ? Math.Max(0, (int)(today - createdLocal.Value.Date).TotalDays) : null;
+        int? weekdaysAgo = createdLocal.HasValue ? CountWeekdaysBetween(createdLocal.Value.Date, today) : null;
+
+        var dlg = new Window
+        {
+            Title = "Bullet info",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            MinWidth = 260,
+            ShowInTaskbar = false
+        };
+
+        var root = new DockPanel { Margin = new Thickness(14) };
+        var okRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        var okButton = new Button { Content = "OK", Width = 80, IsDefault = true, IsCancel = true };
+        okButton.Click += (_, _) => dlg.Close();
+        okRow.Children.Add(okButton);
+        DockPanel.SetDock(okRow, Dock.Bottom);
+        root.Children.Add(okRow);
+
+        var content = new StackPanel { Orientation = Orientation.Vertical };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Line {lineNumber}",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        content.Children.Add(new TextBlock { Text = createdLocal.HasValue ? $"Created: {createdLocal:yyyy-MM-dd HH:mm}" : "Created: Unknown" });
+        content.Children.Add(new TextBlock { Text = daysAgo.HasValue ? $"Days ago: {daysAgo}" : "Days ago: Unknown" });
+        content.Children.Add(new TextBlock { Text = weekdaysAgo.HasValue ? $"Weekdays ago: {weekdaysAgo}" : "Weekdays ago: Unknown" });
+
+        root.Children.Add(content);
+        dlg.Content = root;
+        dlg.ShowDialog();
     }
 
     private static void MoveCaretToMousePosition(TextEditor editor, MouseButtonEventArgs e)
@@ -5506,6 +5686,7 @@ public partial class MainWindow : Window
         SetHighlightedLines(doc, highlightedLines, markDirty: false);
         SetCriticalHighlightedLines(doc, criticalHighlightedLines, markDirty: false);
         SetLineAssignments(doc, entry.Metadata?.Assignees, markDirty: false);
+        SetLineBullets(doc, entry.Metadata?.Bullets, markDirty: false);
         RestoreCaretPosition(doc, entry.Metadata);
         doc.LastSavedUtc = entry.Metadata?.LastSavedUtc?.ToUniversalTime();
         doc.LastChangedUtc = entry.Metadata?.LastChangedUtc?.ToUniversalTime()
@@ -5865,15 +6046,122 @@ public partial class MainWindow : Window
             .OrderBy(entry => entry.Line)
             .ToList();
 
+        var bullets = GetLineBulletDetails(doc)
+            .Where(pair => pair.Key > 0)
+            .Select(pair => new FileLineBullet
+            {
+                Line = pair.Key,
+                Marker = pair.Value.Marker.ToString(),
+                CreatedUtc = pair.Value.CreatedUtc
+            })
+            .OrderBy(entry => entry.Line)
+            .ToList();
+
         return new FileMetadata
         {
             HighlightLines = highlighted.Count > 0 ? highlighted : null,
             CriticalHighlightLines = criticalHighlighted.Count > 0 ? criticalHighlighted : null,
             Assignees = assignees.Count > 0 ? assignees : null,
+            Bullets = bullets.Count > 0 ? bullets : null,
             LastSavedUtc = doc.LastSavedUtc,
             LastChangedUtc = doc.LastChangedUtc,
             CaretOffset = doc.Editor.CaretOffset
         };
+    }
+
+    private IReadOnlyDictionary<int, (char Marker, DateTime? CreatedUtc)> GetLineBulletDetails(TabDocument doc)
+    {
+        if (doc.LineBulletAnchors.Count == 0)
+            return new Dictionary<int, (char, DateTime?)>();
+
+        var result = new Dictionary<int, (char, DateTime?)>();
+        for (int i = doc.LineBulletAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineBulletAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+
+            if (doc.Editor.Document == null || anchor.Line > doc.Editor.Document.LineCount)
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+
+            var line = doc.Editor.Document.GetLineByNumber(anchor.Line);
+            var lineText = doc.Editor.Document.GetText(line.Offset, line.Length);
+            if (!TryGetBulletLineMarker(lineText, out var marker))
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+
+            entry.Marker = marker;
+            result[anchor.Line] = (marker, entry.CreatedUtc);
+        }
+
+        return result;
+    }
+
+    private void SetLineBullets(TabDocument doc, IEnumerable<FileLineBullet>? bullets, bool markDirty = true)
+    {
+        doc.LineBulletAnchors.Clear();
+
+        if (bullets != null)
+        {
+            foreach (var bullet in bullets)
+            {
+                if (bullet == null || bullet.Line <= 0)
+                    continue;
+
+                var marker = (bullet.Marker ?? string.Empty).Trim();
+                char markerChar = marker.Length > 0 ? marker[0] : '-';
+                if (markerChar is not ('-' or '*'))
+                    markerChar = '-';
+
+                SetLineBullet(doc, bullet.Line, markerChar, bullet.CreatedUtc);
+            }
+        }
+
+        if (markDirty)
+            MarkDirty(doc);
+        RedrawHighlight(doc);
+    }
+
+    private void EnsureBulletMetadataForNewBullets(TabDocument doc)
+    {
+        if (doc.Editor?.Document == null || doc.Editor.Document.LineCount <= 0)
+            return;
+
+        var existing = new HashSet<int>();
+        for (int i = doc.LineBulletAnchors.Count - 1; i >= 0; i--)
+        {
+            var entry = doc.LineBulletAnchors[i];
+            var anchor = entry.Anchor;
+            if (anchor == null || anchor.IsDeleted || anchor.Line <= 0)
+            {
+                doc.LineBulletAnchors.RemoveAt(i);
+                continue;
+            }
+            existing.Add(anchor.Line);
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        for (int lineNumber = 1; lineNumber <= doc.Editor.Document.LineCount; lineNumber++)
+        {
+            var line = doc.Editor.Document.GetLineByNumber(lineNumber);
+            var lineText = doc.Editor.Document.GetText(line.Offset, line.Length);
+            if (!TryGetBulletLineMarker(lineText, out var marker))
+                continue;
+
+            if (existing.Contains(lineNumber))
+                continue;
+
+            SetLineBullet(doc, lineNumber, marker, createdUtc: nowUtc);
+        }
     }
 
     private static void RestoreCaretPosition(TabDocument doc, FileMetadata? metadata)
@@ -5927,6 +6215,10 @@ public partial class MainWindow : Window
                 }
 
                 doc.CachedText = normalizedText;
+
+                // Assign CreatedUtc for newly created/detected bullet lines so the timestamp
+                // is persisted into FileMetadata on this save.
+                EnsureBulletMetadataForNewBullets(doc);
             }
             var referencedNow = GetReferencedInlineImageFilesFromDocs();
             var removedReferences = _referencedInlineImagesSnapshot
@@ -6238,6 +6530,7 @@ public partial class MainWindow : Window
                 SetHighlightedLines(doc, highlightedLines, markDirty: false);
                 SetCriticalHighlightedLines(doc, criticalHighlightedLines, markDirty: false);
                 SetLineAssignments(doc, metadata.Assignees, markDirty: false);
+                SetLineBullets(doc, metadata.Bullets, markDirty: false);
                 RestoreCaretPosition(doc, metadata);
                 doc.LastSavedUtc = metadata.LastSavedUtc?.ToUniversalTime();
                 doc.LastChangedUtc = metadata.LastChangedUtc?.ToUniversalTime()

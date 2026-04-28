@@ -18,6 +18,17 @@ public class TabDocument
         public DateTime? CreatedUtc { get; set; }
     }
 
+    public sealed class LineBulletAnchor
+    {
+        public TextAnchor Anchor { get; init; } = null!;
+
+        /// <summary>Bullet marker, e.g. '-' or '*'.</summary>
+        public char Marker { get; set; }
+
+        /// <summary>UTC timestamp when this line was first seen as a bullet.</summary>
+        public DateTime? CreatedUtc { get; set; }
+    }
+
     public sealed class AssigneeBadgeBounds
     {
         public Rect Bounds { get; init; }
@@ -55,6 +66,9 @@ public class TabDocument
 
     /// <summary>Anchors for line assignees (track edits as text shifts).</summary>
     public List<LineAssigneeAnchor> LineAssigneeAnchors { get; } = [];
+
+    /// <summary>Anchors for bullet lines (track edits as text shifts).</summary>
+    public List<LineBulletAnchor> LineBulletAnchors { get; } = [];
 
     /// <summary>
     /// Live cache of the on-screen rectangles for assignee badges, populated by the

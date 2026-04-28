@@ -14,6 +14,9 @@ public sealed class FileMetadata
     // Optional line ownership metadata.
     public List<FileLineAssignee>? Assignees { get; set; }
 
+    // Optional bullet metadata (created timestamp per bullet line).
+    public List<FileLineBullet>? Bullets { get; set; }
+
     // UTC timestamp for when this tab was last saved with changes.
     public DateTime? LastSavedUtc { get; set; }
 
@@ -30,6 +33,17 @@ public sealed class FileLineAssignee
     public string Person { get; set; } = string.Empty;
 
     /// <summary>UTC timestamp when this line was assigned to the current person. Null for legacy entries.</summary>
+    public DateTime? CreatedUtc { get; set; }
+}
+
+public sealed class FileLineBullet
+{
+    public int Line { get; set; }
+
+    /// <summary>Bullet marker, e.g. '-' or '*'.</summary>
+    public string Marker { get; set; } = string.Empty;
+
+    /// <summary>UTC timestamp when this bullet line was first created (or first detected).</summary>
     public DateTime? CreatedUtc { get; set; }
 }
 
