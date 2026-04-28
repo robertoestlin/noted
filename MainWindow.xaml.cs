@@ -236,6 +236,7 @@ public partial class MainWindow : Window
     private bool _showSmileys = true;
     private bool _renderStyledTags = true;
     private bool _showLineAssignments = true;
+    private bool _showBulletHoverTooltips = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -254,6 +255,10 @@ public partial class MainWindow : Window
     private ToolTip? _assigneeHoverTooltip;
     private TabDocument? _assigneeHoverTooltipDoc;
     private string _assigneeHoverTooltipKey = string.Empty;
+
+    private ToolTip? _bulletHoverTooltip;
+    private TabDocument? _bulletHoverTooltipDoc;
+    private string _bulletHoverTooltipKey = string.Empty;
     private bool _isInlineImageResizeActive;
     private TextEditor? _inlineImageResizeEditor;
     private int _inlineImageResizeLineNumber;
@@ -1340,10 +1345,15 @@ public partial class MainWindow : Window
         {
             UpdateSelectionCursorClip(editor, e);
             UpdateAssigneeHoverTooltip(doc, e);
+            UpdateBulletHoverTooltip(doc, e);
         };
         editor.PreviewMouseLeftButtonUp += (_, _) => EndSelectionCursorClip(editor);
         editor.LostMouseCapture += (_, _) => EndSelectionCursorClip(editor);
-        editor.MouseLeave += (_, _) => HideAssigneeHoverTooltip();
+        editor.MouseLeave += (_, _) =>
+        {
+            HideAssigneeHoverTooltip();
+            HideBulletHoverTooltip();
+        };
         editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
         editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
 
@@ -2057,7 +2067,7 @@ public partial class MainWindow : Window
         assignLineOwnerItem.Click += (_, _) => AssignSelectedLines(editor);
         var clearLineOwnerItem = new MenuItem { Header = "Clear Selected Line Assignment(s)" };
         clearLineOwnerItem.Click += (_, _) => ClearSelectedLineAssignments(editor);
-        var bulletInfoItem = new MenuItem { Header = "Bullet info..." };
+        var bulletInfoItem = new MenuItem { Header = "Bullet stats" };
         bulletInfoItem.Click += (_, _) => ShowBulletInfoAtCaret(editor);
         var resetImageSizeItem = new MenuItem { Header = "Reset Image Size to Original" };
         resetImageSizeItem.Click += (_, _) => ResetInlineImageSizeToOriginal(editor);
@@ -2235,7 +2245,7 @@ public partial class MainWindow : Window
 
         var dlg = new Window
         {
-            Title = "Bullet info",
+            Title = "Bullet stats",
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
@@ -3869,6 +3879,176 @@ public partial class MainWindow : Window
         }
 
         ShowAssigneeHoverTooltip(doc, hit, key);
+    }
+
+    private void UpdateBulletHoverTooltip(TabDocument doc, MouseEventArgs e)
+    {
+        if (!_showBulletHoverTooltips)
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        if (doc.Editor?.Document == null || doc.Editor.Document.LineCount == 0)
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        var textView = doc.Editor.TextArea.TextView;
+        var position = doc.Editor.GetPositionFromPoint(e.GetPosition(textView));
+        if (!position.HasValue)
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        int lineNumber = position.Value.Location.Line;
+        if (lineNumber <= 0 || lineNumber > doc.Editor.Document.LineCount)
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        var line = doc.Editor.Document.GetLineByNumber(lineNumber);
+        var lineText = doc.Editor.Document.GetText(line.Offset, line.Length);
+        if (!TryGetBulletLineMarker(lineText, out var marker))
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        // Only trigger when hovering over the bullet prefix area ("- " / "* "),
+        // not anywhere on the line.
+        var mousePos = e.GetPosition(textView);
+        if (!TryGetBulletPrefixHitRect(textView, lineNumber, out var bulletRect)
+            || !bulletRect.Contains(mousePos))
+        {
+            HideBulletHoverTooltip();
+            return;
+        }
+
+        // Bullet metadata may be missing for older files: show Unknown in that case.
+        _ = TryGetLineBullet(doc, lineNumber, out _, out var createdUtc);
+
+        var key = BuildBulletHoverKey(lineNumber, marker, createdUtc);
+        if (_bulletHoverTooltip != null
+            && _bulletHoverTooltip.IsOpen
+            && _bulletHoverTooltipDoc == doc
+            && _bulletHoverTooltipKey == key)
+        {
+            return;
+        }
+
+        ShowBulletHoverTooltip(doc, lineNumber, marker, createdUtc, key);
+    }
+
+    private static bool TryGetBulletPrefixHitRect(TextView textView, int lineNumber, out Rect rect)
+    {
+        rect = Rect.Empty;
+        try
+        {
+            // Column is 1-based. Bullet prefix is the first two chars: [1..3) == "- ".
+            var startTop = textView.GetVisualPosition(new TextViewPosition(lineNumber, 1), VisualYPosition.LineTop);
+            var endTop = textView.GetVisualPosition(new TextViewPosition(lineNumber, 3), VisualYPosition.LineTop);
+            var startBottom = textView.GetVisualPosition(new TextViewPosition(lineNumber, 1), VisualYPosition.LineBottom);
+
+            if (double.IsNaN(startTop.X) || double.IsNaN(startTop.Y)
+                || double.IsNaN(endTop.X) || double.IsNaN(endTop.Y)
+                || double.IsNaN(startBottom.X) || double.IsNaN(startBottom.Y))
+            {
+                return false;
+            }
+
+            var x1 = Math.Min(startTop.X, endTop.X);
+            var x2 = Math.Max(startTop.X, endTop.X);
+            var y1 = Math.Min(startTop.Y, startBottom.Y);
+            var y2 = Math.Max(startTop.Y, startBottom.Y);
+
+            // Add a tiny horizontal padding so it's not pixel-perfect.
+            const double pad = 2;
+            rect = new Rect(new Point(Math.Max(0, x1 - pad), y1), new Point(Math.Max(0, x2 + pad), y2));
+            return rect.Width > 0 && rect.Height > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildBulletHoverKey(int lineNumber, char marker, DateTime? createdUtc)
+        => string.Concat(
+            lineNumber.ToString(CultureInfo.InvariantCulture),
+            "|",
+            marker,
+            "|",
+            createdUtc?.Ticks.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
+
+    private void ShowBulletHoverTooltip(TabDocument doc, int lineNumber, char marker, DateTime? createdUtc, string key)
+    {
+        _bulletHoverTooltip ??= new ToolTip
+        {
+            Placement = PlacementMode.MousePoint,
+            HorizontalOffset = 14,
+            VerticalOffset = 18,
+            HasDropShadow = true,
+            StaysOpen = true,
+            Focusable = false
+        };
+
+        if (_bulletHoverTooltip.IsOpen)
+            _bulletHoverTooltip.IsOpen = false;
+
+        _bulletHoverTooltip.PlacementTarget = doc.Editor;
+        _bulletHoverTooltip.Content = BuildBulletHoverContent(lineNumber, marker, createdUtc);
+        _bulletHoverTooltipDoc = doc;
+        _bulletHoverTooltipKey = key;
+        _bulletHoverTooltip.IsOpen = true;
+    }
+
+    private void HideBulletHoverTooltip()
+    {
+        if (_bulletHoverTooltip != null && _bulletHoverTooltip.IsOpen)
+            _bulletHoverTooltip.IsOpen = false;
+        _bulletHoverTooltipDoc = null;
+        _bulletHoverTooltipKey = string.Empty;
+    }
+
+    private static UIElement BuildBulletHoverContent(int lineNumber, char marker, DateTime? createdUtc)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Vertical, MaxWidth = 360 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Bullet stats",
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 2)
+        });
+
+        if (createdUtc is DateTime created)
+        {
+            var local = created.ToLocalTime();
+            var today = DateTime.Today;
+            int daysAgo = Math.Max(0, (int)(today - local.Date).TotalDays);
+            int weekdaysAgo = CountWeekdaysBetween(local.Date, today);
+
+            panel.Children.Add(new TextBlock { Text = $"Created: {local:yyyy-MM-dd HH:mm}" });
+            panel.Children.Add(new TextBlock { Text = $"Days ago: {daysAgo}" });
+            panel.Children.Add(new TextBlock { Text = $"Weekdays ago: {weekdaysAgo}" });
+        }
+        else
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Created: (unknown)",
+                Foreground = SystemColors.GrayTextBrush
+            });
+        }
+
+        return new Border
+        {
+            Padding = new Thickness(8, 5, 8, 5),
+            Child = panel
+        };
     }
 
     private static string BuildAssigneeHoverKey(TabDocument.AssigneeBadgeBounds badge)

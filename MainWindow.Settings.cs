@@ -91,6 +91,7 @@ public partial class MainWindow
             ShowSmileys = _showSmileys,
             RenderStyledTags = _renderStyledTags,
             ShowLineAssignments = _showLineAssignments,
+            ShowBulletHoverTooltips = _showBulletHoverTooltips,
             ShowHorizontalRuler = _showHorizontalRuler,
             ShowInlineImages = _showInlineImages,
             FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
@@ -233,6 +234,7 @@ public partial class MainWindow
         _showSmileys = true;
         _renderStyledTags = true;
         _showLineAssignments = true;
+        _showBulletHoverTooltips = true;
         _showHorizontalRuler = true;
         _showInlineImages = true;
         _fancyBulletStyle = FancyBulletStyle.Dot;
@@ -316,6 +318,7 @@ public partial class MainWindow
         _showSmileys = state.ShowSmileys;
         _renderStyledTags = state.RenderStyledTags ?? true;
         _showLineAssignments = state.ShowLineAssignments ?? true;
+        _showBulletHoverTooltips = state.ShowBulletHoverTooltips ?? true;
         _showHorizontalRuler = state.ShowHorizontalRuler;
         _showInlineImages = state.ShowInlineImages;
         _fancyBulletStyle = ParseFancyBulletStyle(state.FancyBulletStyle);

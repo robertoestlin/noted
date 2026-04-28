@@ -230,6 +230,8 @@ public sealed class WindowSettings
     public bool? RenderStyledTags { get; set; }
     /// <summary>When null (older settings files), line assignment badges stay enabled.</summary>
     public bool? ShowLineAssignments { get; set; }
+    /// <summary>When null (older settings files), bullet hover tooltips stay enabled.</summary>
+    public bool? ShowBulletHoverTooltips { get; set; }
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;
     public string FancyBulletStyle { get; set; } = "dot";

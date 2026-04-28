@@ -101,6 +101,7 @@ public partial class MainWindow
         int originalVisualLineWrapColumn = _visualLineWrapColumn;
         bool originalShowHorizontalRuler = _showHorizontalRuler;
         bool originalShowLineAssignments = _showLineAssignments;
+        bool originalShowBulletHoverTooltips = _showBulletHoverTooltips;
         bool originalShowInlineImages = _showInlineImages;
         var originalFancyBulletStyle = _fancyBulletStyle;
         bool viewPreviewCommitted = false;
@@ -871,6 +872,14 @@ public partial class MainWindow
             ? cmbSaveBulletsAs.Items[1]
             : cmbSaveBulletsAs.Items[0];
         tabsSettingsPanel.Children.Add(cmbSaveBulletsAs);
+
+        var chkBulletHoverTooltips = new CheckBox
+        {
+            Content = "Show bullet hover tooltips (for '- ' and '* ' lines)",
+            IsChecked = _showBulletHoverTooltips,
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        tabsSettingsPanel.Children.Add(chkBulletHoverTooltips);
         tabControl.Items.Add(new TabItem
         {
             Header = "Tabs",
@@ -1570,6 +1579,7 @@ public partial class MainWindow
                 _tabCleanupStaleDays = staleDays;
                 _closedTabsMaxCount = closedTabsMaxCount;
                 _closedTabsRetentionDays = closedTabsRetentionDays;
+                _showBulletHoverTooltips = chkBulletHoverTooltips.IsChecked == true;
                 _saveBulletsAsMarker = cmbSaveBulletsAs.SelectedItem is ComboBoxItem saveBulletItem
                     && saveBulletItem.Tag is char saveBulletTag
                     && saveBulletTag == '*'
@@ -1611,6 +1621,7 @@ public partial class MainWindow
             _visualLineWrapColumn = originalVisualLineWrapColumn;
             _showHorizontalRuler = originalShowHorizontalRuler;
             _showLineAssignments = originalShowLineAssignments;
+            _showBulletHoverTooltips = originalShowBulletHoverTooltips;
             _showInlineImages = originalShowInlineImages;
             _fancyBulletStyle = originalFancyBulletStyle;
             ApplyViewRenderingSettings();
