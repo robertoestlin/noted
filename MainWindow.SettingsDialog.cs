@@ -224,6 +224,32 @@ public partial class MainWindow
         };
         backupPanel.Children.Add(btnCloudSaveNow);
 
+        var expanderAdditionalBackup = new Expander
+        {
+            Header = "Backup additional files",
+            IsExpanded = false,
+            Margin = new Thickness(0, 4, 0, 10)
+        };
+        var additionalBackupPanel = new StackPanel { Margin = new Thickness(8, 4, 0, 4) };
+        var chkBackupAddSettings = new CheckBox { Content = "Settings file (settings.json)", IsChecked = _backupAdditionalIncludeSettingsFile, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddLog = new CheckBox { Content = "Log file (noted.log)", IsChecked = _backupAdditionalIncludeAppLog, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddHeartbeat = new CheckBox { Content = "Heartbeat (uptime-heartbeat-*.log)", IsChecked = _backupAdditionalIncludeHeartbeatLogs, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddTodos = new CheckBox { Content = "Todo items (todo-items.json)", IsChecked = _backupAdditionalIncludeTodoItems, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddSafePaste = new CheckBox { Content = "Safe paste (safe-paste.dat)", IsChecked = _backupAdditionalIncludeSafePaste, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddTimeReports = new CheckBox { Content = "Time Reports (plugin-time-reports.json)", IsChecked = _backupAdditionalIncludeTimeReports, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddMidi = new CheckBox { Content = "MIDI custom songs (midi-custom-songs.json)", IsChecked = _backupAdditionalIncludeMidiCustomSongs, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddImages = new CheckBox { Content = "Images (images folder)", IsChecked = _backupAdditionalIncludeImages, Margin = new Thickness(0, 0, 0, 0) };
+        additionalBackupPanel.Children.Add(chkBackupAddSettings);
+        additionalBackupPanel.Children.Add(chkBackupAddLog);
+        additionalBackupPanel.Children.Add(chkBackupAddHeartbeat);
+        additionalBackupPanel.Children.Add(chkBackupAddTodos);
+        additionalBackupPanel.Children.Add(chkBackupAddSafePaste);
+        additionalBackupPanel.Children.Add(chkBackupAddTimeReports);
+        additionalBackupPanel.Children.Add(chkBackupAddMidi);
+        additionalBackupPanel.Children.Add(chkBackupAddImages);
+        expanderAdditionalBackup.Content = additionalBackupPanel;
+        backupPanel.Children.Add(expanderAdditionalBackup);
+
         backupPanel.Children.Add(new TextBlock { Text = "Auto-save interval (seconds):" });
         var txtAutoSave = new TextBox { Text = ((int)_autoSaveTimer.Interval.TotalSeconds).ToString(), Margin = new Thickness(0, 4, 0, 10) };
         backupPanel.Children.Add(txtAutoSave);
@@ -1510,17 +1536,22 @@ public partial class MainWindow
                 && int.TryParse(txtClosedTabsRetentionDays.Text, out int closedTabsRetentionDays)
                 && closedTabsRetentionDays >= MinClosedTabsRetentionDays && closedTabsRetentionDays <= MaxClosedTabsRetentionDays)
             {
+                _backupAdditionalIncludeSettingsFile = chkBackupAddSettings.IsChecked == true;
+                _backupAdditionalIncludeAppLog = chkBackupAddLog.IsChecked == true;
+                _backupAdditionalIncludeHeartbeatLogs = chkBackupAddHeartbeat.IsChecked == true;
+                _backupAdditionalIncludeTodoItems = chkBackupAddTodos.IsChecked == true;
+                _backupAdditionalIncludeSafePaste = chkBackupAddSafePaste.IsChecked == true;
+                _backupAdditionalIncludeTimeReports = chkBackupAddTimeReports.IsChecked == true;
+                _backupAdditionalIncludeMidiCustomSongs = chkBackupAddMidi.IsChecked == true;
+                _backupAdditionalIncludeImages = chkBackupAddImages.IsChecked == true;
+
                 var previousBackupFolder = _backupFolder;
                 if (!string.Equals(Path.GetFullPath(previousBackupFolder), Path.GetFullPath(backupPath),
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    CopySettingsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopyClosedTabsFileToBackupFolder(previousBackupFolder, backupPath);
-                    CopyTimeReportsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopySearchFilesHistoryFileToBackupFolder(previousBackupFolder, backupPath);
-                    CopyTodoItemsFileToBackupFolder(previousBackupFolder, backupPath);
-                    CopySafePasteDataFileToBackupFolder(previousBackupFolder, backupPath);
-                    CopyImageFolderToBackupFolder(previousBackupFolder, backupPath);
+                    CopySelectedAdditionalBackupArtifacts(previousBackupFolder, backupPath);
                 }
 
                 _backupFolder = backupPath;

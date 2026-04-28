@@ -217,6 +217,31 @@ public sealed class WindowSettings
     public string? SelectedCriticalHighlightedLineColor { get; set; }
     public string? BackupFolder { get; set; }
     public string? CloudBackupFolder { get; set; }
+
+    /// <summary>When backing up or syncing to cloud, include <c>settings.json</c> (default true).</summary>
+    public bool? BackupAdditionalSettingsFile { get; set; }
+
+    /// <summary>Include <c>noted.log</c> (default true).</summary>
+    public bool? BackupAdditionalAppLog { get; set; }
+
+    /// <summary>Include <c>uptime-heartbeat-*.log</c> files (default true).</summary>
+    public bool? BackupAdditionalHeartbeatLogs { get; set; }
+
+    /// <summary>Include <c>todo-items.json</c> (default true).</summary>
+    public bool? BackupAdditionalTodoItems { get; set; }
+
+    /// <summary>Include <c>safe-paste.dat</c> (default false).</summary>
+    public bool? BackupAdditionalSafePaste { get; set; }
+
+    /// <summary>Include <c>plugin-time-reports.json</c> (default true).</summary>
+    public bool? BackupAdditionalTimeReports { get; set; }
+
+    /// <summary>Include <c>midi-custom-songs.json</c> (default false).</summary>
+    public bool? BackupAdditionalMidiCustomSongs { get; set; }
+
+    /// <summary>Include the <c>images</c> folder (default true).</summary>
+    public bool? BackupAdditionalImages { get; set; }
+
     public int? CloudSaveHours { get; set; }
     public int? CloudSaveMinutes { get; set; }
     public DateTime? LastCloudCopyUtc { get; set; }

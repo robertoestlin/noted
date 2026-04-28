@@ -126,6 +126,14 @@ public partial class MainWindow : Window
     private int _cloudSaveIntervalHours = 1;
     private int _cloudSaveIntervalMinutes = 0;
     private DateTime _lastCloudSaveUtc = DateTime.MinValue;
+    private bool _backupAdditionalIncludeSettingsFile = true;
+    private bool _backupAdditionalIncludeAppLog = true;
+    private bool _backupAdditionalIncludeHeartbeatLogs = true;
+    private bool _backupAdditionalIncludeTodoItems = true;
+    private bool _backupAdditionalIncludeSafePaste;
+    private bool _backupAdditionalIncludeTimeReports = true;
+    private bool _backupAdditionalIncludeMidiCustomSongs;
+    private bool _backupAdditionalIncludeImages = true;
     private const int MaxBackups = 100;
 
     /// <summary>Filenames written by <see cref="SaveSession"/> (<c>noted_yyyyMMdd_HHmmss.txt</c>).</summary>
@@ -6484,7 +6492,6 @@ public partial class MainWindow : Window
         if (!forceCloudBackup && !ShouldSaveCloudBackup()) return;
 
         long sourceSizeBytes = GetFileSizeBytesOrZero(justSavedBackupPath);
-        AppendAppLog($"Cloud copy started. source='{justSavedBackupPath}', target='{cloudFolder}', manualCloudSave={forceCloudBackup}");
         var cloudCopyStopwatch = Stopwatch.StartNew();
 
         if (!_backupService.TryCopyBackupToFolder(justSavedBackupPath, cloudFolder))
@@ -6494,6 +6501,11 @@ public partial class MainWindow : Window
                 $"Cloud copy completed with failure in {cloudCopyStopwatch.ElapsedMilliseconds} ms. size={FormatSizeForLog(sourceSizeBytes)}, throughput={FormatThroughputForLog(sourceSizeBytes, cloudCopyStopwatch.Elapsed)}. source='{justSavedBackupPath}', target='{cloudFolder}'");
             return;
         }
+
+        // Sync sidecars (including noted.log) before appending lines for this run, so incremental copy compares pre-log snapshot.
+        var extraArtifacts = CopySelectedAdditionalBackupArtifacts(_backupFolder, cloudFolder);
+        AppendAppLog($"Cloud copy started. source='{justSavedBackupPath}', target='{cloudFolder}', manualCloudSave={forceCloudBackup}");
+        AppendAppLog($"Cloud copying additional files - {extraArtifacts.ToLogLine()}");
 
         _lastCloudSaveUtc = DateTime.UtcNow;
         _lastSaveIncludedCloudCopy = true;

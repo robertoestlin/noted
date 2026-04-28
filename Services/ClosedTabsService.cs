@@ -20,7 +20,7 @@ public sealed class ClosedTabsService
         Directory.CreateDirectory(backupFolder);
         var options = new JsonSerializerOptions { WriteIndented = true };
         var path = GetHistoryPath(backupFolder, fileName);
-        File.WriteAllText(path, JsonSerializer.Serialize(entries, options));
+        WindowSettingsStore.WriteUtf8IfChanged(path, JsonSerializer.Serialize(entries, options));
     }
 
     public List<T>? LoadHistory<T>(string backupFolder, string fileName)

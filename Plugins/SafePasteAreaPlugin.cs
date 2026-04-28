@@ -19,6 +19,8 @@ public partial class MainWindow
     private const string SafePasteDataFileName = "safe-paste.dat";
     private readonly List<SafePasteSavedEntry> _safePasteSavedEntries = [];
     private readonly List<SafePasteKeyRecord> _safePasteKeyRecords = [];
+    /// <summary>True when persisted safe-paste.dat should be rewritten (entries/keys changed, or migrate legacy plaintext on disk).</summary>
+    private bool _safePasteDataDirty;
 
     private sealed class SafePasteSavedEntry
     {
@@ -134,6 +136,9 @@ public partial class MainWindow
     {
         try
         {
+            if (!_safePasteDataDirty)
+                return;
+
             var encryptedEntries = new List<SafePasteEncryptedEntry>();
             foreach (var entry in _safePasteSavedEntries)
             {
@@ -161,6 +166,7 @@ public partial class MainWindow
 
             var path = Path.Combine(_backupFolder, SafePasteDataFileName);
             _windowSettingsStore.Save(path, encryptedEntries, options);
+            _safePasteDataDirty = false;
         }
         catch
         {
@@ -170,6 +176,7 @@ public partial class MainWindow
 
     private void LoadSafePasteData(IEnumerable<SafePasteKeyRecord>? safePasteKeyRecords, IEnumerable<string>? legacySafePasteKeys)
     {
+        _safePasteDataDirty = false;
         _safePasteSavedEntries.Clear();
         _safePasteKeyRecords.Clear();
         try
@@ -253,6 +260,8 @@ public partial class MainWindow
                     SavedAtUtc = entry.SavedAtUtc == default ? DateTime.UtcNow : entry.SavedAtUtc
                 });
             }
+
+            _safePasteDataDirty = true;
         }
         catch
         {
@@ -1116,6 +1125,7 @@ public partial class MainWindow
                 Secret = secretValue,
                 SavedAtUtc = DateTime.UtcNow
             });
+            _safePasteDataDirty = true;
             RefreshSavedSecretsList();
             lstSavedSecrets.SelectedIndex = savedSecrets.Count - 1;
             SaveWindowSettings();
@@ -1131,6 +1141,7 @@ public partial class MainWindow
             var removedIdentifier = savedSecrets[selectedIndex].Identifier;
             savedSecrets.RemoveAt(selectedIndex);
             _safePasteKeyRecords.RemoveAll(record => string.Equals(record.Identifier, removedIdentifier, StringComparison.Ordinal));
+            _safePasteDataDirty = true;
             RefreshSavedSecretsList();
             if (savedSecrets.Count > 0)
                 lstSavedSecrets.SelectedIndex = Math.Min(selectedIndex, savedSecrets.Count - 1);

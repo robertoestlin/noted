@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Noted.Models;
+using Noted.Services;
 
 namespace Noted;
 
@@ -34,7 +35,6 @@ public partial class MainWindow
             Directory.CreateDirectory(_backupFolder);
             var state = CreateWindowSettingsSnapshot();
             _windowSettingsService.SaveWithBootstrap(
-                _windowSettingsStore,
                 state,
                 _backupFolder,
                 DefaultBackupFolder(),
@@ -80,6 +80,14 @@ public partial class MainWindow
             SelectedCriticalHighlightedLineColor = ColorToHex(_selectedCriticalHighlightedLineColor),
             BackupFolder = _backupFolder,
             CloudBackupFolder = _cloudBackupFolder,
+            BackupAdditionalSettingsFile = _backupAdditionalIncludeSettingsFile,
+            BackupAdditionalAppLog = _backupAdditionalIncludeAppLog,
+            BackupAdditionalHeartbeatLogs = _backupAdditionalIncludeHeartbeatLogs,
+            BackupAdditionalTodoItems = _backupAdditionalIncludeTodoItems,
+            BackupAdditionalSafePaste = _backupAdditionalIncludeSafePaste,
+            BackupAdditionalTimeReports = _backupAdditionalIncludeTimeReports,
+            BackupAdditionalMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
+            BackupAdditionalImages = _backupAdditionalIncludeImages,
             CloudSaveHours = _cloudSaveIntervalHours,
             CloudSaveMinutes = _cloudSaveIntervalMinutes,
             LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
@@ -263,6 +271,14 @@ public partial class MainWindow
         _currentTaskAreaId = DefaultTaskAreaId;
         _safePasteSavedEntries.Clear();
         _todoPanelVisible = false;
+        _backupAdditionalIncludeSettingsFile = true;
+        _backupAdditionalIncludeAppLog = true;
+        _backupAdditionalIncludeHeartbeatLogs = true;
+        _backupAdditionalIncludeTodoItems = true;
+        _backupAdditionalIncludeSafePaste = false;
+        _backupAdditionalIncludeTimeReports = true;
+        _backupAdditionalIncludeMidiCustomSongs = false;
+        _backupAdditionalIncludeImages = true;
         ResetQuickMessageOverlaySettings();
     }
 
@@ -364,6 +380,14 @@ public partial class MainWindow
         ApplyQuickMessageOverlaySettings(state);
         ApplyTaskPanelSettings(state);
         _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);
+        _backupAdditionalIncludeSettingsFile = state.BackupAdditionalSettingsFile ?? true;
+        _backupAdditionalIncludeAppLog = state.BackupAdditionalAppLog ?? true;
+        _backupAdditionalIncludeHeartbeatLogs = state.BackupAdditionalHeartbeatLogs ?? true;
+        _backupAdditionalIncludeTodoItems = state.BackupAdditionalTodoItems ?? true;
+        _backupAdditionalIncludeSafePaste = state.BackupAdditionalSafePaste ?? false;
+        _backupAdditionalIncludeTimeReports = state.BackupAdditionalTimeReports ?? true;
+        _backupAdditionalIncludeMidiCustomSongs = state.BackupAdditionalMidiCustomSongs ?? false;
+        _backupAdditionalIncludeImages = state.BackupAdditionalImages ?? true;
 
         ApplyThemeColorsFromSettings(state);
         _startMaximized = state.Maximized;
@@ -572,8 +596,8 @@ public partial class MainWindow
     private void EnsureSettingsFileExists()
         => _settingsService.EnsureFileExists(_backupFolder, SettingsFileName, SaveWindowSettings);
 
-    private void CopySettingsFileToBackupFolder(string fromFolder, string toFolder)
-        => _settingsService.CopyFileIfExists(fromFolder, toFolder, SettingsFileName);
+    private bool CopySettingsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SettingsFileName);
 
     private void CopyClosedTabsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, ClosedTabsFileName);
@@ -581,35 +605,228 @@ public partial class MainWindow
     private void CopySearchFilesHistoryFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, SearchFilesHistoryFileName);
 
-    private void CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
-        => _settingsService.CopyFileIfExists(fromFolder, toFolder, TimeReportsFileName);
+    private bool CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TimeReportsFileName);
 
-    private void CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
-        => _settingsService.CopyFileIfExists(fromFolder, toFolder, TodoItemsFileName);
+    private bool CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TodoItemsFileName);
 
-    private void CopySafePasteDataFileToBackupFolder(string fromFolder, string toFolder)
-        => _settingsService.CopyFileIfExists(fromFolder, toFolder, SafePasteDataFileName);
+    private bool CopySafePasteDataFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SafePasteDataFileName);
 
-    private void CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
+    private int CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {
+        var copied = 0;
         try
         {
             var sourceImageFolder = Path.Combine(fromFolder, BackupImagesFolderName);
             if (!Directory.Exists(sourceImageFolder))
-                return;
+                return 0;
 
             var destinationImageFolder = Path.Combine(toFolder, BackupImagesFolderName);
             Directory.CreateDirectory(destinationImageFolder);
             foreach (var sourcePath in Directory.GetFiles(sourceImageFolder, "*.png"))
             {
                 var targetPath = Path.Combine(destinationImageFolder, Path.GetFileName(sourcePath));
+                if (!ShouldCopyByTimestampOrSize(sourcePath, targetPath))
+                    continue;
                 File.Copy(sourcePath, targetPath, overwrite: true);
+                copied++;
             }
         }
         catch
         {
             // Best-effort migration.
         }
+
+        return copied;
+    }
+
+    private static bool ShouldCopyByTimestampOrSize(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            if (!File.Exists(destinationPath))
+                return true;
+
+            var src = new FileInfo(sourcePath);
+            var dst = new FileInfo(destinationPath);
+            if (src.Length != dst.Length)
+                return true;
+
+            return src.LastWriteTimeUtc > dst.LastWriteTimeUtc;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static int CopyHeartbeatLogFilesBetweenFolders(string fromFolder, string toFolder)
+    {
+        var copied = 0;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(fromFolder) || string.IsNullOrWhiteSpace(toFolder))
+                return 0;
+            if (!Directory.Exists(fromFolder))
+                return 0;
+
+            Directory.CreateDirectory(toFolder);
+            var pattern = $"{UptimeHeartbeatService.FileNamePrefix}*.log";
+            foreach (var path in Directory.GetFiles(fromFolder, pattern))
+            {
+                var dest = Path.Combine(toFolder, Path.GetFileName(path));
+                if (!ShouldCopyByTimestampOrSize(path, dest))
+                    continue;
+                File.Copy(path, dest, overwrite: true);
+                copied++;
+            }
+        }
+        catch
+        {
+            // Best-effort.
+        }
+
+        return copied;
+    }
+
+    private readonly struct AdditionalBackupArtifactsSummary
+    {
+        public bool IncludeSettings { get; init; }
+        public bool IncludeAppLog { get; init; }
+        public bool IncludeHeartbeat { get; init; }
+        public bool IncludeTodoItems { get; init; }
+        public bool IncludeSafePaste { get; init; }
+        public bool IncludeTimeReports { get; init; }
+        public bool IncludeMidiCustomSongs { get; init; }
+        public bool IncludeImages { get; init; }
+
+        /// <summary>Files copied per category (single-file cats are 0 or 1; multi-file heartbeat/images use higher counts).</summary>
+        public int SettingsFilesCopied { get; init; }
+        public int AppLogFilesCopied { get; init; }
+        public int HeartbeatFilesCopied { get; init; }
+        public int TodoItemsFilesCopied { get; init; }
+        public int SafePasteFilesCopied { get; init; }
+        public int TimeReportsFilesCopied { get; init; }
+        public int MidiCustomSongsFilesCopied { get; init; }
+        public int ImageFilesCopied { get; init; }
+
+        /// <summary>Suffixed to “Cloud copying additional files - …” in <see cref="AppendAppLog"/>.</summary>
+        public string ToLogLine()
+        {
+            static string CopiesPhrase(int files) =>
+                files switch
+                {
+                    0 => "0 files",
+                    1 => "1 file",
+                    _ => $"{files} files"
+                };
+
+            const string TagSettings = "Settings";
+            const string TagLog = "Log";
+            const string TagHeartbeat = "Heartbeat logs";
+            const string TagTodoItems = "Todo Items";
+            const string TagSafePaste = "Safe Paste";
+            const string TagTimeReports = "Time Reports";
+            const string TagMidiPaths = "MIDI Custom Songs Paths";
+            const string TagImages = "Images";
+
+            var included = new List<string>(8);
+            if (IncludeSettings)
+                included.Add($"{TagSettings}: {CopiesPhrase(SettingsFilesCopied)}");
+            if (IncludeAppLog)
+                included.Add($"{TagLog}: {CopiesPhrase(AppLogFilesCopied)}");
+            if (IncludeHeartbeat)
+                included.Add($"{TagHeartbeat}: {CopiesPhrase(HeartbeatFilesCopied)}");
+            if (IncludeTodoItems)
+                included.Add($"{TagTodoItems}: {CopiesPhrase(TodoItemsFilesCopied)}");
+            if (IncludeSafePaste)
+                included.Add($"{TagSafePaste}: {CopiesPhrase(SafePasteFilesCopied)}");
+            if (IncludeTimeReports)
+                included.Add($"{TagTimeReports}: {CopiesPhrase(TimeReportsFilesCopied)}");
+            if (IncludeMidiCustomSongs)
+                included.Add($"{TagMidiPaths}: {CopiesPhrase(MidiCustomSongsFilesCopied)}");
+            if (IncludeImages)
+                included.Add($"{TagImages}: {CopiesPhrase(ImageFilesCopied)}");
+
+            var excluded = new List<string>(8);
+            if (!IncludeSettings)
+                excluded.Add(TagSettings);
+            if (!IncludeAppLog)
+                excluded.Add(TagLog);
+            if (!IncludeHeartbeat)
+                excluded.Add(TagHeartbeat);
+            if (!IncludeTodoItems)
+                excluded.Add(TagTodoItems);
+            if (!IncludeSafePaste)
+                excluded.Add(TagSafePaste);
+            if (!IncludeTimeReports)
+                excluded.Add(TagTimeReports);
+            if (!IncludeMidiCustomSongs)
+                excluded.Add(TagMidiPaths);
+            if (!IncludeImages)
+                excluded.Add(TagImages);
+
+            var copiedPart = included.Count > 0
+                ? string.Join("; ", included)
+                : "(no categories enabled)";
+
+            if (excluded.Count == 0)
+                return copiedPart + ".";
+
+            return copiedPart + ". Excluding: " + string.Join("; ", excluded) + ".";
+        }
+    }
+
+    /// <summary>Sidecar files beside tab bundles: settings, log, heartbeat, todos, etc. (migration + cloud).</summary>
+    private AdditionalBackupArtifactsSummary CopySelectedAdditionalBackupArtifacts(string fromFolder, string toFolder)
+    {
+        var settingsCopied = _backupAdditionalIncludeSettingsFile && CopySettingsFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var appCopied = _backupAdditionalIncludeAppLog && _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, AppLogFileName)
+            ? 1
+            : 0;
+        var heartbeatCopied = _backupAdditionalIncludeHeartbeatLogs
+            ? CopyHeartbeatLogFilesBetweenFolders(fromFolder, toFolder)
+            : 0;
+        var todoCopied = _backupAdditionalIncludeTodoItems && CopyTodoItemsFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var safePasteCopied = _backupAdditionalIncludeSafePaste && CopySafePasteDataFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var timeReportsCopied = _backupAdditionalIncludeTimeReports && CopyTimeReportsFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var midiCopied = _backupAdditionalIncludeMidiCustomSongs
+            && _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, MidiCustomSongsFileName)
+            ? 1
+            : 0;
+        var imageCopied = _backupAdditionalIncludeImages
+            ? CopyImageFolderToBackupFolder(fromFolder, toFolder)
+            : 0;
+
+        return new AdditionalBackupArtifactsSummary
+        {
+            IncludeSettings = _backupAdditionalIncludeSettingsFile,
+            IncludeAppLog = _backupAdditionalIncludeAppLog,
+            IncludeHeartbeat = _backupAdditionalIncludeHeartbeatLogs,
+            IncludeTodoItems = _backupAdditionalIncludeTodoItems,
+            IncludeSafePaste = _backupAdditionalIncludeSafePaste,
+            IncludeTimeReports = _backupAdditionalIncludeTimeReports,
+            IncludeMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
+            IncludeImages = _backupAdditionalIncludeImages,
+            SettingsFilesCopied = settingsCopied,
+            AppLogFilesCopied = appCopied,
+            HeartbeatFilesCopied = heartbeatCopied,
+            TodoItemsFilesCopied = todoCopied,
+            SafePasteFilesCopied = safePasteCopied,
+            TimeReportsFilesCopied = timeReportsCopied,
+            MidiCustomSongsFilesCopied = midiCopied,
+            ImageFilesCopied = imageCopied
+        };
     }
 
     // --- Settings dialog ----------------------------------------------------

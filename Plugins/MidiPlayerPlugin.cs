@@ -15,6 +15,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using Noted.Services;
 
 namespace Noted;
 
@@ -159,7 +160,7 @@ public partial class MainWindow
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(MidiCustomSongsPath(), json);
+            WindowSettingsStore.WriteUtf8IfChanged(MidiCustomSongsPath(), json);
         }
         catch
         {

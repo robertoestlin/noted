@@ -9,7 +9,6 @@ public sealed class WindowSettingsService
     public sealed record LoadResult(WindowSettings BootstrapSettings, WindowSettings EffectiveSettings, string BootstrapBackupFolder, string BootstrapCloudBackupFolder);
 
     public void SaveWithBootstrap(
-        WindowSettingsStore store,
         WindowSettings state,
         string backupFolder,
         string defaultBackupFolder,
@@ -17,14 +16,16 @@ public sealed class WindowSettingsService
         JsonSerializerOptions options)
     {
         var primary = Path.Combine(backupFolder, settingsFileName);
-        store.Save(primary, state, options);
+        var serialized = JsonSerializer.Serialize(state, options);
+        WindowSettingsStore.WriteUtf8IfSemanticJsonChanged(primary, serialized);
 
         if (string.Equals(Path.GetFullPath(backupFolder), Path.GetFullPath(defaultBackupFolder), StringComparison.OrdinalIgnoreCase))
             return;
 
         var bootstrap = new WindowSettings { BackupFolder = backupFolder };
         var bootstrapPath = Path.Combine(defaultBackupFolder, settingsFileName);
-        store.Save(bootstrapPath, bootstrap, options);
+        var bootstrapJson = JsonSerializer.Serialize(bootstrap, options);
+        WindowSettingsStore.WriteUtf8IfSemanticJsonChanged(bootstrapPath, bootstrapJson);
     }
 
     public LoadResult? LoadWithFallback(
