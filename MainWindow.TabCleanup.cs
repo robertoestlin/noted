@@ -53,8 +53,11 @@ public partial class MainWindow
 
             void AddRow(TabItem tab, TabDocument doc, bool isStaleRow)
             {
-                var age = now - doc.LastChangedUtc;
-                var ageDays = Math.Max(0, (int)Math.Floor(age.TotalDays));
+                // Use calendar-day difference (crossing midnight => +1 day),
+                // not elapsed 24h chunks.
+                var lastChangedLocalDate = doc.LastChangedUtc.ToLocalTime().Date;
+                var todayLocalDate = DateTime.Today;
+                var ageDays = Math.Max(0, (todayLocalDate - lastChangedLocalDate).Days);
                 var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
