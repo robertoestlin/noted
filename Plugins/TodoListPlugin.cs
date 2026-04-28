@@ -623,7 +623,7 @@ public partial class MainWindow
 
         var detailsText = new TextBlock
         {
-            Text = $"Completed at {completedAt.ToString("g", CultureInfo.CurrentCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
+            Text = $"Completed at {completedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
             Foreground = Brushes.Gray,
             FontSize = 12
         };
