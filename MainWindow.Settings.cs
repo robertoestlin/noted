@@ -116,9 +116,7 @@ public partial class MainWindow
             AlarmPopupTop = _alarmPopupTop,
             ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
             ProjectLineCounterTypes = BuildProjectLineCounterTypesSnapshot(),
-            ProjectLineCounterAutoDetectedFileTypes = BuildProjectLineCounterAutoDetectedFileTypesSnapshot(),
             ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot(),
-            ProjectLineCounterIgnoredFolders = BuildProjectLineCounterIgnoredFoldersSnapshot(),
             SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
@@ -288,9 +286,7 @@ public partial class MainWindow
         _alarmPopupTop = null;
         _projectLineCounterProjects = [];
         _projectLineCounterTypes = [];
-        _projectLineCounterAutoDetectedFileTypes = [];
         _projectLineCounterIgnoredFileTypes = [];
-        _projectLineCounterIgnoredFolders = [];
         _searchFilesHistory = [];
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
@@ -389,9 +385,7 @@ public partial class MainWindow
         ApplyProjectLineCounterSettings(
             state.ProjectLineCounterProjects,
             state.ProjectLineCounterTypes,
-            state.ProjectLineCounterAutoDetectedFileTypes,
-            state.ProjectLineCounterIgnoredFileTypes,
-            state.ProjectLineCounterIgnoredFolders);
+            state.ProjectLineCounterIgnoredFileTypes);
         _searchFilesHistoryLimit = NormalizeSearchFilesHistoryLimit(state.SearchFilesHistoryLimit);
         if (state.AlarmPopupLeft is double popupLeft
             && !double.IsNaN(popupLeft)

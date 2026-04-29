@@ -156,12 +156,19 @@ public sealed class ProjectLineCounterProject
     public string Name { get; set; } = string.Empty;
     public string FolderPath { get; set; } = string.Empty;
     public string TypeName { get; set; } = string.Empty;
+    /// <summary>Project-only extensions counted in addition to the project type's file types.</summary>
+    public List<string>? IncludedFileTypeOverrides { get; set; }
+    /// <summary>Project-only extensions to skip in addition to global Ignore Files and the project type's ignored file types.</summary>
+    public List<string>? ExcludedFileTypeOverrides { get; set; }
 }
 
 public sealed class ProjectLineCounterType
 {
     public string Name { get; set; } = string.Empty;
     public List<string>? FileTypes { get; set; }
+    /// <summary>Extensions to skip when counting this type (merged with global Ignore Files and any project-only exclude extras).</summary>
+    public List<string>? IgnoredFileTypes { get; set; }
+    public List<string>? IgnoredFolders { get; set; }
 }
 
 public sealed class SearchFilesHistoryMatch
@@ -295,9 +302,7 @@ public sealed class WindowSettings
     public double? AlarmPopupTop { get; set; }
     public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
     public List<ProjectLineCounterType>? ProjectLineCounterTypes { get; set; }
-    public List<string>? ProjectLineCounterAutoDetectedFileTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
-    public List<string>? ProjectLineCounterIgnoredFolders { get; set; }
     public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
     public int ClosedTabsMaxCount { get; set; } = 10;

@@ -82,9 +82,7 @@ public partial class MainWindow : Window
     private DateTime? _pluginAlarmsSnoozedUntilLocal;
     private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
     private List<ProjectLineCounterType> _projectLineCounterTypes = [];
-    private List<string> _projectLineCounterAutoDetectedFileTypes = [];
     private List<string> _projectLineCounterIgnoredFileTypes = [];
-    private List<string> _projectLineCounterIgnoredFolders = [];
     private readonly HashSet<string> _triggeredPluginAlarmKeysForMinute = new(StringComparer.OrdinalIgnoreCase);
     private string _triggeredPluginAlarmMinuteKey = string.Empty;
     private double? _alarmPopupLeft;
