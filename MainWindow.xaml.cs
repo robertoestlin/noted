@@ -112,6 +112,10 @@ public partial class MainWindow : Window
     private const int MaxCompletedRetentionDays = 3650;
     private const int MinCompletedRetentionHours = 0;
     private const int MaxCompletedRetentionHours = 23;
+    private const int MinUndoneMarkDays = 0;
+    private const int MaxUndoneMarkDays = 3650;
+    private const int MinUndoneMarkHours = 0;
+    private const int MaxUndoneMarkHours = 23;
     private const int DefaultClosedTabsMaxCount = 10;
     private const int MinClosedTabsMaxCount = 1;
     private const int MaxClosedTabsMaxCount = 500;

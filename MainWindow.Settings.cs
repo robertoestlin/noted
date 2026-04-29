@@ -534,6 +534,12 @@ public partial class MainWindow
         return Math.Clamp(value, MinCompletedRetentionHours, MaxCompletedRetentionHours);
     }
 
+    private static int NormalizeUndoneMarkDays(int? days)
+        => Math.Clamp(days ?? 0, MinUndoneMarkDays, MaxUndoneMarkDays);
+
+    private static int NormalizeUndoneMarkHours(int? hours)
+        => Math.Clamp(hours ?? MinUndoneMarkHours, MinUndoneMarkHours, MaxUndoneMarkHours);
+
     private List<TaskAreaState> BuildTaskAreasSnapshot()
         => _taskAreas
             .Where(area => area != null && !string.IsNullOrWhiteSpace(area.Id))
@@ -550,7 +556,10 @@ public partial class MainWindow
                         ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
                         SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1,
                         CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id),
-                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours)
+                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours),
+                        UndoneMarkEnabled = group.UndoneMarkEnabled == true,
+                        UndoneMarkDays = NormalizeUndoneMarkDays(group.UndoneMarkDays),
+                        UndoneMarkHours = NormalizeUndoneMarkHours(group.UndoneMarkHours)
                     })
                     .ToList()
             })
@@ -577,7 +586,10 @@ public partial class MainWindow
                         ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey),
                         SortOrder = group.SortOrder > 0 ? group.SortOrder : index + 1,
                         CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id?.Trim() ?? string.Empty),
-                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours)
+                        CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours),
+                        UndoneMarkEnabled = group.UndoneMarkEnabled == true,
+                        UndoneMarkDays = NormalizeUndoneMarkDays(group.UndoneMarkDays),
+                        UndoneMarkHours = NormalizeUndoneMarkHours(group.UndoneMarkHours)
                     })
                     .ToList()
             })

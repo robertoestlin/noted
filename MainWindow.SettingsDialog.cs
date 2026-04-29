@@ -41,7 +41,10 @@ public partial class MainWindow
                 ShortcutKey = group.ShortcutKey,
                 SortOrder = group.SortOrder,
                 CompletedRetentionDays = group.CompletedRetentionDays,
-                CompletedRetentionHours = group.CompletedRetentionHours
+                CompletedRetentionHours = group.CompletedRetentionHours,
+                UndoneMarkEnabled = group.UndoneMarkEnabled,
+                UndoneMarkDays = group.UndoneMarkDays,
+                UndoneMarkHours = group.UndoneMarkHours
             }).ToList()
         }).ToList();
     }
@@ -1002,6 +1005,27 @@ public partial class MainWindow
         DockPanel.SetDock(groupRetentionRow, Dock.Bottom);
         groupsPanel.Children.Add(groupRetentionRow);
 
+        var groupUndoneMarkRow = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
+        var chkGroupUndoneMark = new CheckBox
+        {
+            Content = "Mark uncompleted tasks as overdue after:",
+            IsEnabled = false,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        groupUndoneMarkRow.Children.Add(chkGroupUndoneMark);
+        var undoneInputRow = new StackPanel { Orientation = Orientation.Horizontal };
+        var txtGroupUndoneMarkDays = new TextBox { IsEnabled = false, Width = 60, VerticalContentAlignment = VerticalAlignment.Center };
+        undoneInputRow.Children.Add(txtGroupUndoneMarkDays);
+        undoneInputRow.Children.Add(new TextBlock { Text = " days", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 12, 0) });
+        var cmbGroupUndoneMarkHours = new ComboBox { IsEnabled = false, Width = 70 };
+        for (int h = MinUndoneMarkHours; h <= MaxUndoneMarkHours; h++)
+            cmbGroupUndoneMarkHours.Items.Add(new ComboBoxItem { Content = h.ToString(), Tag = h });
+        undoneInputRow.Children.Add(cmbGroupUndoneMarkHours);
+        undoneInputRow.Children.Add(new TextBlock { Text = " hours", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) });
+        groupUndoneMarkRow.Children.Add(undoneInputRow);
+        DockPanel.SetDock(groupUndoneMarkRow, Dock.Bottom);
+        groupsPanel.Children.Add(groupUndoneMarkRow);
+
         var groupShortcutRow = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
         groupShortcutRow.Children.Add(new TextBlock
         {
@@ -1041,6 +1065,12 @@ public partial class MainWindow
                 txtGroupRetentionDays.IsEnabled = false;
                 cmbGroupRetentionHours.SelectedIndex = 0;
                 cmbGroupRetentionHours.IsEnabled = false;
+                chkGroupUndoneMark.IsChecked = false;
+                chkGroupUndoneMark.IsEnabled = false;
+                txtGroupUndoneMarkDays.Text = string.Empty;
+                txtGroupUndoneMarkDays.IsEnabled = false;
+                cmbGroupUndoneMarkHours.SelectedIndex = 0;
+                cmbGroupUndoneMarkHours.IsEnabled = false;
                 return;
             }
             foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
@@ -1064,6 +1094,12 @@ public partial class MainWindow
                 txtGroupRetentionDays.IsEnabled = false;
                 cmbGroupRetentionHours.SelectedIndex = 0;
                 cmbGroupRetentionHours.IsEnabled = false;
+                chkGroupUndoneMark.IsChecked = false;
+                chkGroupUndoneMark.IsEnabled = false;
+                txtGroupUndoneMarkDays.Text = string.Empty;
+                txtGroupUndoneMarkDays.IsEnabled = false;
+                cmbGroupUndoneMarkHours.SelectedIndex = 0;
+                cmbGroupUndoneMarkHours.IsEnabled = false;
                 return;
             }
 
@@ -1076,6 +1112,15 @@ public partial class MainWindow
 
             cmbGroupRetentionHours.IsEnabled = true;
             cmbGroupRetentionHours.SelectedIndex = NormalizeCompletedRetentionHours(group.CompletedRetentionHours);
+
+            bool undoneEnabled = group.UndoneMarkEnabled == true;
+            chkGroupUndoneMark.IsEnabled = true;
+            chkGroupUndoneMark.IsChecked = undoneEnabled;
+            txtGroupUndoneMarkDays.IsEnabled = undoneEnabled;
+            txtGroupUndoneMarkDays.Text = NormalizeUndoneMarkDays(group.UndoneMarkDays)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            cmbGroupUndoneMarkHours.IsEnabled = undoneEnabled;
+            cmbGroupUndoneMarkHours.SelectedIndex = NormalizeUndoneMarkHours(group.UndoneMarkHours) - MinUndoneMarkHours;
         }
 
         bool ApplySelectedGroupShortcut()
@@ -1130,6 +1175,38 @@ public partial class MainWindow
 
             var hours = cmbGroupRetentionHours.SelectedIndex >= 0 ? cmbGroupRetentionHours.SelectedIndex : 0;
             group.CompletedRetentionHours = hours;
+            return true;
+        }
+
+        bool ApplySelectedGroupUndoneMark()
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return true;
+
+            bool enabled = chkGroupUndoneMark.IsChecked == true;
+            group.UndoneMarkEnabled = enabled;
+            if (!enabled)
+                return true;
+
+            var raw = (txtGroupUndoneMarkDays.Text ?? string.Empty).Trim();
+            if (!int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var days)
+                || days < MinUndoneMarkDays
+                || days > MaxUndoneMarkDays)
+            {
+                MessageBox.Show($"Days must be a whole number between {MinUndoneMarkDays} and {MaxUndoneMarkDays}.",
+                    "Task Panel", MessageBoxButton.OK, MessageBoxImage.Warning);
+                txtGroupUndoneMarkDays.Text = NormalizeUndoneMarkDays(group.UndoneMarkDays)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return false;
+            }
+
+            group.UndoneMarkDays = days;
+            txtGroupUndoneMarkDays.Text = days.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            var hours = cmbGroupUndoneMarkHours.SelectedItem is ComboBoxItem item && item.Tag is int tag
+                ? tag
+                : MinUndoneMarkHours;
+            group.UndoneMarkHours = hours;
             return true;
         }
 
@@ -1281,6 +1358,42 @@ public partial class MainWindow
         {
             if (groupsList.SelectedItem is TaskGroupState group && cmbGroupRetentionHours.SelectedIndex >= 0)
                 group.CompletedRetentionHours = cmbGroupRetentionHours.SelectedIndex;
+        };
+
+        chkGroupUndoneMark.Checked += (_, _) =>
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            group.UndoneMarkEnabled = true;
+            txtGroupUndoneMarkDays.IsEnabled = true;
+            cmbGroupUndoneMarkHours.IsEnabled = true;
+            txtGroupUndoneMarkDays.Text = NormalizeUndoneMarkDays(group.UndoneMarkDays)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            cmbGroupUndoneMarkHours.SelectedIndex = NormalizeUndoneMarkHours(group.UndoneMarkHours) - MinUndoneMarkHours;
+        };
+        chkGroupUndoneMark.Unchecked += (_, _) =>
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            group.UndoneMarkEnabled = false;
+            txtGroupUndoneMarkDays.IsEnabled = false;
+            cmbGroupUndoneMarkHours.IsEnabled = false;
+        };
+        txtGroupUndoneMarkDays.LostFocus += (_, _) => ApplySelectedGroupUndoneMark();
+        txtGroupUndoneMarkDays.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                ApplySelectedGroupUndoneMark();
+            }
+        };
+        cmbGroupUndoneMarkHours.SelectionChanged += (_, _) =>
+        {
+            if (groupsList.SelectedItem is not TaskGroupState group)
+                return;
+            if (cmbGroupUndoneMarkHours.SelectedItem is ComboBoxItem item && item.Tag is int tag)
+                group.UndoneMarkHours = tag;
         };
 
         RefreshAreasList(_currentTaskAreaId);
@@ -1478,6 +1591,8 @@ public partial class MainWindow
                 return;
             if (!ApplySelectedGroupRetentionDays())
                 return;
+            if (!ApplySelectedGroupUndoneMark())
+                return;
 
             foreach (var area in workingTaskAreas)
             {
@@ -1486,6 +1601,9 @@ public partial class MainWindow
                     group.ShortcutKey = NormalizeTaskGroupShortcutKey(group.ShortcutKey);
                     group.CompletedRetentionDays = NormalizeCompletedRetentionDays(group.CompletedRetentionDays, group.Id);
                     group.CompletedRetentionHours = NormalizeCompletedRetentionHours(group.CompletedRetentionHours);
+                    group.UndoneMarkEnabled = group.UndoneMarkEnabled == true;
+                    group.UndoneMarkDays = NormalizeUndoneMarkDays(group.UndoneMarkDays);
+                    group.UndoneMarkHours = NormalizeUndoneMarkHours(group.UndoneMarkHours);
                 }
 
                 var usedShortcuts = area.Groups

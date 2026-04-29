@@ -410,9 +410,22 @@ public partial class MainWindow
 
     private void AddTodoSectionRows(Panel panel, IEnumerable<TodoItemState> items, string areaId, string groupId)
     {
+        var owningArea = _taskAreas.FirstOrDefault(area => string.Equals(area.Id, areaId, StringComparison.OrdinalIgnoreCase));
+        var owningGroup = owningArea?.Groups.FirstOrDefault(group => string.Equals(group.Id, groupId, StringComparison.OrdinalIgnoreCase));
+        TimeSpan? overdueThreshold = null;
+        if (owningGroup?.UndoneMarkEnabled == true)
+        {
+            overdueThreshold = TimeSpan.FromDays(NormalizeUndoneMarkDays(owningGroup.UndoneMarkDays))
+                + TimeSpan.FromHours(NormalizeUndoneMarkHours(owningGroup.UndoneMarkHours));
+        }
+
         foreach (var item in items)
         {
             bool isCompleted = item.CompletedAtUtc.HasValue;
+            bool isOverdue = !isCompleted
+                && overdueThreshold.HasValue
+                && item.CreatedUtc != default
+                && (DateTime.UtcNow - item.CreatedUtc) >= overdueThreshold.Value;
             var row = new Grid
             {
                 Margin = new Thickness(0, 0, 0, 6),
@@ -497,11 +510,18 @@ public partial class MainWindow
                 IsChecked = isCompleted,
                 Opacity = isCompleted ? 0.75 : 1.0
             };
-            checkBox.Content = new TextBlock
+            var textBlock = new TextBlock
             {
                 Text = item.Text,
                 TextDecorations = isCompleted ? TextDecorations.Strikethrough : null
             };
+            if (isOverdue)
+            {
+                textBlock.Foreground = Brushes.IndianRed;
+                textBlock.FontWeight = FontWeights.SemiBold;
+                checkBox.ToolTip = "Overdue: not completed within the configured time for this group.";
+            }
+            checkBox.Content = textBlock;
             checkBox.Checked += (_, _) =>
             {
                 if (item.CompletedAtUtc.HasValue)

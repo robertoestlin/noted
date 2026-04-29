@@ -114,6 +114,22 @@ public sealed class TaskGroupState
     /// Null is treated as 0.
     /// </summary>
     public int? CompletedRetentionHours { get; set; }
+
+    /// <summary>
+    /// When true, active (uncompleted) tasks older than <see cref="UndoneMarkDays"/> + <see cref="UndoneMarkHours"/>
+    /// are visually marked. Marked items keep their position. Null/false means no marking.
+    /// </summary>
+    public bool? UndoneMarkEnabled { get; set; }
+
+    /// <summary>
+    /// Age in days component of the undone-mark threshold. Null is treated as 0 when marking is enabled.
+    /// </summary>
+    public int? UndoneMarkDays { get; set; }
+
+    /// <summary>
+    /// Additional hours component of the undone-mark threshold (1-23). Null is treated as 1 when marking is enabled.
+    /// </summary>
+    public int? UndoneMarkHours { get; set; }
 }
 
 public sealed class TaskAreaState
