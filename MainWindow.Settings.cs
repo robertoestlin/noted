@@ -84,6 +84,7 @@ public partial class MainWindow
             BackupAdditionalAppLog = _backupAdditionalIncludeAppLog,
             BackupAdditionalHeartbeatLogs = _backupAdditionalIncludeHeartbeatLogs,
             BackupAdditionalTodoItems = _backupAdditionalIncludeTodoItems,
+            BackupAdditionalStateConfig = _backupAdditionalIncludeStateConfig,
             BackupAdditionalSafePaste = _backupAdditionalIncludeSafePaste,
             BackupAdditionalTimeReports = _backupAdditionalIncludeTimeReports,
             BackupAdditionalMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
@@ -158,6 +159,7 @@ public partial class MainWindow
             LoadTimeReports();
             LoadSearchFilesHistory();
             LoadTodoItems();
+            LoadStateConfig();
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
@@ -182,6 +184,36 @@ public partial class MainWindow
     {
         var todoItemsPath = Path.Combine(_backupFolder, TodoItemsFileName);
         _windowSettingsStore.Save(todoItemsPath, BuildTodoItemsSnapshot(), options);
+    }
+
+    private NotedStateConfig CreateStateConfigSnapshot()
+        => new() { TaskPanelOpen = _todoPanelVisible };
+
+    private void SaveStateConfig(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, StateConfigFileName);
+        _windowSettingsStore.Save(path, CreateStateConfigSnapshot(), options);
+    }
+
+    /// <summary>Writes <see cref="StateConfigFileName"/> only on exit (not on every <see cref="SaveWindowSettings"/>).</summary>
+    private void SaveStateConfigOnExit()
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            SaveStateConfig(new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { /* non-critical */ }
+    }
+
+    private void LoadStateConfig()
+    {
+        var path = Path.Combine(_backupFolder, StateConfigFileName);
+        var loaded = _windowSettingsStore.Load<NotedStateConfig>(path);
+        if (loaded != null)
+            _todoPanelVisible = loaded.TaskPanelOpen;
+
+        UpdateTodoPanelVisibility();
     }
 
     private void LoadSearchFilesHistory()
@@ -275,6 +307,7 @@ public partial class MainWindow
         _backupAdditionalIncludeAppLog = true;
         _backupAdditionalIncludeHeartbeatLogs = true;
         _backupAdditionalIncludeTodoItems = true;
+        _backupAdditionalIncludeStateConfig = true;
         _backupAdditionalIncludeSafePaste = false;
         _backupAdditionalIncludeTimeReports = true;
         _backupAdditionalIncludeMidiCustomSongs = false;
@@ -384,6 +417,7 @@ public partial class MainWindow
         _backupAdditionalIncludeAppLog = state.BackupAdditionalAppLog ?? true;
         _backupAdditionalIncludeHeartbeatLogs = state.BackupAdditionalHeartbeatLogs ?? true;
         _backupAdditionalIncludeTodoItems = state.BackupAdditionalTodoItems ?? true;
+        _backupAdditionalIncludeStateConfig = state.BackupAdditionalStateConfig ?? true;
         _backupAdditionalIncludeSafePaste = state.BackupAdditionalSafePaste ?? false;
         _backupAdditionalIncludeTimeReports = state.BackupAdditionalTimeReports ?? true;
         _backupAdditionalIncludeMidiCustomSongs = state.BackupAdditionalMidiCustomSongs ?? false;
@@ -611,6 +645,9 @@ public partial class MainWindow
     private bool CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TodoItemsFileName);
 
+    private bool CopyStateConfigFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, StateConfigFileName);
+
     private bool CopySafePasteDataFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SafePasteDataFileName);
 
@@ -697,6 +734,7 @@ public partial class MainWindow
         public bool IncludeAppLog { get; init; }
         public bool IncludeHeartbeat { get; init; }
         public bool IncludeTodoItems { get; init; }
+        public bool IncludeStateConfig { get; init; }
         public bool IncludeSafePaste { get; init; }
         public bool IncludeTimeReports { get; init; }
         public bool IncludeMidiCustomSongs { get; init; }
@@ -707,6 +745,7 @@ public partial class MainWindow
         public int AppLogFilesCopied { get; init; }
         public int HeartbeatFilesCopied { get; init; }
         public int TodoItemsFilesCopied { get; init; }
+        public int StateConfigFilesCopied { get; init; }
         public int SafePasteFilesCopied { get; init; }
         public int TimeReportsFilesCopied { get; init; }
         public int MidiCustomSongsFilesCopied { get; init; }
@@ -727,12 +766,13 @@ public partial class MainWindow
             const string TagLog = "Log";
             const string TagHeartbeat = "Heartbeat logs";
             const string TagTodoItems = "Todo Items";
+            const string TagStateConfig = "UI state";
             const string TagSafePaste = "Safe Paste";
             const string TagTimeReports = "Time Reports";
             const string TagMidiPaths = "MIDI Custom Songs Paths";
             const string TagImages = "Images";
 
-            var included = new List<string>(8);
+            var included = new List<string>(9);
             if (IncludeSettings)
                 included.Add($"{TagSettings}: {CopiesPhrase(SettingsFilesCopied)}");
             if (IncludeAppLog)
@@ -741,6 +781,8 @@ public partial class MainWindow
                 included.Add($"{TagHeartbeat}: {CopiesPhrase(HeartbeatFilesCopied)}");
             if (IncludeTodoItems)
                 included.Add($"{TagTodoItems}: {CopiesPhrase(TodoItemsFilesCopied)}");
+            if (IncludeStateConfig)
+                included.Add($"{TagStateConfig}: {CopiesPhrase(StateConfigFilesCopied)}");
             if (IncludeSafePaste)
                 included.Add($"{TagSafePaste}: {CopiesPhrase(SafePasteFilesCopied)}");
             if (IncludeTimeReports)
@@ -759,6 +801,8 @@ public partial class MainWindow
                 excluded.Add(TagHeartbeat);
             if (!IncludeTodoItems)
                 excluded.Add(TagTodoItems);
+            if (!IncludeStateConfig)
+                excluded.Add(TagStateConfig);
             if (!IncludeSafePaste)
                 excluded.Add(TagSafePaste);
             if (!IncludeTimeReports)
@@ -794,6 +838,9 @@ public partial class MainWindow
         var todoCopied = _backupAdditionalIncludeTodoItems && CopyTodoItemsFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
+        var stateConfigCopied = _backupAdditionalIncludeStateConfig && CopyStateConfigFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
         var safePasteCopied = _backupAdditionalIncludeSafePaste && CopySafePasteDataFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
@@ -814,6 +861,7 @@ public partial class MainWindow
             IncludeAppLog = _backupAdditionalIncludeAppLog,
             IncludeHeartbeat = _backupAdditionalIncludeHeartbeatLogs,
             IncludeTodoItems = _backupAdditionalIncludeTodoItems,
+            IncludeStateConfig = _backupAdditionalIncludeStateConfig,
             IncludeSafePaste = _backupAdditionalIncludeSafePaste,
             IncludeTimeReports = _backupAdditionalIncludeTimeReports,
             IncludeMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
@@ -822,6 +870,7 @@ public partial class MainWindow
             AppLogFilesCopied = appCopied,
             HeartbeatFilesCopied = heartbeatCopied,
             TodoItemsFilesCopied = todoCopied,
+            StateConfigFilesCopied = stateConfigCopied,
             SafePasteFilesCopied = safePasteCopied,
             TimeReportsFilesCopied = timeReportsCopied,
             MidiCustomSongsFilesCopied = midiCopied,

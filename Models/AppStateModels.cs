@@ -182,6 +182,13 @@ public sealed class SafePasteKeyRecord
     public string Key { get; set; } = string.Empty;
 }
 
+/// <summary>Persisted UI/session state stored in <c>state-config.json</c> (separate from <c>settings.json</c>).</summary>
+public sealed class NotedStateConfig
+{
+    /// <summary>Whether the task panel is visible.</summary>
+    public bool TaskPanelOpen { get; set; }
+}
+
 public sealed class WindowSettings
 {
     public double Left { get; set; } = 100;
@@ -229,6 +236,9 @@ public sealed class WindowSettings
 
     /// <summary>Include <c>todo-items.json</c> (default true).</summary>
     public bool? BackupAdditionalTodoItems { get; set; }
+
+    /// <summary>Include <c>state-config.json</c> (default true).</summary>
+    public bool? BackupAdditionalStateConfig { get; set; }
 
     /// <summary>Include <c>safe-paste.dat</c> (default false).</summary>
     public bool? BackupAdditionalSafePaste { get; set; }

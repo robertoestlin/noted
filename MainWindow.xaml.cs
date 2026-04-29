@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string TodoItemsFileName = "todo-items.json";
+    private const string StateConfigFileName = "state-config.json";
     private const string AppLogFileName = "noted.log";
     private const string DefaultTaskPanelTitle = "Task Panel";
     private const string DefaultTaskAreaId = "main";
@@ -130,6 +131,7 @@ public partial class MainWindow : Window
     private bool _backupAdditionalIncludeAppLog = true;
     private bool _backupAdditionalIncludeHeartbeatLogs = true;
     private bool _backupAdditionalIncludeTodoItems = true;
+    private bool _backupAdditionalIncludeStateConfig = true;
     private bool _backupAdditionalIncludeSafePaste;
     private bool _backupAdditionalIncludeTimeReports = true;
     private bool _backupAdditionalIncludeMidiCustomSongs;
@@ -7039,6 +7041,7 @@ public partial class MainWindow : Window
         _pluginAlarmTimer.Stop();
         _backupHeartbeatTimer.Stop();
         SaveWindowSettings();
+        SaveStateConfigOnExit();
         if (!_sessionSaved)
             SaveSession(updateStatus: false);
     }

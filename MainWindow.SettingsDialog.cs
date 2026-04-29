@@ -235,6 +235,7 @@ public partial class MainWindow
         var chkBackupAddLog = new CheckBox { Content = "Log file (noted.log)", IsChecked = _backupAdditionalIncludeAppLog, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddHeartbeat = new CheckBox { Content = "Heartbeat (uptime-heartbeat-*.log)", IsChecked = _backupAdditionalIncludeHeartbeatLogs, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddTodos = new CheckBox { Content = "Todo items (todo-items.json)", IsChecked = _backupAdditionalIncludeTodoItems, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddStateConfig = new CheckBox { Content = "UI state (state-config.json)", IsChecked = _backupAdditionalIncludeStateConfig, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddSafePaste = new CheckBox { Content = "Safe paste (safe-paste.dat)", IsChecked = _backupAdditionalIncludeSafePaste, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddTimeReports = new CheckBox { Content = "Time Reports (plugin-time-reports.json)", IsChecked = _backupAdditionalIncludeTimeReports, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddMidi = new CheckBox { Content = "MIDI custom songs (midi-custom-songs.json)", IsChecked = _backupAdditionalIncludeMidiCustomSongs, Margin = new Thickness(0, 0, 0, 4) };
@@ -243,6 +244,7 @@ public partial class MainWindow
         additionalBackupPanel.Children.Add(chkBackupAddLog);
         additionalBackupPanel.Children.Add(chkBackupAddHeartbeat);
         additionalBackupPanel.Children.Add(chkBackupAddTodos);
+        additionalBackupPanel.Children.Add(chkBackupAddStateConfig);
         additionalBackupPanel.Children.Add(chkBackupAddSafePaste);
         additionalBackupPanel.Children.Add(chkBackupAddTimeReports);
         additionalBackupPanel.Children.Add(chkBackupAddMidi);
@@ -1540,6 +1542,7 @@ public partial class MainWindow
                 _backupAdditionalIncludeAppLog = chkBackupAddLog.IsChecked == true;
                 _backupAdditionalIncludeHeartbeatLogs = chkBackupAddHeartbeat.IsChecked == true;
                 _backupAdditionalIncludeTodoItems = chkBackupAddTodos.IsChecked == true;
+                _backupAdditionalIncludeStateConfig = chkBackupAddStateConfig.IsChecked == true;
                 _backupAdditionalIncludeSafePaste = chkBackupAddSafePaste.IsChecked == true;
                 _backupAdditionalIncludeTimeReports = chkBackupAddTimeReports.IsChecked == true;
                 _backupAdditionalIncludeMidiCustomSongs = chkBackupAddMidi.IsChecked == true;

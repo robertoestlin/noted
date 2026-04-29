@@ -74,8 +74,6 @@ public partial class MainWindow
 
         MigrateLegacyTodoItemsToGroups();
 
-        // Always start with the todo panel collapsed on app launch.
-        _todoPanelVisible = false;
         NormalizeTodoSortOrders();
         PruneCompletedTodoItems();
         if (TodoPanelColumn != null)
