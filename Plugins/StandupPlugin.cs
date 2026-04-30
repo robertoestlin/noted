@@ -105,16 +105,11 @@ public partial class MainWindow
         _standupWindowMaximized = false;
     }
 
-    private StandupSettings BuildStandupSettingsSnapshot()
+    private StandupSettings BuildStandupPreferencesSnapshot()
         => new()
         {
             WeekdayTimes = NormalizeStandupWeekdayTimes(_standupWeekdayTimes),
-            RetentionDays = NormalizeStandupRetentionDays(_standupRetentionDays),
-            WindowLeft = _standupWindowLeft,
-            WindowTop = _standupWindowTop,
-            WindowWidth = _standupWindowWidth,
-            WindowHeight = _standupWindowHeight,
-            WindowMaximized = _standupWindowMaximized
+            RetentionDays = NormalizeStandupRetentionDays(_standupRetentionDays)
         };
 
     private void ApplyStandupSettings(StandupSettings? settings)
@@ -122,11 +117,15 @@ public partial class MainWindow
         _standupWeekdayTimes.Clear();
         _standupWeekdayTimes.AddRange(NormalizeStandupWeekdayTimes(settings?.WeekdayTimes));
         _standupRetentionDays = NormalizeStandupRetentionDays(settings?.RetentionDays ?? 0);
-        _standupWindowLeft = settings?.WindowLeft;
-        _standupWindowTop = settings?.WindowTop;
-        _standupWindowWidth = settings?.WindowWidth;
-        _standupWindowHeight = settings?.WindowHeight;
-        _standupWindowMaximized = settings?.WindowMaximized ?? false;
+    }
+
+    private void ApplyStandupWindowFromSession(NotedSessionState session)
+    {
+        _standupWindowLeft = session.StandupWindowLeft;
+        _standupWindowTop = session.StandupWindowTop;
+        _standupWindowWidth = session.StandupWindowWidth;
+        _standupWindowHeight = session.StandupWindowHeight;
+        _standupWindowMaximized = session.StandupWindowMaximized;
     }
 
     private static bool StandupSavedBoundsIntersectVirtualScreen(double left, double top, double width, double height)

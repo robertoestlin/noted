@@ -174,13 +174,20 @@ public partial class MainWindow
         }
     }
 
-    private void LoadSafePasteData(IEnumerable<SafePasteKeyRecord>? safePasteKeyRecords, IEnumerable<string>? legacySafePasteKeys)
+    private void LoadSafePasteData(LegacyCombinedSettings? legacyFromCombinedSettings = null)
     {
         _safePasteDataDirty = false;
         _safePasteSavedEntries.Clear();
         _safePasteKeyRecords.Clear();
         try
         {
+            var keysPath = Path.Combine(_backupFolder, SafePasteKeysFileName);
+            var fromFile = _windowSettingsStore.Load<List<SafePasteKeyRecord>>(keysPath);
+            IEnumerable<SafePasteKeyRecord>? safePasteKeyRecords = fromFile is { Count: > 0 }
+                ? fromFile
+                : legacyFromCombinedSettings?.SafePasteKeyRecords;
+            IEnumerable<string>? legacySafePasteKeys = legacyFromCombinedSettings?.SafePasteKeys;
+
             var seenIdentifiers = new HashSet<string>(StringComparer.Ordinal);
             foreach (var record in safePasteKeyRecords ?? [])
             {
@@ -262,6 +269,19 @@ public partial class MainWindow
             }
 
             _safePasteDataDirty = true;
+        }
+        catch
+        {
+            // Non-critical persistence.
+        }
+    }
+
+    private void SaveSafePasteKeys(JsonSerializerOptions options)
+    {
+        try
+        {
+            var path = Path.Combine(_backupFolder, SafePasteKeysFileName);
+            _windowSettingsStore.Save(path, BuildSafePasteKeyRecordsSnapshot(), options);
         }
         catch
         {

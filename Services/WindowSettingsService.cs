@@ -6,7 +6,47 @@ namespace Noted.Services;
 
 public sealed class WindowSettingsService
 {
-    public sealed record LoadResult(WindowSettings BootstrapSettings, WindowSettings EffectiveSettings, string BootstrapBackupFolder, string BootstrapCloudBackupFolder);
+    public sealed record LoadResult(
+        WindowSettings BootstrapSettings,
+        WindowSettings EffectiveSettings,
+        string BootstrapBackupFolder,
+        string BootstrapCloudBackupFolder,
+        string EffectiveSettingsJsonPath);
+
+    /// <summary>Resolved backup paths and <see cref="WindowSettings.LastNotedVersion"/> read from effective <c>settings.json</c> before full load.</summary>
+    public sealed record StartupPathsProbe(string EffectiveBackupFolder, string DefaultBackupFolder, string EffectiveSettingsJsonPath, string? LastNotedVersionOnDisk);
+
+    public StartupPathsProbe BuildStartupPathsProbe(
+        WindowSettingsStore store,
+        string defaultBackupFolder,
+        string defaultCloudBackupFolder,
+        string settingsFileName)
+    {
+        var defaultSettingsPath = Path.Combine(defaultBackupFolder, settingsFileName);
+        if (!File.Exists(defaultSettingsPath))
+        {
+            return new StartupPathsProbe(defaultBackupFolder, defaultBackupFolder, defaultSettingsPath, null);
+        }
+
+        var boot = store.Load<WindowSettings>(defaultSettingsPath);
+        if (boot == null)
+            return new StartupPathsProbe(defaultBackupFolder, defaultBackupFolder, defaultSettingsPath, null);
+
+        var bootstrapBackupFolder = NormalizePathOrFallback(boot.BackupFolder, defaultBackupFolder);
+        _ = NormalizePathOrFallback(boot.CloudBackupFolder, defaultCloudBackupFolder);
+
+        var canonicalPath = Path.Combine(bootstrapBackupFolder, settingsFileName);
+        var effective = boot;
+        if (File.Exists(canonicalPath)
+            && !string.Equals(Path.GetFullPath(canonicalPath), Path.GetFullPath(defaultSettingsPath), StringComparison.OrdinalIgnoreCase))
+        {
+            var full = store.Load<WindowSettings>(canonicalPath);
+            if (full != null)
+                effective = full;
+        }
+
+        return new StartupPathsProbe(bootstrapBackupFolder, defaultBackupFolder, canonicalPath, effective.LastNotedVersion);
+    }
 
     public void SaveWithBootstrap(
         WindowSettings state,
@@ -44,15 +84,19 @@ public sealed class WindowSettingsService
 
         var canonicalPath = Path.Combine(bootstrapBackupFolder, settingsFileName);
         var effective = boot;
+        var effectivePath = defaultPath;
         if (File.Exists(canonicalPath)
             && !string.Equals(Path.GetFullPath(canonicalPath), Path.GetFullPath(defaultPath), StringComparison.OrdinalIgnoreCase))
         {
             var full = store.Load<WindowSettings>(canonicalPath);
             if (full != null)
+            {
                 effective = full;
+                effectivePath = canonicalPath;
+            }
         }
 
-        return new LoadResult(boot, effective, bootstrapBackupFolder, bootstrapCloudBackupFolder);
+        return new LoadResult(boot, effective, bootstrapBackupFolder, bootstrapCloudBackupFolder, effectivePath);
     }
 
     public string NormalizePathOrFallback(string? configuredPath, string fallbackPath)

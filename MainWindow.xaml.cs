@@ -89,9 +89,12 @@ public partial class MainWindow : Window
     private double? _alarmPopupTop;
 
     private const string SettingsFileName = "settings.json";
+    private const string SessionStateFileName = "session-state.json";
+    private const string SafePasteKeysFileName = "safe-paste-keys.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
+    private const string ProjectLineCounterStateFileName = "plugin-project-line-counter.json";
     private const string TodoItemsFileName = "todo-items.json";
     private const string StateConfigFileName = "state-config.json";
     private const string AppLogFileName = "noted.log";
@@ -134,11 +137,16 @@ public partial class MainWindow : Window
     private bool _backupAdditionalIncludeHeartbeatLogs = true;
     private bool _backupAdditionalIncludeTodoItems = true;
     private bool _backupAdditionalIncludeStateConfig = true;
+    private bool _backupAdditionalIncludeSessionState = true;
     private bool _backupAdditionalIncludeSafePaste;
     private bool _backupAdditionalIncludeTimeReports = true;
+    private bool _backupAdditionalIncludeProjectLineCounter = true;
     private bool _backupAdditionalIncludeMidiCustomSongs;
     private bool _backupAdditionalIncludeImages = true;
     private const int MaxBackups = 100;
+
+    /// <summary>Written to <c>settings.json</c> on each save from this field; updated to <see cref="NotedAppVersion.Current"/> only via startup stamp.</summary>
+    private string? _persistedLastNotedVersionForJson;
 
     /// <summary>Filenames written by <see cref="SaveSession"/> (<c>noted_yyyyMMdd_HHmmss.txt</c>).</summary>
     private static readonly Regex NotedBackupFileNameRegex =
@@ -1217,6 +1225,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        RunStartupVersionProbeSnapshotAndLog();
 
         // Routed commands -> our handlers
         CommandBindings.Add(new CommandBinding(ApplicationCommands.New, (_, _) => NewTab()));
@@ -1254,6 +1263,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        MaybeStampLastNotedVersionAfterLoad();
         UpdateAlarmSnoozeStatus();
         InitializeTodoPanel();
         UpdateViewMenuChecks();

@@ -239,8 +239,10 @@ public partial class MainWindow
         var chkBackupAddHeartbeat = new CheckBox { Content = "Heartbeat (uptime-heartbeat-*.log)", IsChecked = _backupAdditionalIncludeHeartbeatLogs, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddTodos = new CheckBox { Content = "Todo items (todo-items.json)", IsChecked = _backupAdditionalIncludeTodoItems, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddStateConfig = new CheckBox { Content = "UI state (state-config.json)", IsChecked = _backupAdditionalIncludeStateConfig, Margin = new Thickness(0, 0, 0, 4) };
-        var chkBackupAddSafePaste = new CheckBox { Content = "Safe paste (safe-paste.dat)", IsChecked = _backupAdditionalIncludeSafePaste, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddSessionState = new CheckBox { Content = "Session (session-state.json)", IsChecked = _backupAdditionalIncludeSessionState, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddSafePaste = new CheckBox { Content = "Safe paste (safe-paste.dat + keys)", IsChecked = _backupAdditionalIncludeSafePaste, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddTimeReports = new CheckBox { Content = "Time Reports (plugin-time-reports.json)", IsChecked = _backupAdditionalIncludeTimeReports, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddProjectLineCounter = new CheckBox { Content = "Project Line Counter (plugin-project-line-counter.json)", IsChecked = _backupAdditionalIncludeProjectLineCounter, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddMidi = new CheckBox { Content = "MIDI custom songs (midi-custom-songs.json)", IsChecked = _backupAdditionalIncludeMidiCustomSongs, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddImages = new CheckBox { Content = "Images (images folder)", IsChecked = _backupAdditionalIncludeImages, Margin = new Thickness(0, 0, 0, 0) };
         additionalBackupPanel.Children.Add(chkBackupAddSettings);
@@ -248,8 +250,10 @@ public partial class MainWindow
         additionalBackupPanel.Children.Add(chkBackupAddHeartbeat);
         additionalBackupPanel.Children.Add(chkBackupAddTodos);
         additionalBackupPanel.Children.Add(chkBackupAddStateConfig);
+        additionalBackupPanel.Children.Add(chkBackupAddSessionState);
         additionalBackupPanel.Children.Add(chkBackupAddSafePaste);
         additionalBackupPanel.Children.Add(chkBackupAddTimeReports);
+        additionalBackupPanel.Children.Add(chkBackupAddProjectLineCounter);
         additionalBackupPanel.Children.Add(chkBackupAddMidi);
         additionalBackupPanel.Children.Add(chkBackupAddImages);
         expanderAdditionalBackup.Content = additionalBackupPanel;
@@ -1661,8 +1665,10 @@ public partial class MainWindow
                 _backupAdditionalIncludeHeartbeatLogs = chkBackupAddHeartbeat.IsChecked == true;
                 _backupAdditionalIncludeTodoItems = chkBackupAddTodos.IsChecked == true;
                 _backupAdditionalIncludeStateConfig = chkBackupAddStateConfig.IsChecked == true;
+                _backupAdditionalIncludeSessionState = chkBackupAddSessionState.IsChecked == true;
                 _backupAdditionalIncludeSafePaste = chkBackupAddSafePaste.IsChecked == true;
                 _backupAdditionalIncludeTimeReports = chkBackupAddTimeReports.IsChecked == true;
+                _backupAdditionalIncludeProjectLineCounter = chkBackupAddProjectLineCounter.IsChecked == true;
                 _backupAdditionalIncludeMidiCustomSongs = chkBackupAddMidi.IsChecked == true;
                 _backupAdditionalIncludeImages = chkBackupAddImages.IsChecked == true;
 

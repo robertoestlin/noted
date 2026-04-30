@@ -41,9 +41,12 @@ public partial class MainWindow
                 SettingsFileName,
                 opts);
             SaveTimeReports(opts);
+            SaveProjectLineCounterState(opts);
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
             SaveSafePasteData(opts);
+            SaveSafePasteKeys(opts);
+            SaveSessionState(opts);
             SaveStandupNotes(opts);
         }
         catch { /* non-critical */ }
@@ -52,11 +55,7 @@ public partial class MainWindow
     private WindowSettings CreateWindowSettingsSnapshot()
         => new()
         {
-            Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
-            Top = WindowState == WindowState.Normal ? Top : RestoreBounds.Top,
-            Width = WindowState == WindowState.Normal ? Width : RestoreBounds.Width,
-            Height = WindowState == WindowState.Normal ? Height : RestoreBounds.Height,
-            Maximized = WindowState == WindowState.Maximized,
+            LastNotedVersion = _persistedLastNotedVersionForJson,
             AutoSaveSeconds = (int)_autoSaveTimer.Interval.TotalSeconds,
             InitialLines = _initialLines,
             FontFamily = _fontFamily,
@@ -86,14 +85,14 @@ public partial class MainWindow
             BackupAdditionalHeartbeatLogs = _backupAdditionalIncludeHeartbeatLogs,
             BackupAdditionalTodoItems = _backupAdditionalIncludeTodoItems,
             BackupAdditionalStateConfig = _backupAdditionalIncludeStateConfig,
+            BackupAdditionalSessionState = _backupAdditionalIncludeSessionState,
             BackupAdditionalSafePaste = _backupAdditionalIncludeSafePaste,
             BackupAdditionalTimeReports = _backupAdditionalIncludeTimeReports,
+            BackupAdditionalProjectLineCounter = _backupAdditionalIncludeProjectLineCounter,
             BackupAdditionalMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             BackupAdditionalImages = _backupAdditionalIncludeImages,
             CloudSaveHours = _cloudSaveIntervalHours,
             CloudSaveMinutes = _cloudSaveIntervalMinutes,
-            LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
-            ActiveTabIndex = MainTabControl.SelectedIndex,
             FridayFeelingEnabled = _isFridayFeelingEnabled,
             FancyBulletsEnabled = _fancyBulletsEnabled,
             WrapLongLinesVisually = _wrapLongLinesVisually,
@@ -112,12 +111,6 @@ public partial class MainWindow
             UserProfiles = NormalizeUsers(_users),
             PluginAlarms = BuildPluginAlarmsSnapshot(),
             PluginAlarmsEnabled = _pluginAlarmsEnabled,
-            PluginAlarmsSnoozedUntilLocal = _pluginAlarmsSnoozedUntilLocal,
-            AlarmPopupLeft = _alarmPopupLeft,
-            AlarmPopupTop = _alarmPopupTop,
-            ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
-            ProjectLineCounterTypes = BuildProjectLineCounterTypesSnapshot(),
-            ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot(),
             SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
@@ -133,12 +126,129 @@ public partial class MainWindow
             MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
             MessageOverlayEffectEnabled = _messageOverlayEffectEnabled,
             MessageOverlayEffect = _messageOverlayEffect,
-            SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot(),
             TaskPanelTitle = _taskPanelTitle,
             TaskAreas = BuildTaskAreasSnapshot(),
             CurrentTaskAreaId = _currentTaskAreaId,
-            Standup = BuildStandupSettingsSnapshot()
+            Standup = BuildStandupPreferencesSnapshot()
         };
+
+    private NotedSessionState CreateNotedSessionStateSnapshot()
+        => new()
+        {
+            Left = WindowState == WindowState.Normal ? Left : RestoreBounds.Left,
+            Top = WindowState == WindowState.Normal ? Top : RestoreBounds.Top,
+            Width = WindowState == WindowState.Normal ? Width : RestoreBounds.Width,
+            Height = WindowState == WindowState.Normal ? Height : RestoreBounds.Height,
+            Maximized = WindowState == WindowState.Maximized,
+            ActiveTabIndex = MainTabControl.SelectedIndex,
+            LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
+            AlarmPopupLeft = _alarmPopupLeft,
+            AlarmPopupTop = _alarmPopupTop,
+            PluginAlarmsSnoozedUntilLocal = _pluginAlarmsSnoozedUntilLocal,
+            StandupWindowLeft = _standupWindowLeft,
+            StandupWindowTop = _standupWindowTop,
+            StandupWindowWidth = _standupWindowWidth,
+            StandupWindowHeight = _standupWindowHeight,
+            StandupWindowMaximized = _standupWindowMaximized
+        };
+
+    private void SaveSessionState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, SessionStateFileName);
+        _windowSettingsStore.Save(path, CreateNotedSessionStateSnapshot(), options);
+    }
+
+    private void SaveProjectLineCounterState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, ProjectLineCounterStateFileName);
+        var payload = new ProjectLineCounterPluginState
+        {
+            ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
+            ProjectLineCounterTypes = BuildProjectLineCounterTypesSnapshot(),
+            ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot()
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void LoadProjectLineCounterState(string effectiveSettingsJsonPath)
+    {
+        var path = Path.Combine(_backupFolder, ProjectLineCounterStateFileName);
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<ProjectLineCounterPluginState>(path);
+            if (fromDisk != null)
+            {
+                ApplyProjectLineCounterSettings(
+                    fromDisk.ProjectLineCounterProjects,
+                    fromDisk.ProjectLineCounterTypes,
+                    fromDisk.ProjectLineCounterIgnoredFileTypes);
+                return;
+            }
+        }
+
+        var legacy = TryReadProjectLineCounterFromSettingsJson(effectiveSettingsJsonPath);
+        if (legacy != null && LineCounterJsonMentionedAnyList(legacy))
+        {
+            ApplyProjectLineCounterSettings(
+                legacy.ProjectLineCounterProjects,
+                legacy.ProjectLineCounterTypes,
+                legacy.ProjectLineCounterIgnoredFileTypes);
+            SaveProjectLineCounterState(opts);
+            return;
+        }
+
+        ApplyProjectLineCounterSettings(null, null, null);
+    }
+
+    private static ProjectLineCounterPluginState? TryReadProjectLineCounterFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<ProjectLineCounterPluginState>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Detects pre-split line-counter lists still present in <c>settings.json</c> so we can rewrite without those keys.
+    /// </summary>
+    private static bool SettingsJsonContainsLegacyProjectLineCounterKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            return doc.RootElement.TryGetProperty("ProjectLineCounterProjects", out _)
+                   || doc.RootElement.TryGetProperty("ProjectLineCounterTypes", out _)
+                   || doc.RootElement.TryGetProperty("ProjectLineCounterIgnoredFileTypes", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool LineCounterJsonMentionedAnyList(ProjectLineCounterPluginState s)
+        => s.ProjectLineCounterProjects != null
+           || s.ProjectLineCounterTypes != null
+           || s.ProjectLineCounterIgnoredFileTypes != null;
 
     private void LoadWindowSettings()
     {
@@ -155,7 +265,21 @@ public partial class MainWindow
 
             ApplyBootstrapSettings(loaded.BootstrapBackupFolder, loaded.BootstrapCloudBackupFolder, loaded.BootstrapSettings);
             ApplyEffectiveWindowSettings(loaded.EffectiveSettings);
-            LoadSafePasteData(loaded.EffectiveSettings.SafePasteKeyRecords, loaded.EffectiveSettings.SafePasteKeys);
+            _persistedLastNotedVersionForJson = loaded.EffectiveSettings.LastNotedVersion;
+
+            LoadProjectLineCounterState(loaded.EffectiveSettingsJsonPath);
+
+            var sessionPath = Path.Combine(_backupFolder, SessionStateFileName);
+            LegacyCombinedSettings? legacyCombined = null;
+            if (SessionStateMigration.JsonLooksLikeLegacyCombinedSettings(loaded.EffectiveSettingsJsonPath))
+                legacyCombined = SessionStateMigration.TryReadLegacyCombinedSettings(loaded.EffectiveSettingsJsonPath);
+
+            var session = _windowSettingsStore.Load<NotedSessionState>(sessionPath);
+            if (session == null && legacyCombined != null)
+                session = SessionStateMigration.FromLegacy(legacyCombined);
+
+            ApplyEffectiveSessionState(session);
+            LoadSafePasteData(legacyCombined);
             LoadTimeReports();
             LoadSearchFilesHistory();
             LoadTodoItems();
@@ -165,8 +289,47 @@ public partial class MainWindow
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
             ApplyColorThemeToOpenEditors();
             ApplyFridayFeelingToOpenEditors();
+
+            // Line counter moved to plugin-project-line-counter.json; stale keys are ignored on deserialize
+            // and would never be removed if LastNotedVersion already matches (MaybeStamp skips SaveWindowSettings).
+            if (SettingsJsonContainsLegacyProjectLineCounterKeys(loaded.EffectiveSettingsJsonPath))
+                SaveWindowSettings();
         }
         catch { /* ignore corrupt settings */ }
+    }
+
+    private void ApplyEffectiveSessionState(NotedSessionState? session)
+    {
+        var s = session ?? new NotedSessionState();
+        Left = s.Left;
+        Top = s.Top;
+        Width = s.Width;
+        Height = s.Height;
+        if (_windowSettingsService.TryGetNormalizedUtc(s.LastCloudCopyUtc, out var cloudCopyUtc))
+            _lastCloudSaveUtc = cloudCopyUtc;
+        if (s.ActiveTabIndex >= 0)
+            _activeTabIndex = s.ActiveTabIndex;
+        _pluginAlarmsSnoozedUntilLocal = s.PluginAlarmsSnoozedUntilLocal;
+        if (_pluginAlarmsSnoozedUntilLocal is DateTime snoozedUntil
+            && snoozedUntil <= DateTime.Now)
+        {
+            _pluginAlarmsSnoozedUntilLocal = null;
+        }
+        UpdateAlarmSnoozeStatus();
+        if (s.AlarmPopupLeft is double popupLeft
+            && !double.IsNaN(popupLeft)
+            && !double.IsInfinity(popupLeft))
+        {
+            _alarmPopupLeft = popupLeft;
+        }
+        if (s.AlarmPopupTop is double popupTop
+            && !double.IsNaN(popupTop)
+            && !double.IsInfinity(popupTop))
+        {
+            _alarmPopupTop = popupTop;
+        }
+        ApplyStandupWindowFromSession(s);
+        _startMaximized = s.Maximized;
     }
 
     private void SaveSearchFilesHistory(JsonSerializerOptions options)
@@ -246,6 +409,7 @@ public partial class MainWindow
 
     private void ResetSettingsToDefaults()
     {
+        _persistedLastNotedVersionForJson = null;
         _backupFolder = DefaultBackupFolder();
         _cloudBackupFolder = DefaultCloudBackupFolder();
         _selectedLineColor = DefaultSelectedLineColor;
@@ -308,8 +472,10 @@ public partial class MainWindow
         _backupAdditionalIncludeHeartbeatLogs = true;
         _backupAdditionalIncludeTodoItems = true;
         _backupAdditionalIncludeStateConfig = true;
+        _backupAdditionalIncludeSessionState = true;
         _backupAdditionalIncludeSafePaste = false;
         _backupAdditionalIncludeTimeReports = true;
+        _backupAdditionalIncludeProjectLineCounter = true;
         _backupAdditionalIncludeMidiCustomSongs = false;
         _backupAdditionalIncludeImages = true;
         ResetQuickMessageOverlaySettings();
@@ -323,16 +489,10 @@ public partial class MainWindow
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(bootstrap.CloudSaveMinutes, out var cloudMinutes))
             _cloudSaveIntervalMinutes = cloudMinutes;
-        if (_windowSettingsService.TryGetNormalizedUtc(bootstrap.LastCloudCopyUtc, out var cloudCopyUtc))
-            _lastCloudSaveUtc = cloudCopyUtc;
     }
 
     private void ApplyEffectiveWindowSettings(WindowSettings state)
     {
-        Left = state.Left;
-        Top = state.Top;
-        Width = state.Width;
-        Height = state.Height;
         if (state.AutoSaveSeconds > 0)
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(state.AutoSaveSeconds);
         if (state.InitialLines >= 1)
@@ -356,10 +516,6 @@ public partial class MainWindow
             _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
         _writeUptimeHeartbeatInNoted = state.WriteUptimeHeartbeatInNoted;
         _useStandaloneHeartbeatApp = state.UseStandaloneHeartbeatApp;
-        if (_windowSettingsService.TryGetNormalizedUtc(state.LastCloudCopyUtc, out var cloudCopyUtc))
-            _lastCloudSaveUtc = cloudCopyUtc;
-        if (state.ActiveTabIndex >= 0)
-            _activeTabIndex = state.ActiveTabIndex;
         _isFridayFeelingEnabled = state.FridayFeelingEnabled;
         _fancyBulletsEnabled = state.FancyBulletsEnabled;
         _wrapLongLinesVisually = state.WrapLongLinesVisually;
@@ -379,30 +535,7 @@ public partial class MainWindow
         _users = loadedUsers;
         ApplyPluginAlarmSettings(state.PluginAlarms);
         _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
-        _pluginAlarmsSnoozedUntilLocal = state.PluginAlarmsSnoozedUntilLocal;
-        if (_pluginAlarmsSnoozedUntilLocal is DateTime snoozedUntil
-            && snoozedUntil <= DateTime.Now)
-        {
-            _pluginAlarmsSnoozedUntilLocal = null;
-        }
-        UpdateAlarmSnoozeStatus();
-        ApplyProjectLineCounterSettings(
-            state.ProjectLineCounterProjects,
-            state.ProjectLineCounterTypes,
-            state.ProjectLineCounterIgnoredFileTypes);
         _searchFilesHistoryLimit = NormalizeSearchFilesHistoryLimit(state.SearchFilesHistoryLimit);
-        if (state.AlarmPopupLeft is double popupLeft
-            && !double.IsNaN(popupLeft)
-            && !double.IsInfinity(popupLeft))
-        {
-            _alarmPopupLeft = popupLeft;
-        }
-        if (state.AlarmPopupTop is double popupTop
-            && !double.IsNaN(popupTop)
-            && !double.IsInfinity(popupTop))
-        {
-            _alarmPopupTop = popupTop;
-        }
         if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
         _closedTabsMaxCount = NormalizeClosedTabsMaxCount(state.ClosedTabsMaxCount);
@@ -417,13 +550,14 @@ public partial class MainWindow
         _backupAdditionalIncludeHeartbeatLogs = state.BackupAdditionalHeartbeatLogs ?? true;
         _backupAdditionalIncludeTodoItems = state.BackupAdditionalTodoItems ?? true;
         _backupAdditionalIncludeStateConfig = state.BackupAdditionalStateConfig ?? true;
+        _backupAdditionalIncludeSessionState = state.BackupAdditionalSessionState ?? true;
         _backupAdditionalIncludeSafePaste = state.BackupAdditionalSafePaste ?? false;
         _backupAdditionalIncludeTimeReports = state.BackupAdditionalTimeReports ?? true;
+        _backupAdditionalIncludeProjectLineCounter = state.BackupAdditionalProjectLineCounter ?? true;
         _backupAdditionalIncludeMidiCustomSongs = state.BackupAdditionalMidiCustomSongs ?? false;
         _backupAdditionalIncludeImages = state.BackupAdditionalImages ?? true;
 
         ApplyThemeColorsFromSettings(state);
-        _startMaximized = state.Maximized;
     }
 
     private void ApplyShortcutSettings(WindowSettings state)
@@ -653,14 +787,23 @@ public partial class MainWindow
     private bool CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TimeReportsFileName);
 
+    private bool CopyProjectLineCounterStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, ProjectLineCounterStateFileName);
+
     private bool CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TodoItemsFileName);
 
     private bool CopyStateConfigFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, StateConfigFileName);
 
+    private bool CopySessionStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SessionStateFileName);
+
     private bool CopySafePasteDataFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SafePasteDataFileName);
+
+    private bool CopySafePasteKeysFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, SafePasteKeysFileName);
 
     private int CopyImageFolderToBackupFolder(string fromFolder, string toFolder)
     {
@@ -746,8 +889,10 @@ public partial class MainWindow
         public bool IncludeHeartbeat { get; init; }
         public bool IncludeTodoItems { get; init; }
         public bool IncludeStateConfig { get; init; }
+        public bool IncludeSessionState { get; init; }
         public bool IncludeSafePaste { get; init; }
         public bool IncludeTimeReports { get; init; }
+        public bool IncludeProjectLineCounter { get; init; }
         public bool IncludeMidiCustomSongs { get; init; }
         public bool IncludeImages { get; init; }
 
@@ -757,8 +902,10 @@ public partial class MainWindow
         public int HeartbeatFilesCopied { get; init; }
         public int TodoItemsFilesCopied { get; init; }
         public int StateConfigFilesCopied { get; init; }
+        public int SessionStateFilesCopied { get; init; }
         public int SafePasteFilesCopied { get; init; }
         public int TimeReportsFilesCopied { get; init; }
+        public int ProjectLineCounterFilesCopied { get; init; }
         public int MidiCustomSongsFilesCopied { get; init; }
         public int ImageFilesCopied { get; init; }
 
@@ -778,12 +925,14 @@ public partial class MainWindow
             const string TagHeartbeat = "Heartbeat logs";
             const string TagTodoItems = "Todo Items";
             const string TagStateConfig = "UI state";
+            const string TagSessionState = "Session state";
             const string TagSafePaste = "Safe Paste";
             const string TagTimeReports = "Time Reports";
+            const string TagProjectLineCounter = "Project Line Counter";
             const string TagMidiPaths = "MIDI Custom Songs Paths";
             const string TagImages = "Images";
 
-            var included = new List<string>(9);
+            var included = new List<string>(12);
             if (IncludeSettings)
                 included.Add($"{TagSettings}: {CopiesPhrase(SettingsFilesCopied)}");
             if (IncludeAppLog)
@@ -794,16 +943,20 @@ public partial class MainWindow
                 included.Add($"{TagTodoItems}: {CopiesPhrase(TodoItemsFilesCopied)}");
             if (IncludeStateConfig)
                 included.Add($"{TagStateConfig}: {CopiesPhrase(StateConfigFilesCopied)}");
+            if (IncludeSessionState)
+                included.Add($"{TagSessionState}: {CopiesPhrase(SessionStateFilesCopied)}");
             if (IncludeSafePaste)
                 included.Add($"{TagSafePaste}: {CopiesPhrase(SafePasteFilesCopied)}");
             if (IncludeTimeReports)
                 included.Add($"{TagTimeReports}: {CopiesPhrase(TimeReportsFilesCopied)}");
+            if (IncludeProjectLineCounter)
+                included.Add($"{TagProjectLineCounter}: {CopiesPhrase(ProjectLineCounterFilesCopied)}");
             if (IncludeMidiCustomSongs)
                 included.Add($"{TagMidiPaths}: {CopiesPhrase(MidiCustomSongsFilesCopied)}");
             if (IncludeImages)
                 included.Add($"{TagImages}: {CopiesPhrase(ImageFilesCopied)}");
 
-            var excluded = new List<string>(8);
+            var excluded = new List<string>(11);
             if (!IncludeSettings)
                 excluded.Add(TagSettings);
             if (!IncludeAppLog)
@@ -814,10 +967,14 @@ public partial class MainWindow
                 excluded.Add(TagTodoItems);
             if (!IncludeStateConfig)
                 excluded.Add(TagStateConfig);
+            if (!IncludeSessionState)
+                excluded.Add(TagSessionState);
             if (!IncludeSafePaste)
                 excluded.Add(TagSafePaste);
             if (!IncludeTimeReports)
                 excluded.Add(TagTimeReports);
+            if (!IncludeProjectLineCounter)
+                excluded.Add(TagProjectLineCounter);
             if (!IncludeMidiCustomSongs)
                 excluded.Add(TagMidiPaths);
             if (!IncludeImages)
@@ -852,10 +1009,22 @@ public partial class MainWindow
         var stateConfigCopied = _backupAdditionalIncludeStateConfig && CopyStateConfigFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
-        var safePasteCopied = _backupAdditionalIncludeSafePaste && CopySafePasteDataFileToBackupFolder(fromFolder, toFolder)
+        var sessionStateCopied = _backupAdditionalIncludeSessionState && CopySessionStateFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
+        var safePasteCopied = 0;
+        if (_backupAdditionalIncludeSafePaste)
+        {
+            if (CopySafePasteDataFileToBackupFolder(fromFolder, toFolder))
+                safePasteCopied++;
+            if (CopySafePasteKeysFileToBackupFolder(fromFolder, toFolder))
+                safePasteCopied++;
+        }
         var timeReportsCopied = _backupAdditionalIncludeTimeReports && CopyTimeReportsFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var projectLineCounterCopied = _backupAdditionalIncludeProjectLineCounter
+            && CopyProjectLineCounterStateFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
         var midiCopied = _backupAdditionalIncludeMidiCustomSongs
@@ -873,8 +1042,10 @@ public partial class MainWindow
             IncludeHeartbeat = _backupAdditionalIncludeHeartbeatLogs,
             IncludeTodoItems = _backupAdditionalIncludeTodoItems,
             IncludeStateConfig = _backupAdditionalIncludeStateConfig,
+            IncludeSessionState = _backupAdditionalIncludeSessionState,
             IncludeSafePaste = _backupAdditionalIncludeSafePaste,
             IncludeTimeReports = _backupAdditionalIncludeTimeReports,
+            IncludeProjectLineCounter = _backupAdditionalIncludeProjectLineCounter,
             IncludeMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             IncludeImages = _backupAdditionalIncludeImages,
             SettingsFilesCopied = settingsCopied,
@@ -882,8 +1053,10 @@ public partial class MainWindow
             HeartbeatFilesCopied = heartbeatCopied,
             TodoItemsFilesCopied = todoCopied,
             StateConfigFilesCopied = stateConfigCopied,
+            SessionStateFilesCopied = sessionStateCopied,
             SafePasteFilesCopied = safePasteCopied,
             TimeReportsFilesCopied = timeReportsCopied,
+            ProjectLineCounterFilesCopied = projectLineCounterCopied,
             MidiCustomSongsFilesCopied = midiCopied,
             ImageFilesCopied = imageCopied
         };

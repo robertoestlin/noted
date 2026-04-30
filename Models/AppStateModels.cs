@@ -171,6 +171,14 @@ public sealed class ProjectLineCounterType
     public List<string>? IgnoredFolders { get; set; }
 }
 
+/// <summary>Project Line Counter plugin state in <c>plugin-project-line-counter.json</c>.</summary>
+public sealed class ProjectLineCounterPluginState
+{
+    public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
+    public List<ProjectLineCounterType>? ProjectLineCounterTypes { get; set; }
+    public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
+}
+
 public sealed class SearchFilesHistoryMatch
 {
     public string RelativePath { get; set; } = string.Empty;
@@ -214,24 +222,34 @@ public sealed class StandupWeekdayTime
     public int Minute { get; set; }
 }
 
+/// <summary>Standup schedule preferences in <c>settings.json</c> (window bounds live in <c>session-state.json</c>).</summary>
 public sealed class StandupSettings
 {
     public List<StandupWeekdayTime>? WeekdayTimes { get; set; }
 
     /// <summary>0 means never delete; otherwise the number of days to keep.</summary>
     public int RetentionDays { get; set; }
+}
 
-    /// <summary>
-    /// Last normal / restore bounds for the Standup window (DIP).
-    /// Null when never saved or cleared by defaults reset.
-    /// </summary>
-    public double? WindowLeft { get; set; }
-    public double? WindowTop { get; set; }
-    public double? WindowWidth { get; set; }
-    public double? WindowHeight { get; set; }
+/// <summary>Session-only UI state in <c>session-state.json</c>.</summary>
+public sealed class NotedSessionState
+{
+    public double Left { get; set; } = 100;
+    public double Top { get; set; } = 100;
+    public double Width { get; set; } = 1100;
+    public double Height { get; set; } = 700;
+    public bool Maximized { get; set; }
+    public int ActiveTabIndex { get; set; }
+    public DateTime? LastCloudCopyUtc { get; set; }
+    public double? AlarmPopupLeft { get; set; }
+    public double? AlarmPopupTop { get; set; }
+    public DateTime? PluginAlarmsSnoozedUntilLocal { get; set; }
 
-    /// <summary>Whether the Standup window was maximized when closed.</summary>
-    public bool WindowMaximized { get; set; }
+    public double? StandupWindowLeft { get; set; }
+    public double? StandupWindowTop { get; set; }
+    public double? StandupWindowWidth { get; set; }
+    public double? StandupWindowHeight { get; set; }
+    public bool StandupWindowMaximized { get; set; }
 }
 
 public sealed class StandupNoteEntry
@@ -250,11 +268,9 @@ public sealed class NotedStateConfig
 
 public sealed class WindowSettings
 {
-    public double Left { get; set; } = 100;
-    public double Top { get; set; } = 100;
-    public double Width { get; set; } = 1100;
-    public double Height { get; set; } = 700;
-    public bool Maximized { get; set; }
+    /// <summary>Assembly version last written by startup handshake (not bumped on routine saves).</summary>
+    public string? LastNotedVersion { get; set; }
+
     public int AutoSaveSeconds { get; set; } = 30;
     public int UptimeHeartbeatSeconds { get; set; } = 300;
     public bool WriteUptimeHeartbeatInNoted { get; set; } = true;
@@ -299,11 +315,17 @@ public sealed class WindowSettings
     /// <summary>Include <c>state-config.json</c> (default true).</summary>
     public bool? BackupAdditionalStateConfig { get; set; }
 
+    /// <summary>Include <c>session-state.json</c> (default true).</summary>
+    public bool? BackupAdditionalSessionState { get; set; }
+
     /// <summary>Include <c>safe-paste.dat</c> (default false).</summary>
     public bool? BackupAdditionalSafePaste { get; set; }
 
     /// <summary>Include <c>plugin-time-reports.json</c> (default true).</summary>
     public bool? BackupAdditionalTimeReports { get; set; }
+
+    /// <summary>Include <c>plugin-project-line-counter.json</c> (default true).</summary>
+    public bool? BackupAdditionalProjectLineCounter { get; set; }
 
     /// <summary>Include <c>midi-custom-songs.json</c> (default false).</summary>
     public bool? BackupAdditionalMidiCustomSongs { get; set; }
@@ -313,8 +335,6 @@ public sealed class WindowSettings
 
     public int? CloudSaveHours { get; set; }
     public int? CloudSaveMinutes { get; set; }
-    public DateTime? LastCloudCopyUtc { get; set; }
-    public int ActiveTabIndex { get; set; }
     public bool FridayFeelingEnabled { get; set; } = true;
     public bool FancyBulletsEnabled { get; set; }
     public bool WrapLongLinesVisually { get; set; } = true;
@@ -333,12 +353,6 @@ public sealed class WindowSettings
     public List<UserProfile>? UserProfiles { get; set; }
     public List<PluginAlarmSettings>? PluginAlarms { get; set; }
     public bool PluginAlarmsEnabled { get; set; } = true;
-    public DateTime? PluginAlarmsSnoozedUntilLocal { get; set; }
-    public double? AlarmPopupLeft { get; set; }
-    public double? AlarmPopupTop { get; set; }
-    public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
-    public List<ProjectLineCounterType>? ProjectLineCounterTypes { get; set; }
-    public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
     public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
     public int ClosedTabsMaxCount { get; set; } = 10;
@@ -357,8 +371,6 @@ public sealed class WindowSettings
     public int? MessageOverlayCountdownSeconds { get; set; }
     public bool? MessageOverlayEffectEnabled { get; set; }
     public string? MessageOverlayEffect { get; set; }
-    public List<SafePasteKeyRecord>? SafePasteKeyRecords { get; set; }
-    public List<string>? SafePasteKeys { get; set; }
     public string? TaskPanelTitle { get; set; }
     public List<TaskAreaState>? TaskAreas { get; set; }
     public string? CurrentTaskAreaId { get; set; }
