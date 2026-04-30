@@ -44,6 +44,7 @@ public partial class MainWindow
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
             SaveSafePasteData(opts);
+            SaveStandupNotes(opts);
         }
         catch { /* non-critical */ }
     }
@@ -135,7 +136,8 @@ public partial class MainWindow
             SafePasteKeyRecords = BuildSafePasteKeyRecordsSnapshot(),
             TaskPanelTitle = _taskPanelTitle,
             TaskAreas = BuildTaskAreasSnapshot(),
-            CurrentTaskAreaId = _currentTaskAreaId
+            CurrentTaskAreaId = _currentTaskAreaId,
+            Standup = BuildStandupSettingsSnapshot()
         };
 
     private void LoadWindowSettings()
@@ -157,6 +159,7 @@ public partial class MainWindow
             LoadTimeReports();
             LoadSearchFilesHistory();
             LoadTodoItems();
+            LoadStandupNotes();
             LoadStateConfig();
             if (_lastCloudSaveUtc == DateTime.MinValue)
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
@@ -298,6 +301,7 @@ public partial class MainWindow
         _taskAreas = BuildDefaultTaskAreas();
         _currentTaskAreaId = DefaultTaskAreaId;
         _safePasteSavedEntries.Clear();
+        ResetStandupSettingsToDefaults();
         _todoPanelVisible = false;
         _backupAdditionalIncludeSettingsFile = true;
         _backupAdditionalIncludeAppLog = true;
@@ -406,6 +410,7 @@ public partial class MainWindow
         _saveBulletsAsMarker = string.Equals(state.SaveBulletsAs, "*", StringComparison.Ordinal) ? '*' : '-';
         ApplyQuickMessageOverlaySettings(state);
         ApplyTaskPanelSettings(state);
+        ApplyStandupSettings(state.Standup);
         _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);
         _backupAdditionalIncludeSettingsFile = state.BackupAdditionalSettingsFile ?? true;
         _backupAdditionalIncludeAppLog = state.BackupAdditionalAppLog ?? true;

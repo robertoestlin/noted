@@ -6933,6 +6933,7 @@ public partial class MainWindow : Window
     private void MenuCidrConverter_Click(object sender, RoutedEventArgs e) => ShowCidrConverterDialog();
     private void MenuPasswordGenerator_Click(object sender, RoutedEventArgs e) => ShowPasswordGeneratorDialog();
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();
+    private void MenuStandup_Click(object sender, RoutedEventArgs e) => ShowStandupDialog();
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
     private void MenuSearchFiles_Click(object sender, RoutedEventArgs e) => ShowSearchFilesDialog();
     private void MenuTextSplitter_Click(object sender, RoutedEventArgs e) => ShowTextSplitterDialog();

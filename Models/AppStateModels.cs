@@ -205,6 +205,42 @@ public sealed class SafePasteKeyRecord
     public string Key { get; set; } = string.Empty;
 }
 
+public sealed class StandupWeekdayTime
+{
+    /// <summary>0 = Sunday … 6 = Saturday, matching <see cref="System.DayOfWeek"/>.</summary>
+    public int DayOfWeek { get; set; }
+    public bool Enabled { get; set; }
+    public int Hour { get; set; }
+    public int Minute { get; set; }
+}
+
+public sealed class StandupSettings
+{
+    public List<StandupWeekdayTime>? WeekdayTimes { get; set; }
+
+    /// <summary>0 means never delete; otherwise the number of days to keep.</summary>
+    public int RetentionDays { get; set; }
+
+    /// <summary>
+    /// Last normal / restore bounds for the Standup window (DIP).
+    /// Null when never saved or cleared by defaults reset.
+    /// </summary>
+    public double? WindowLeft { get; set; }
+    public double? WindowTop { get; set; }
+    public double? WindowWidth { get; set; }
+    public double? WindowHeight { get; set; }
+
+    /// <summary>Whether the Standup window was maximized when closed.</summary>
+    public bool WindowMaximized { get; set; }
+}
+
+public sealed class StandupNoteEntry
+{
+    /// <summary>Local-date key in <c>yyyy-MM-dd</c>.</summary>
+    public string Date { get; set; } = string.Empty;
+    public string Notes { get; set; } = string.Empty;
+}
+
 /// <summary>Persisted UI/session state stored in <c>state-config.json</c> (separate from <c>settings.json</c>).</summary>
 public sealed class NotedStateConfig
 {
@@ -326,4 +362,7 @@ public sealed class WindowSettings
     public string? TaskPanelTitle { get; set; }
     public List<TaskAreaState>? TaskAreas { get; set; }
     public string? CurrentTaskAreaId { get; set; }
+
+    /// <summary>Standup plugin per-weekday times and retention.</summary>
+    public StandupSettings? Standup { get; set; }
 }

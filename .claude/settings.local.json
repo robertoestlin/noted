@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build *)",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -nologo --verbosity minimal)"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -nologo --verbosity minimal)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" --list-sdks)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build -nologo)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build -nologo -t:Compile)"
     ]
   }
 }

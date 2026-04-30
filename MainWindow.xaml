@@ -184,6 +184,7 @@
                     </MenuItem>
                     <MenuItem Header="Safe _Paste Area" Click="MenuSafePasteArea_Click"/>
                     <MenuItem Header="_Seach Files" Click="MenuSearchFiles_Click"/>
+                    <MenuItem Header="Stan_dup" Click="MenuStandup_Click"/>
                     <MenuItem Header="Task _Panel" InputGestureText="F3" Click="MenuTodoList_Click"/>
                     <MenuItem Header="Te_xt">
                         <MenuItem Header="Text _Splitter" Click="MenuTextSplitter_Click"/>
