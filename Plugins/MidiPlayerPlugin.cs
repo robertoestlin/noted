@@ -481,6 +481,121 @@ public partial class MainWindow
         return path;
     }
 
+    /// <summary>
+    /// Dark chrome for playlist context menus to match MIDI player panels (#121D31 / #2D3F63).
+    /// </summary>
+    private static ResourceDictionary MidiPlayerContextMenuResources()
+    {
+        const string xaml =
+"""
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="MidiMenuHoverBrush" Color="#77294A7A"/>
+
+  <Style TargetType="Separator">
+    <Setter Property="Background" Value="#2D3F63"/>
+    <Setter Property="Margin" Value="10,6"/>
+    <Setter Property="Height" Value="1"/>
+  </Style>
+
+  <Style TargetType="ContextMenu">
+    <Setter Property="Background" Value="#121D31"/>
+    <Setter Property="BorderBrush" Value="#2D3F63"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Variable"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="HasDropShadow" Value="False"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContextMenu">
+          <Border Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="8"
+                  Padding="4">
+            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType="MenuItem">
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="12,9,14,9"/>
+    <Setter Property="FontFamily" Value="Segoe UI, Segoe UI Variable"/>
+    <Setter Property="FontSize" Value="14"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="MenuItem">
+          <Border x:Name="templateRoot"
+                  Background="{TemplateBinding Background}"
+                  CornerRadius="4"
+                  Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <ContentPresenter x:Name="headerPresenter"
+                                Grid.Column="0"
+                                ContentSource="Header"
+                                RecognizesAccessKey="True"
+                                VerticalAlignment="Center"
+                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+              <Path x:Name="arrow"
+                    Grid.Column="1"
+                    Visibility="Collapsed"
+                    VerticalAlignment="Center"
+                    Margin="10,0,4,0"
+                    Fill="White"
+                    Data="M 0 0 L 4 3.5 L 0 7 Z"/>
+              <Popup x:Name="PART_Popup"
+                     AllowsTransparency="True"
+                     Focusable="False"
+                     Placement="Right"
+                     HorizontalOffset="-4"
+                     VerticalOffset="-4"
+                     IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                     PopupAnimation="Fade"
+                     PlacementTarget="{Binding ElementName=templateRoot}">
+                <Border Background="#121D31"
+                        BorderBrush="#2D3F63"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="4">
+                  <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                </Border>
+              </Popup>
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+              <Setter TargetName="templateRoot" Property="Background" Value="{StaticResource MidiMenuHoverBrush}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="#6688AA"/>
+            </Trigger>
+            <Trigger Property="HasItems" Value="True">
+              <Setter TargetName="arrow" Property="Visibility" Value="Visible"/>
+            </Trigger>
+            <Trigger Property="IsSuspendingPopupAnimation" Value="True">
+              <Setter TargetName="PART_Popup" Property="PopupAnimation" Value="None"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>
+""";
+        return (ResourceDictionary)XamlReader.Parse(xaml);
+    }
+
     private void ShowMidiPlayerDialog()
     {
         // Guard against double-open if invoked while a player is already alive.
@@ -537,6 +652,28 @@ public partial class MainWindow
         string? currentLoadedPath = null;
         var rng = new Random();
         var shuffleHistory = new List<int>();
+        string? pendingPlayAfterCurrentPath = null;
+        var playingQueuedInterstitial = false;
+        var resumeIndexAfterQueuedTrack = -1;
+        int? pendingContinuePlayHereViewIndex = null;
+
+        void ClearPendingQueueInsert()
+        {
+            pendingPlayAfterCurrentPath = null;
+            playingQueuedInterstitial = false;
+            resumeIndexAfterQueuedTrack = -1;
+        }
+
+        void ClearPendingContinuePlayHere()
+        {
+            pendingContinuePlayHereViewIndex = null;
+        }
+
+        void ClearAllDeferredPlaybackIntent()
+        {
+            ClearPendingQueueInsert();
+            ClearPendingContinuePlayHere();
+        }
 
         void RebuildPlaybackQueueFromPlaybackId()
         {
@@ -577,6 +714,7 @@ public partial class MainWindow
         var preloadDotReadyBrush = new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0));
 
         dlg.Background = new SolidColorBrush(Color.FromRgb(0x09, 0x0F, 0x1A));
+        dlg.Resources.MergedDictionaries.Add(MidiPlayerContextMenuResources());
         var root = new DockPanel { Margin = new Thickness(12) };
 
         // ---- Header ----------------------------------------------------------------------
@@ -1570,7 +1708,9 @@ public partial class MainWindow
 
         void SetStatus(string text, Brush? color = null)
         {
-            lblStatus.Text = text;
+            var t = text.TrimEnd();
+            t = t.TrimEnd('.');
+            lblStatus.Text = t;
             lblStatus.Foreground = color ?? new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA));
         }
 
@@ -1908,6 +2048,7 @@ public partial class MainWindow
 
             currentPlaylistId = newId;
             midiPlaylistStore.SelectedPlaylistId = currentPlaylistId;
+            ClearPendingContinuePlayHere();
 
             playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
             lblHeaderViewPlaylist.Text = PlaylistDisplayName(currentPlaylistId);
@@ -2046,12 +2187,173 @@ public partial class MainWindow
             AfterPlaylistPathsMutated();
         }
 
+        string? PromptMidiPlayerText(string title, string label, string initialValue)
+        {
+            var prompt = new Window
+            {
+                Title = title,
+                Width = 440,
+                Height = 212,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = dlg,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Background = new SolidColorBrush(Color.FromRgb(0x0C, 0x14, 0x24))
+            };
+
+            var shell = new Border
+            {
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x59)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14),
+                Background = new LinearGradientBrush(
+                    Color.FromRgb(0x0F, 0x17, 0x2A),
+                    Color.FromRgb(0x0B, 0x14, 0x24),
+                    90)
+            };
+
+            var root = new DockPanel();
+            shell.Child = root;
+
+            var buttonRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 14, 0, 0)
+            };
+            var okBtn = new Button
+            {
+                Content = "OK",
+                MinWidth = 88,
+                Padding = new Thickness(16, 8, 16, 8),
+                Margin = new Thickness(0, 0, 8, 0),
+                IsDefault = true,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+                BorderThickness = new Thickness(1),
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Variable"),
+                FontSize = 14,
+                Cursor = Cursors.Hand
+            };
+            var cancelBtn = new Button
+            {
+                Content = "Cancel",
+                MinWidth = 88,
+                Padding = new Thickness(16, 8, 16, 8),
+                IsCancel = true,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+                BorderThickness = new Thickness(1),
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Variable"),
+                FontSize = 14,
+                Cursor = Cursors.Hand
+            };
+            buttonRow.Children.Add(okBtn);
+            buttonRow.Children.Add(cancelBtn);
+            DockPanel.SetDock(buttonRow, Dock.Bottom);
+            root.Children.Add(buttonRow);
+
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var titleBlock = new TextBlock
+            {
+                Text = title,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+                FontSize = 15,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Variable")
+            };
+            var titleDrag = new Border { Background = Brushes.Transparent, Child = titleBlock };
+            titleDrag.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e.ChangedButton == MouseButton.Left)
+                    try { prompt.DragMove(); } catch { /* ignore */ }
+            };
+            Grid.SetColumn(titleDrag, 0);
+            header.Children.Add(titleDrag);
+            var btnPromptClose = new Button
+            {
+                Content = "\uE711",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                Width = 32,
+                Height = 32,
+                FontSize = 12,
+                Style = iconButtonStyle,
+                ToolTip = "Close"
+            };
+            btnPromptClose.Click += (_, _) => prompt.Close();
+            Grid.SetColumn(btnPromptClose, 1);
+            header.Children.Add(btnPromptClose);
+            DockPanel.SetDock(header, Dock.Top);
+            root.Children.Add(header);
+
+            var lbl = new TextBlock
+            {
+                Text = label,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC1, 0xCF, 0xEA)),
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 8),
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Variable"),
+                TextWrapping = TextWrapping.Wrap
+            };
+            var txt = new TextBox
+            {
+                Text = initialValue,
+                Padding = new Thickness(8, 6, 8, 6),
+                FontFamily = new FontFamily("Segoe UI, Segoe UI Variable"),
+                FontSize = 14,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x14, 0x24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x2A, 0x3A, 0x59)),
+                BorderThickness = new Thickness(1),
+                CaretBrush = Brushes.White
+            };
+
+            var middle = new StackPanel();
+            middle.Children.Add(lbl);
+            middle.Children.Add(txt);
+            root.Children.Add(middle);
+
+            string? result = null;
+            okBtn.Click += (_, _) =>
+            {
+                result = txt.Text ?? string.Empty;
+                prompt.DialogResult = true;
+            };
+
+            prompt.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Escape)
+                {
+                    prompt.Close();
+                    e.Handled = true;
+                }
+            };
+
+            prompt.Content = shell;
+            prompt.Loaded += (_, _) =>
+            {
+                txt.Focus();
+                Keyboard.Focus(txt);
+                txt.SelectAll();
+            };
+
+            return prompt.ShowDialog() == true ? result : null;
+        }
+
         void DuplicateViewPlaylistAsNewUserPlaylist()
         {
             if (playlist.Count == 0)
                 return;
 
-            var name = PromptForText("Duplicate playlist", "New playlist name:", string.Empty);
+            var name = PromptMidiPlayerText("Duplicate playlist", "New playlist name:", string.Empty);
             if (string.IsNullOrWhiteSpace(name))
                 return;
             name = name.Trim();
@@ -2071,6 +2373,7 @@ public partial class MainWindow
             });
             SaveMidiPlaylistsStore(midiPlaylistStore);
             rebuildPlaylistPickerUi?.Invoke();
+            RebuildPlaylistUi();
             SetStatus($"Duplicated as \"{name}\" ({paths.Count} track{(paths.Count == 1 ? string.Empty : "s")}).");
         }
 
@@ -2124,7 +2427,7 @@ public partial class MainWindow
 
         btnPlaylistAdd.Click += (_, _) =>
         {
-            var name = PromptForText("New playlist", "Playlist name:", string.Empty);
+            var name = PromptMidiPlayerText("New playlist", "Playlist name:", string.Empty);
             if (string.IsNullOrWhiteSpace(name))
                 return;
             name = name.Trim();
@@ -2137,6 +2440,7 @@ public partial class MainWindow
             });
             SaveMidiPlaylistsStore(midiPlaylistStore);
             rebuildPlaylistPickerUi?.Invoke();
+            RebuildPlaylistUi();
             SetStatus($"Created playlist \"{name}\".");
         };
 
@@ -2158,6 +2462,24 @@ public partial class MainWindow
                 item.BorderThickness = new Thickness(2);
                 CenterItemInPlaylist(item);
                 currentHighlightedItem = item;
+            }
+        }
+
+        void ApplyNowPlayingLabelsForLoadedPath(string path)
+        {
+            var idx = playbackQueue.FindIndex(s =>
+                string.Equals(s.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                var song = playbackQueue[idx];
+                lblNowPlaying.Text = song.Title;
+                lblNowPlayingMeta.Text = song.Group;
+            }
+            else
+            {
+                var (group, title) = SplitMidiTitle(Path.GetFileNameWithoutExtension(path));
+                lblNowPlaying.Text = title;
+                lblNowPlayingMeta.Text = group;
             }
         }
 
@@ -2194,23 +2516,58 @@ public partial class MainWindow
             currentLoadedPath = path;
             var info = TryParseMidiHeader(path);
             UpdateInfo(path, info);
-
-            if (currentIndex >= 0 && currentIndex < playbackQueue.Count)
-            {
-                var song = playbackQueue[currentIndex];
-                lblNowPlaying.Text = song.Title;
-                lblNowPlayingMeta.Text = song.Group;
-            }
-            else
-            {
-                var (group, title) = SplitMidiTitle(Path.GetFileNameWithoutExtension(path));
-                lblNowPlaying.Text = title;
-                lblNowPlayingMeta.Text = group;
-            }
+            ApplyNowPlayingLabelsForLoadedPath(path);
 
             UpdateButtons();
             HighlightCurrent();
             SetStatus($"Loaded {Path.GetFileName(path)} ({FormatTime(lengthMs)})");
+            return true;
+        }
+
+        bool TryActivatePreloadedWarmupForQueuedPath(string insertPath)
+        {
+            if (!preloadedNextDeviceOpen
+                || string.IsNullOrWhiteSpace(preloadedNextPath)
+                || !string.Equals(preloadedNextPath, insertPath, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            timer.Stop();
+            if (isOpen)
+            {
+                TryMci($"stop {alias}", null, out _);
+                TryMci($"close {alias}", null, out _);
+            }
+
+            var previousAlias = alias;
+            alias = warmupAlias;
+            warmupAlias = previousAlias;
+            preloadedNextDeviceOpen = false;
+            preloadedNextIndex = null;
+            preloadedNextPath = null;
+
+            isOpen = true;
+            isPlaying = false;
+            isPaused = false;
+            currentLoadedPath = insertPath;
+
+            TryMci($"set {alias} time format milliseconds", null, out _);
+            lengthMs = QueryStatusNumber("length");
+            positionMs = 0;
+            NormalizeAudioSessionDisplayName();
+
+            seekSlider.Maximum = Math.Max(1, lengthMs);
+            seekSlider.Value = 0;
+            lblLength.Text = FormatTime(lengthMs);
+            lblPosition.Text = "00:00";
+
+            var info = TryParseMidiHeader(insertPath);
+            UpdateInfo(insertPath, info);
+            ApplyNowPlayingLabelsForLoadedPath(insertPath);
+
+            UpdateButtons();
+            HighlightCurrent();
+            UpdatePreloadIndicator();
+            SetStatus($"Loaded {Path.GetFileName(insertPath)} ({FormatTime(lengthMs)})");
             return true;
         }
 
@@ -2389,7 +2746,30 @@ public partial class MainWindow
 
         void TryPreloadUpcomingTrack(bool force)
         {
-            if (!isOpen || !isPlaying || btnLoop.IsChecked == true || lengthMs <= 0)
+            if (!isOpen || btnLoop.IsChecked == true || lengthMs <= 0)
+                return;
+
+            if (pendingPlayAfterCurrentPath != null
+                && !string.IsNullOrWhiteSpace(pendingPlayAfterCurrentPath)
+                && File.Exists(pendingPlayAfterCurrentPath))
+            {
+                var qPath = pendingPlayAfterCurrentPath;
+                if (preloadedNextDeviceOpen
+                    && string.Equals(qPath, preloadedNextPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                if (TryPreopenNextPath(qPath))
+                {
+                    preloadedNextIndex = null;
+                    preloadedNextPath = qPath;
+                    UpdatePreloadIndicator();
+                }
+                else
+                    ClearNextPreload(closeDevice: true);
+                return;
+            }
+
+            if (!isPlaying)
                 return;
 
             if (!force)
@@ -2399,16 +2779,26 @@ public partial class MainWindow
                     return;
             }
 
-            var candidateIndex = preloadedNextIndex;
-            if (candidateIndex is null
-                || candidateIndex < 0
-                || candidateIndex >= playbackQueue.Count
-                || candidateIndex == currentIndex)
+            int? candidateIndex;
+            if (playingQueuedInterstitial
+                && resumeIndexAfterQueuedTrack >= 0
+                && IsValidIndex(resumeIndexAfterQueuedTrack, playbackQueue.Count))
             {
-                var resolved = ResolveAutoNextIndex(allowShuffle: true);
-                if (resolved < 0)
-                    return;
-                candidateIndex = resolved;
+                candidateIndex = resumeIndexAfterQueuedTrack;
+            }
+            else
+            {
+                candidateIndex = preloadedNextIndex;
+                if (candidateIndex is null
+                    || candidateIndex < 0
+                    || candidateIndex >= playbackQueue.Count
+                    || candidateIndex == currentIndex)
+                {
+                    var resolved = ResolveAutoNextIndex(allowShuffle: true);
+                    if (resolved < 0)
+                        return;
+                    candidateIndex = resolved;
+                }
             }
 
             var nextPath = playbackQueue[candidateIndex.Value].Path;
@@ -2462,6 +2852,7 @@ public partial class MainWindow
             positionMs = 0;
             seekSlider.Value = 0;
             lblPosition.Text = "00:00";
+            ClearAllDeferredPlaybackIntent();
             ClearNextPreload();
             UpdateButtons();
             SetStatus("Stopped.");
@@ -2469,6 +2860,7 @@ public partial class MainWindow
 
         void ResetPlayerView()
         {
+            ClearAllDeferredPlaybackIntent();
             currentIndex = -1;
             lengthMs = 0;
             positionMs = 0;
@@ -2519,8 +2911,10 @@ public partial class MainWindow
 
         void PlayIndex(int index, bool slotIsViewRow = true)
         {
+            ClearPendingQueueInsert();
             if (slotIsViewRow)
             {
+                ClearPendingContinuePlayHere();
                 if (index < 0 || index >= playlist.Count)
                     return;
                 playbackPlaylistId = currentPlaylistId;
@@ -2558,6 +2952,7 @@ public partial class MainWindow
                 return false;
             }
 
+            ClearPendingQueueInsert();
             var nextIndex = preloadedNextIndex.Value;
             var nextSong = playbackQueue[nextIndex];
             if (string.IsNullOrWhiteSpace(nextSong.Path) || !File.Exists(nextSong.Path))
@@ -2625,9 +3020,134 @@ public partial class MainWindow
             return rng.Next(playbackQueue.Count);
         }
 
+        int ComputeNextPlaybackIndexForQueueAdvance()
+        {
+            if (playbackQueue.Count == 0)
+                return -1;
+            if (btnShuffle.IsChecked == true)
+                return PickShuffleIndex();
+            return currentIndex < 0 ? 0 : (currentIndex + 1) % playbackQueue.Count;
+        }
+
+        /// <summary>
+        /// Consumes <see cref="pendingPlayAfterCurrentPath"/> and plays it as a one-shot,
+        /// with resume index set to what would play next in the playlist from the current slot.
+        /// Used when the current track ends naturally or when the user skips forward (Next).
+        /// </summary>
+        bool TryStartPendingQueuedInterstitial()
+        {
+            if (pendingPlayAfterCurrentPath == null
+                || string.IsNullOrWhiteSpace(pendingPlayAfterCurrentPath)
+                || !File.Exists(pendingPlayAfterCurrentPath))
+                return false;
+
+            var insertPath = pendingPlayAfterCurrentPath;
+            pendingPlayAfterCurrentPath = null;
+            resumeIndexAfterQueuedTrack = ComputeNextPlaybackIndexForQueueAdvance();
+            playingQueuedInterstitial = true;
+            ClearStartPreload();
+
+            if (TryActivatePreloadedWarmupForQueuedPath(insertPath))
+            {
+                Play();
+                dlg.Dispatcher.BeginInvoke(
+                    () => TryPreloadUpcomingTrack(force: true),
+                    DispatcherPriority.Background);
+                return true;
+            }
+
+            ClearNextPreload(closeDevice: true);
+            if (!LoadFile(insertPath))
+            {
+                playingQueuedInterstitial = false;
+                resumeIndexAfterQueuedTrack = -1;
+                pendingPlayAfterCurrentPath = insertPath;
+                return false;
+            }
+
+            Play();
+            dlg.Dispatcher.BeginInvoke(
+                () => TryPreloadUpcomingTrack(force: true),
+                DispatcherPriority.Background);
+            return true;
+        }
+
+        void AdvanceAfterNaturalTrackEnd()
+        {
+            if (btnShuffle.IsChecked == true && playbackQueue.Count > 0)
+            {
+                PlayNext();
+                return;
+            }
+            if (currentIndex >= 0 && currentIndex + 1 < playbackQueue.Count)
+            {
+                PlayIndex(currentIndex + 1, slotIsViewRow: false);
+                return;
+            }
+            CloseDevice();
+            ResetPlayerView();
+            SetStatus("Finished.");
+        }
+
+        void AddSongToQueueAfterCurrent(string path, string queuedTitle, string? queuedGroup)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                return;
+            if (!isOpen || playingQueuedInterstitial || currentIndex < 0)
+                return;
+            pendingPlayAfterCurrentPath = path;
+            var display = string.IsNullOrWhiteSpace(queuedGroup)
+                ? queuedTitle
+                : $"{queuedGroup} - {queuedTitle}";
+            SetStatus($"Queued {display}");
+            dlg.Dispatcher.BeginInvoke(
+                () => TryPreloadUpcomingTrack(force: true),
+                DispatcherPriority.Background);
+        }
+
+        void ContinuePlayHere(int viewIndex)
+        {
+            if (viewIndex < 0 || viewIndex >= playlist.Count)
+                return;
+            if (!isOpen || currentIndex < 0)
+            {
+                PlayIndex(viewIndex, slotIsViewRow: true);
+                return;
+            }
+
+            // Only one deferred handoff: a new choice replaces any previous "Continue play here".
+            var hadExistingDeferral = pendingContinuePlayHereViewIndex.HasValue;
+            pendingContinuePlayHereViewIndex = viewIndex;
+            var song = playlist[viewIndex];
+            var label = string.IsNullOrWhiteSpace(song.Group)
+                ? song.Title
+                : $"{song.Group} - {song.Title}";
+            SetStatus($"Will continue with {label} after current track…");
+            if (hadExistingDeferral)
+            {
+                dlg.Dispatcher.BeginInvoke(
+                    () => TryPreloadUpcomingTrack(force: true),
+                    DispatcherPriority.Background);
+            }
+        }
+
         void PlayNext()
         {
             if (playbackQueue.Count == 0) return;
+
+            if (TryStartPendingQueuedInterstitial())
+                return;
+
+            // Skip ahead (Next) should honor deferred "Continue play here", not playlist/preload advance.
+            if (pendingContinuePlayHereViewIndex is int contIdx
+                && contIdx >= 0 && contIdx < playlist.Count)
+            {
+                ClearNextPreload(closeDevice: true);
+                PlayIndex(contIdx, slotIsViewRow: true);
+                SetStatus("Continuing on playlist.");
+                return;
+            }
+
             if (TryPlayPreloadedNext())
                 return;
 
@@ -2685,26 +3205,57 @@ public partial class MainWindow
                 timer.Stop();
                 UpdateButtons();
 
+                if (playingQueuedInterstitial)
+                {
+                    ClearNextPreload(closeDevice: true);
+                    playingQueuedInterstitial = false;
+                    var resume = resumeIndexAfterQueuedTrack;
+                    resumeIndexAfterQueuedTrack = -1;
+
+                    if (pendingContinuePlayHereViewIndex is int continueIdx
+                        && continueIdx >= 0 && continueIdx < playlist.Count)
+                    {
+                        pendingContinuePlayHereViewIndex = null;
+                        PlayIndex(continueIdx, slotIsViewRow: true);
+                        SetStatus("Continuing on playlist.");
+                        return;
+                    }
+
+                    if (resume >= 0 && IsValidIndex(resume, playbackQueue.Count))
+                    {
+                        PlayIndex(resume, slotIsViewRow: false);
+                        SetStatus("Resuming playlist.");
+                    }
+                    else
+                    {
+                        CloseDevice();
+                        ResetPlayerView();
+                        SetStatus("Finished.");
+                    }
+                    return;
+                }
+
                 if (btnLoop.IsChecked == true)
                 {
                     TryMci($"seek {alias} to start", null, out _);
                     Play();
                     SetStatus("Looping.");
+                    return;
                 }
-                else if (btnShuffle.IsChecked == true && playbackQueue.Count > 0)
+
+                if (TryStartPendingQueuedInterstitial())
+                    return;
+
+                if (pendingContinuePlayHereViewIndex is int idxHere
+                    && idxHere >= 0 && idxHere < playlist.Count)
                 {
-                    PlayNext();
+                    pendingContinuePlayHereViewIndex = null;
+                    PlayIndex(idxHere, slotIsViewRow: true);
+                    SetStatus("Continuing on playlist.");
+                    return;
                 }
-                else if (currentIndex >= 0 && currentIndex + 1 < playbackQueue.Count)
-                {
-                    PlayIndex(currentIndex + 1, slotIsViewRow: false);
-                }
-                else
-                {
-                    CloseDevice();
-                    ResetPlayerView();
-                    SetStatus("Finished.");
-                }
+
+                AdvanceAfterNaturalTrackEnd();
             }
         }
 
@@ -2815,51 +3366,25 @@ public partial class MainWindow
                     };
 
                     var rowMenu = new ContextMenu();
-                    if (song.IsCustom)
+                    var miContinueHere = new MenuItem { Header = "Continue play here" };
+                    var pathForQueue = song.Path;
+                    miContinueHere.Click += (_, e) =>
                     {
-                        var pathDropCustom = song.Path;
-                        var removeCustomLib = new MenuItem { Header = "Remove from Custom library" };
-                        removeCustomLib.Click += (_, e) =>
-                        {
-                            e.Handled = true;
-                            customPaths = customPaths
-                                .Where(p => !string.Equals(p, pathDropCustom, StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-                            SaveCustomMidiPaths(customPaths);
-                            RemoveMidiPathFromStoredPlaylists(pathDropCustom);
-                            SaveMidiPlaylistsStore(midiPlaylistStore);
-                            playlist = BuildActiveMidiPlaylist(
-                                currentPlaylistId,
-                                customPaths,
-                                midiPlaylistStore,
-                                bundledOnlyCache);
-                            RebuildPlaybackQueueFromPlaybackId();
-                            shuffleHistory.Clear();
-                            ClearStartPreload();
-                            ClearNextPreload(closeDevice: true);
-                            var rememberedPath = currentLoadedPath;
-                            if (rememberedPath != null
-                                && playbackQueue.Any(s =>
-                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase)))
-                            {
-                                currentIndex = playbackQueue.FindIndex(s =>
-                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
-                                RebuildPlaylistUi();
-                                HighlightCurrent();
-                                UpdateButtons();
-                                PrimeInitialPreload();
-                            }
-                            else
-                            {
-                                CloseDevice();
-                                RebuildPlaylistUi();
-                                ResetPlayerView();
-                            }
+                        e.Handled = true;
+                        ContinuePlayHere(index);
+                    };
+                    var miAddQueue = new MenuItem { Header = "Add to queue" };
+                    miAddQueue.Click += (_, e) =>
+                    {
+                        e.Handled = true;
+                        AddSongToQueueAfterCurrent(pathForQueue, song.Title, song.Group);
+                    };
+                    rowMenu.Opened += (_, _) =>
+                    {
+                        miAddQueue.IsEnabled = isOpen && !playingQueuedInterstitial && currentIndex >= 0;
+                    };
 
-                            SetStatus("Removed from Custom library.");
-                        };
-                        rowMenu.Items.Add(removeCustomLib);
-                    }
+                    rowMenu.Items.Add(miAddQueue);
 
                     var addMenu = new MenuItem { Header = "Add to playlist" };
                     if (currentPlaylistId != MidiPlaylistIdClassical)
@@ -2905,6 +3430,54 @@ public partial class MainWindow
 
                     if (addMenu.Items.Count > 0)
                         rowMenu.Items.Add(addMenu);
+
+                    rowMenu.Items.Add(miContinueHere);
+
+                    if (song.IsCustom)
+                    {
+                        var pathDropCustom = song.Path;
+                        var removeCustomLib = new MenuItem { Header = "Remove from Custom library" };
+                        removeCustomLib.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            customPaths = customPaths
+                                .Where(p => !string.Equals(p, pathDropCustom, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            SaveCustomMidiPaths(customPaths);
+                            RemoveMidiPathFromStoredPlaylists(pathDropCustom);
+                            SaveMidiPlaylistsStore(midiPlaylistStore);
+                            playlist = BuildActiveMidiPlaylist(
+                                currentPlaylistId,
+                                customPaths,
+                                midiPlaylistStore,
+                                bundledOnlyCache);
+                            RebuildPlaybackQueueFromPlaybackId();
+                            shuffleHistory.Clear();
+                            ClearStartPreload();
+                            ClearNextPreload(closeDevice: true);
+                            var rememberedPath = currentLoadedPath;
+                            if (rememberedPath != null
+                                && playbackQueue.Any(s =>
+                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                currentIndex = playbackQueue.FindIndex(s =>
+                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
+                                RebuildPlaylistUi();
+                                HighlightCurrent();
+                                UpdateButtons();
+                                PrimeInitialPreload();
+                            }
+                            else
+                            {
+                                CloseDevice();
+                                RebuildPlaylistUi();
+                                ResetPlayerView();
+                            }
+
+                            SetStatus("Removed from Custom library.");
+                        };
+                        rowMenu.Items.Add(removeCustomLib);
+                    }
 
                     if (currentPlaylistId != MidiPlaylistIdAll)
                     {
@@ -3333,6 +3906,7 @@ public partial class MainWindow
                 0,
                 100);
             SaveWindowSettings();
+            ClearAllDeferredPlaybackIntent();
             CloseDevice();
             _midiPlayerWindow = null;
             _midiPlayerDockAction = null;
