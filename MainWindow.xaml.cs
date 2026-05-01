@@ -6953,6 +6953,7 @@ public partial class MainWindow : Window
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();
     private void MenuStandup_Click(object sender, RoutedEventArgs e) => ShowStandupDialog();
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
+    private void MenuJsonPretty_Click(object sender, RoutedEventArgs e) => ShowJsonPrettyDialog();
     private void MenuSearchFiles_Click(object sender, RoutedEventArgs e) => ShowSearchFilesDialog();
     private void MenuTextSplitter_Click(object sender, RoutedEventArgs e) => ShowTextSplitterDialog();
     private void MenuTxtLookup_Click(object sender, RoutedEventArgs e) => ShowTxtLookupDialog();
