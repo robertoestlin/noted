@@ -98,6 +98,7 @@ public partial class MainWindow : Window
     private const string TaskPanelPluginStateFileName = "plugin-task-panel.json";
     private const string AlarmsPluginStateFileName = "plugin-alarms.json";
     private const string StandupPluginStateFileName = "plugin-standup.json";
+    private const string MessageOverlayPluginStateFileName = "plugin-msg-overlay.json";
     private const string TodoItemsFileName = "todo-items.json";
     private const string StateConfigFileName = "state-config.json";
     private const string AppLogFileName = "noted.log";
@@ -147,6 +148,7 @@ public partial class MainWindow : Window
     private bool _backupAdditionalIncludeTaskPanel = true;
     private bool _backupAdditionalIncludeAlarms = true;
     private bool _backupAdditionalIncludeStandup = true;
+    private bool _backupAdditionalIncludeMessageOverlay = true;
     private bool _backupAdditionalIncludeMidiCustomSongs;
     private bool _backupAdditionalIncludeImages = true;
     private const int MaxBackups = 100;

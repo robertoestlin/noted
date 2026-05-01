@@ -246,6 +246,7 @@ public partial class MainWindow
         var chkBackupAddTaskPanel = new CheckBox { Content = "Task panel (plugin-task-panel.json)", IsChecked = _backupAdditionalIncludeTaskPanel, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddAlarms = new CheckBox { Content = "Alarms (plugin-alarms.json)", IsChecked = _backupAdditionalIncludeAlarms, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddStandup = new CheckBox { Content = "Standup (plugin-standup.json)", IsChecked = _backupAdditionalIncludeStandup, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddMessageOverlay = new CheckBox { Content = "Message overlay (plugin-msg-overlay.json)", IsChecked = _backupAdditionalIncludeMessageOverlay, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddMidi = new CheckBox { Content = "MIDI custom songs (midi-custom-songs.json)", IsChecked = _backupAdditionalIncludeMidiCustomSongs, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddImages = new CheckBox { Content = "Images (images folder)", IsChecked = _backupAdditionalIncludeImages, Margin = new Thickness(0, 0, 0, 0) };
         additionalBackupPanel.Children.Add(chkBackupAddSettings);
@@ -260,6 +261,7 @@ public partial class MainWindow
         additionalBackupPanel.Children.Add(chkBackupAddTaskPanel);
         additionalBackupPanel.Children.Add(chkBackupAddAlarms);
         additionalBackupPanel.Children.Add(chkBackupAddStandup);
+        additionalBackupPanel.Children.Add(chkBackupAddMessageOverlay);
         additionalBackupPanel.Children.Add(chkBackupAddMidi);
         additionalBackupPanel.Children.Add(chkBackupAddImages);
         expanderAdditionalBackup.Content = additionalBackupPanel;
@@ -1678,6 +1680,7 @@ public partial class MainWindow
                 _backupAdditionalIncludeTaskPanel = chkBackupAddTaskPanel.IsChecked == true;
                 _backupAdditionalIncludeAlarms = chkBackupAddAlarms.IsChecked == true;
                 _backupAdditionalIncludeStandup = chkBackupAddStandup.IsChecked == true;
+                _backupAdditionalIncludeMessageOverlay = chkBackupAddMessageOverlay.IsChecked == true;
                 _backupAdditionalIncludeMidiCustomSongs = chkBackupAddMidi.IsChecked == true;
                 _backupAdditionalIncludeImages = chkBackupAddImages.IsChecked == true;
 

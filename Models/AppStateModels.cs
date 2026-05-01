@@ -194,6 +194,23 @@ public sealed class AlarmsPluginState
     public bool PluginAlarmsEnabled { get; set; } = true;
 }
 
+/// <summary>Message overlay + quick-message presets in <c>plugin-msg-overlay.json</c>.</summary>
+public sealed class MessageOverlayPluginState
+{
+    public int? MessageOverlayBlinkIntervalMs { get; set; }
+    public int? MessageOverlayFadeMs { get; set; }
+    public int? MessageOverlayBlinkPhaseMs { get; set; }
+    public int? MessageOverlayHoldMs { get; set; }
+    public string? MessageOverlayBlinkMode { get; set; }
+    public int? MessageOverlayCountdownMinutes { get; set; }
+    public int? MessageOverlayCountdownSeconds { get; set; }
+    public bool? MessageOverlayEffectEnabled { get; set; }
+    public string? MessageOverlayEffect { get; set; }
+    public List<string>? QuickMessagePresets { get; set; }
+    public string? QuickMessageColor { get; set; }
+    public string? QuickMessageCustom { get; set; }
+}
+
 public sealed class SearchFilesHistoryMatch
 {
     public string RelativePath { get; set; } = string.Empty;
@@ -356,6 +373,9 @@ public sealed class WindowSettings
     /// <summary>Include <c>plugin-standup.json</c> (default true).</summary>
     public bool? BackupAdditionalStandup { get; set; }
 
+    /// <summary>Include <c>plugin-msg-overlay.json</c> (default true).</summary>
+    public bool? BackupAdditionalMessageOverlay { get; set; }
+
     /// <summary>Include <c>midi-custom-songs.json</c> (default false).</summary>
     public bool? BackupAdditionalMidiCustomSongs { get; set; }
 
@@ -386,16 +406,4 @@ public sealed class WindowSettings
     public int ClosedTabsRetentionDays { get; set; }
     /// <summary>Unify <c>* </c> / <c>- </c> list markers on backup save: <c>"-"</c> (default) or <c>"*"</c>.</summary>
     public string SaveBulletsAs { get; set; } = "-";
-    public List<string>? QuickMessagePresets { get; set; }
-    public string? QuickMessageColor { get; set; }
-    public string? QuickMessageCustom { get; set; }
-    public int? MessageOverlayBlinkIntervalMs { get; set; }
-    public int? MessageOverlayFadeMs { get; set; }
-    public int? MessageOverlayBlinkPhaseMs { get; set; }
-    public int? MessageOverlayHoldMs { get; set; }
-    public string? MessageOverlayBlinkMode { get; set; }
-    public int? MessageOverlayCountdownMinutes { get; set; }
-    public int? MessageOverlayCountdownSeconds { get; set; }
-    public bool? MessageOverlayEffectEnabled { get; set; }
-    public string? MessageOverlayEffect { get; set; }
 }

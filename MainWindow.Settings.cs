@@ -45,6 +45,7 @@ public partial class MainWindow
             SaveTaskPanelPluginState(opts);
             SaveAlarmsPluginState(opts);
             SaveStandupPluginState(opts);
+            SaveMessageOverlayPluginState(opts);
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
             SaveSafePasteData(opts);
@@ -95,6 +96,7 @@ public partial class MainWindow
             BackupAdditionalTaskPanel = _backupAdditionalIncludeTaskPanel,
             BackupAdditionalAlarms = _backupAdditionalIncludeAlarms,
             BackupAdditionalStandup = _backupAdditionalIncludeStandup,
+            BackupAdditionalMessageOverlay = _backupAdditionalIncludeMessageOverlay,
             BackupAdditionalMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             BackupAdditionalImages = _backupAdditionalIncludeImages,
             CloudSaveHours = _cloudSaveIntervalHours,
@@ -119,17 +121,7 @@ public partial class MainWindow
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
             ClosedTabsRetentionDays = _closedTabsRetentionDays,
-            SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-",
-            QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
-            QuickMessageColor = _quickMessageColorHex,
-            QuickMessageCustom = _quickMessageCustom,
-            MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
-            MessageOverlayFadeMs = _messageOverlayFadeMs,
-            MessageOverlayBlinkMode = _messageOverlayBlinkMode,
-            MessageOverlayCountdownMinutes = _messageOverlayCountdownMinutes,
-            MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
-            MessageOverlayEffectEnabled = _messageOverlayEffectEnabled,
-            MessageOverlayEffect = _messageOverlayEffect
+            SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-"
         };
 
     private NotedSessionState CreateNotedSessionStateSnapshot()
@@ -201,6 +193,25 @@ public partial class MainWindow
         {
             WeekdayTimes = snap.WeekdayTimes,
             RetentionDays = snap.RetentionDays
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void SaveMessageOverlayPluginState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, MessageOverlayPluginStateFileName);
+        var payload = new MessageOverlayPluginState
+        {
+            MessageOverlayBlinkIntervalMs = _messageOverlayBlinkIntervalMs,
+            MessageOverlayFadeMs = _messageOverlayFadeMs,
+            MessageOverlayBlinkMode = _messageOverlayBlinkMode,
+            MessageOverlayCountdownMinutes = _messageOverlayCountdownMinutes,
+            MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
+            MessageOverlayEffectEnabled = _messageOverlayEffectEnabled,
+            MessageOverlayEffect = _messageOverlayEffect,
+            QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
+            QuickMessageColor = _quickMessageColorHex,
+            QuickMessageCustom = _quickMessageCustom
         };
         _windowSettingsStore.Save(path, payload, options);
     }
@@ -309,6 +320,143 @@ public partial class MainWindow
             return;
         ApplyStandupSettings(legacy.Standup);
         SaveStandupPluginState(opts);
+    }
+
+    private void LoadMessageOverlayPluginState(string effectiveSettingsJsonPath)
+    {
+        var path = Path.Combine(_backupFolder, MessageOverlayPluginStateFileName);
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+
+        LegacyQuickMessagePayload? legacyQuick = SettingsJsonDeclaresQuickMessageKeys(effectiveSettingsJsonPath)
+            ? TryReadLegacyQuickMessageFromSettingsJson(effectiveSettingsJsonPath)
+            : null;
+
+        MessageOverlayPluginState? combined = null;
+        var migratedFullFromSettingsJson = false;
+
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<MessageOverlayPluginState>(path);
+            if (fromDisk != null)
+                combined = MergeOverlayPluginWithLegacyQuickMessages(fromDisk, legacyQuick);
+        }
+
+        var declaresLegacyInSettings =
+            SettingsJsonDeclaresMessageOverlayKeys(effectiveSettingsJsonPath)
+            || SettingsJsonDeclaresQuickMessageKeys(effectiveSettingsJsonPath);
+
+        if (combined == null && declaresLegacyInSettings)
+        {
+            var fromSettings =
+                TryReadMessageOverlayFromSettingsJson(effectiveSettingsJsonPath)
+                ?? new MessageOverlayPluginState();
+            combined = MergeOverlayPluginWithLegacyQuickMessages(fromSettings, legacyQuick);
+            migratedFullFromSettingsJson = true;
+        }
+
+        if (combined == null && legacyQuick != null)
+        {
+            combined = MergeOverlayPluginWithLegacyQuickMessages(new MessageOverlayPluginState(), legacyQuick);
+            migratedFullFromSettingsJson = true;
+        }
+
+        if (combined == null)
+            return;
+
+        ApplyQuickMessageOverlayPluginSettings(combined);
+        ApplyQuickMessagePresetsFromPluginState(combined);
+
+        if (migratedFullFromSettingsJson)
+            SaveMessageOverlayPluginState(opts);
+    }
+
+    private sealed class LegacyQuickMessagePayload
+    {
+        public List<string>? QuickMessagePresets { get; set; }
+        public string? QuickMessageColor { get; set; }
+        public string? QuickMessageCustom { get; set; }
+    }
+
+    private static MessageOverlayPluginState MergeOverlayPluginWithLegacyQuickMessages(
+        MessageOverlayPluginState plugin,
+        LegacyQuickMessagePayload? legacyQuick)
+    {
+        if (legacyQuick == null)
+            return plugin;
+
+        return new MessageOverlayPluginState
+        {
+            MessageOverlayBlinkIntervalMs = plugin.MessageOverlayBlinkIntervalMs,
+            MessageOverlayFadeMs = plugin.MessageOverlayFadeMs,
+            MessageOverlayBlinkPhaseMs = plugin.MessageOverlayBlinkPhaseMs,
+            MessageOverlayHoldMs = plugin.MessageOverlayHoldMs,
+            MessageOverlayBlinkMode = plugin.MessageOverlayBlinkMode,
+            MessageOverlayCountdownMinutes = plugin.MessageOverlayCountdownMinutes,
+            MessageOverlayCountdownSeconds = plugin.MessageOverlayCountdownSeconds,
+            MessageOverlayEffectEnabled = plugin.MessageOverlayEffectEnabled,
+            MessageOverlayEffect = plugin.MessageOverlayEffect,
+            QuickMessagePresets = plugin.QuickMessagePresets ?? legacyQuick.QuickMessagePresets,
+            QuickMessageColor = plugin.QuickMessageColor ?? legacyQuick.QuickMessageColor,
+            QuickMessageCustom = plugin.QuickMessageCustom ?? legacyQuick.QuickMessageCustom
+        };
+    }
+
+    private static LegacyQuickMessagePayload? TryReadLegacyQuickMessageFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<LegacyQuickMessagePayload>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool SettingsJsonDeclaresQuickMessageKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            var root = doc.RootElement;
+            return root.TryGetProperty("QuickMessagePresets", out _)
+                   || root.TryGetProperty("QuickMessageColor", out _)
+                   || root.TryGetProperty("QuickMessageCustom", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static MessageOverlayPluginState? TryReadMessageOverlayFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<MessageOverlayPluginState>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed class LegacyStandupRoot
@@ -441,6 +589,38 @@ public partial class MainWindow
         }
     }
 
+    private static bool SettingsJsonDeclaresMessageOverlayKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            var root = doc.RootElement;
+            return root.TryGetProperty("MessageOverlayBlinkIntervalMs", out _)
+                   || root.TryGetProperty("MessageOverlayFadeMs", out _)
+                   || root.TryGetProperty("MessageOverlayBlinkPhaseMs", out _)
+                   || root.TryGetProperty("MessageOverlayHoldMs", out _)
+                   || root.TryGetProperty("MessageOverlayBlinkMode", out _)
+                   || root.TryGetProperty("MessageOverlayCountdownMinutes", out _)
+                   || root.TryGetProperty("MessageOverlayCountdownSeconds", out _)
+                   || root.TryGetProperty("MessageOverlayEffectEnabled", out _)
+                   || root.TryGetProperty("MessageOverlayEffect", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Detects split-plugin keys still present in <c>settings.json</c> so we can rewrite without those keys.
     /// </summary>
@@ -459,12 +639,25 @@ public partial class MainWindow
                 });
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
-            return doc.RootElement.TryGetProperty("PluginAlarms", out _)
-                   || doc.RootElement.TryGetProperty("PluginAlarmsEnabled", out _)
-                   || doc.RootElement.TryGetProperty("TaskPanelTitle", out _)
-                   || doc.RootElement.TryGetProperty("TaskAreas", out _)
-                   || doc.RootElement.TryGetProperty("CurrentTaskAreaId", out _)
-                   || doc.RootElement.TryGetProperty("Standup", out _);
+            var root = doc.RootElement;
+            return root.TryGetProperty("PluginAlarms", out _)
+                   || root.TryGetProperty("PluginAlarmsEnabled", out _)
+                   || root.TryGetProperty("TaskPanelTitle", out _)
+                   || root.TryGetProperty("TaskAreas", out _)
+                   || root.TryGetProperty("CurrentTaskAreaId", out _)
+                   || root.TryGetProperty("Standup", out _)
+                   || root.TryGetProperty("MessageOverlayBlinkIntervalMs", out _)
+                   || root.TryGetProperty("MessageOverlayFadeMs", out _)
+                   || root.TryGetProperty("MessageOverlayBlinkPhaseMs", out _)
+                   || root.TryGetProperty("MessageOverlayHoldMs", out _)
+                   || root.TryGetProperty("MessageOverlayBlinkMode", out _)
+                   || root.TryGetProperty("MessageOverlayCountdownMinutes", out _)
+                   || root.TryGetProperty("MessageOverlayCountdownSeconds", out _)
+                   || root.TryGetProperty("MessageOverlayEffectEnabled", out _)
+                   || root.TryGetProperty("MessageOverlayEffect", out _)
+                   || root.TryGetProperty("QuickMessagePresets", out _)
+                   || root.TryGetProperty("QuickMessageColor", out _)
+                   || root.TryGetProperty("QuickMessageCustom", out _);
         }
         catch
         {
@@ -542,6 +735,7 @@ public partial class MainWindow
             LoadTaskPanelPluginState(loaded.EffectiveSettingsJsonPath);
             LoadAlarmsPluginState(loaded.EffectiveSettingsJsonPath);
             LoadStandupPluginState(loaded.EffectiveSettingsJsonPath);
+            LoadMessageOverlayPluginState(loaded.EffectiveSettingsJsonPath);
 
             var sessionPath = Path.Combine(_backupFolder, SessionStateFileName);
             LegacyCombinedSettings? legacyCombined = null;
@@ -564,7 +758,7 @@ public partial class MainWindow
             ApplyColorThemeToOpenEditors();
             ApplyFridayFeelingToOpenEditors();
 
-            // Line counter / task panel / alarms / standup moved to plugin-*.json; stale keys are ignored on deserialize
+            // Line counter / task panel / alarms / standup / message overlay moved to plugin-*.json; stale keys are ignored on deserialize
             // and would never be removed if LastNotedVersion already matches (MaybeStamp skips SaveWindowSettings).
             if (SettingsJsonContainsLegacyProjectLineCounterKeys(loaded.EffectiveSettingsJsonPath)
                 || SettingsJsonContainsLegacyPluginSplitKeys(loaded.EffectiveSettingsJsonPath))
@@ -754,6 +948,7 @@ public partial class MainWindow
         _backupAdditionalIncludeTaskPanel = true;
         _backupAdditionalIncludeAlarms = true;
         _backupAdditionalIncludeStandup = true;
+        _backupAdditionalIncludeMessageOverlay = true;
         _backupAdditionalIncludeMidiCustomSongs = false;
         _backupAdditionalIncludeImages = true;
         ResetQuickMessageOverlaySettings();
@@ -817,7 +1012,6 @@ public partial class MainWindow
         _closedTabsMaxCount = NormalizeClosedTabsMaxCount(state.ClosedTabsMaxCount);
         _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
         _saveBulletsAsMarker = string.Equals(state.SaveBulletsAs, "*", StringComparison.Ordinal) ? '*' : '-';
-        ApplyQuickMessageOverlaySettings(state);
         _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);
         _backupAdditionalIncludeSettingsFile = state.BackupAdditionalSettingsFile ?? true;
         _backupAdditionalIncludeAppLog = state.BackupAdditionalAppLog ?? true;
@@ -831,6 +1025,7 @@ public partial class MainWindow
         _backupAdditionalIncludeTaskPanel = state.BackupAdditionalTaskPanel ?? true;
         _backupAdditionalIncludeAlarms = state.BackupAdditionalAlarms ?? true;
         _backupAdditionalIncludeStandup = state.BackupAdditionalStandup ?? true;
+        _backupAdditionalIncludeMessageOverlay = state.BackupAdditionalMessageOverlay ?? true;
         _backupAdditionalIncludeMidiCustomSongs = state.BackupAdditionalMidiCustomSongs ?? false;
         _backupAdditionalIncludeImages = state.BackupAdditionalImages ?? true;
 
@@ -1076,6 +1271,9 @@ public partial class MainWindow
     private bool CopyStandupPluginStateFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, StandupPluginStateFileName);
 
+    private bool CopyMessageOverlayPluginStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, MessageOverlayPluginStateFileName);
+
     private bool CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TodoItemsFileName);
 
@@ -1182,6 +1380,7 @@ public partial class MainWindow
         public bool IncludeTaskPanel { get; init; }
         public bool IncludeAlarms { get; init; }
         public bool IncludeStandup { get; init; }
+        public bool IncludeMessageOverlay { get; init; }
         public bool IncludeMidiCustomSongs { get; init; }
         public bool IncludeImages { get; init; }
 
@@ -1198,6 +1397,7 @@ public partial class MainWindow
         public int TaskPanelFilesCopied { get; init; }
         public int AlarmsFilesCopied { get; init; }
         public int StandupFilesCopied { get; init; }
+        public int MessageOverlayFilesCopied { get; init; }
         public int MidiCustomSongsFilesCopied { get; init; }
         public int ImageFilesCopied { get; init; }
 
@@ -1224,6 +1424,7 @@ public partial class MainWindow
             const string TagTaskPanel = "Task panel";
             const string TagAlarms = "Alarms";
             const string TagStandup = "Standup";
+            const string TagMessageOverlay = "Message overlay";
             const string TagMidiPaths = "MIDI Custom Songs Paths";
             const string TagImages = "Images";
 
@@ -1252,6 +1453,8 @@ public partial class MainWindow
                 included.Add($"{TagAlarms}: {CopiesPhrase(AlarmsFilesCopied)}");
             if (IncludeStandup)
                 included.Add($"{TagStandup}: {CopiesPhrase(StandupFilesCopied)}");
+            if (IncludeMessageOverlay)
+                included.Add($"{TagMessageOverlay}: {CopiesPhrase(MessageOverlayFilesCopied)}");
             if (IncludeMidiCustomSongs)
                 included.Add($"{TagMidiPaths}: {CopiesPhrase(MidiCustomSongsFilesCopied)}");
             if (IncludeImages)
@@ -1282,6 +1485,8 @@ public partial class MainWindow
                 excluded.Add(TagAlarms);
             if (!IncludeStandup)
                 excluded.Add(TagStandup);
+            if (!IncludeMessageOverlay)
+                excluded.Add(TagMessageOverlay);
             if (!IncludeMidiCustomSongs)
                 excluded.Add(TagMidiPaths);
             if (!IncludeImages)
@@ -1346,6 +1551,10 @@ public partial class MainWindow
             && CopyStandupPluginStateFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
+        var messageOverlayCopied = _backupAdditionalIncludeMessageOverlay
+            && CopyMessageOverlayPluginStateFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
         var midiCopied = _backupAdditionalIncludeMidiCustomSongs
             && _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, MidiCustomSongsFileName)
             ? 1
@@ -1368,6 +1577,7 @@ public partial class MainWindow
             IncludeTaskPanel = _backupAdditionalIncludeTaskPanel,
             IncludeAlarms = _backupAdditionalIncludeAlarms,
             IncludeStandup = _backupAdditionalIncludeStandup,
+            IncludeMessageOverlay = _backupAdditionalIncludeMessageOverlay,
             IncludeMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             IncludeImages = _backupAdditionalIncludeImages,
             SettingsFilesCopied = settingsCopied,
@@ -1382,6 +1592,7 @@ public partial class MainWindow
             TaskPanelFilesCopied = taskPanelCopied,
             AlarmsFilesCopied = alarmsCopied,
             StandupFilesCopied = standupCopied,
+            MessageOverlayFilesCopied = messageOverlayCopied,
             MidiCustomSongsFilesCopied = midiCopied,
             ImageFilesCopied = imageCopied
         };

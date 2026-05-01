@@ -124,12 +124,18 @@ public partial class MainWindow
         return normalized.Count == 0 ? [.. DefaultQuickMessagePresets] : normalized;
     }
 
-    private void ApplyQuickMessageOverlaySettings(WindowSettings state)
+    private void ApplyQuickMessagePresetsFromPluginState(MessageOverlayPluginState state)
     {
         var presets = NormalizeQuickMessagePresets(state.QuickMessagePresets);
         _quickMessagePresets = presets.Count == 0 ? [.. DefaultQuickMessagePresets] : presets;
         _quickMessageCustom = (state.QuickMessageCustom ?? string.Empty).Trim();
         _quickMessageColorHex = NormalizeQuickMessageColorHex(state.QuickMessageColor);
+    }
+
+    private void ApplyQuickMessageOverlayPluginSettings(MessageOverlayPluginState? state)
+    {
+        if (state == null)
+            return;
         _messageOverlayBlinkIntervalMs = NormalizeMessageOverlayTimingMs(
             state.MessageOverlayBlinkIntervalMs ?? state.MessageOverlayHoldMs,
             DefaultMessageOverlayBlinkIntervalMs);
