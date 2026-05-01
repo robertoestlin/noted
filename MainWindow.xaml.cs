@@ -7024,6 +7024,15 @@ public partial class MainWindow : Window
     private void MenuMongoSrvLookup_Click(object sender, RoutedEventArgs e) => ShowMongoSrvLookupDialog();
     private void MenuProjectLineCounter_Click(object sender, RoutedEventArgs e) => ShowProjectLineCounterDialog();
 
+    private void MenuUsefulJsonToCSharp_Click(object sender, RoutedEventArgs e)
+        => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://json2csharp.com/"));
+
+    private void MenuUsefulRegexr_Click(object sender, RoutedEventArgs e)
+        => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://regexr.com/"));
+
+    private void MenuUsefulRegex101_Click(object sender, RoutedEventArgs e)
+        => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://regex101.com/"));
+
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
     private void MenuCut_Click(object sender, RoutedEventArgs e)

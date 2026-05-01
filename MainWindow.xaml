@@ -194,6 +194,15 @@
                     <MenuItem Header="Time _Converter" Click="MenuTimeConverter_Click"/>
                     <MenuItem Header="_Time Reporter" Click="MenuTimeReport_Click"/>
                 </MenuItem>
+                <MenuItem Header="_Useful">
+                    <MenuItem Header="_C#">
+                        <MenuItem Header="_JSON to CSharp" Click="MenuUsefulJsonToCSharp_Click"/>
+                    </MenuItem>
+                    <MenuItem Header="_Regular Expressions">
+                        <MenuItem Header="_RegExr" Click="MenuUsefulRegexr_Click"/>
+                        <MenuItem Header="Regular Expressions _101" Click="MenuUsefulRegex101_Click"/>
+                    </MenuItem>
+                </MenuItem>
                 <MenuItem Header="_About">
                     <MenuItem Header="_Info" Click="MenuAboutInfo_Click"/>
                 </MenuItem>
