@@ -107,6 +107,8 @@ public partial class MainWindow
         bool originalShowBulletHoverTooltips = _showBulletHoverTooltips;
         bool originalShowInlineImages = _showInlineImages;
         var originalFancyBulletStyle = _fancyBulletStyle;
+        bool originalFredagspartySessionEnabled = _isFredagspartySessionEnabled;
+        bool originalFredagspartyTemporarilyDisabled = _isFredagspartyTemporarilyDisabled;
         bool viewPreviewCommitted = false;
 
         var dlg = new Window
@@ -825,29 +827,47 @@ public partial class MainWindow
             IsChecked = _isFridayFeelingEnabled,
             Margin = new Thickness(0, 0, 0, 10)
         };
-        var chkFredagsparty = new CheckBox
+        var untilCloseFredagsparty = _isFredagspartySessionEnabled;
+        var btnFredagspartyUntilAppCloses = new Button
         {
-            Content = "Enable Fredagsparty until app closes",
-            IsChecked = _isFredagspartySessionEnabled,
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        var btnTurnOffFredagspartyTemporarily = new Button
-        {
-            Content = "Turn off Fredagsparty until restart",
             Padding = new Thickness(10, 2, 10, 2),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 0, 0, 6)
+            Margin = new Thickness(0, 0, 0, 10),
+            ToolTip = "Left-click toggles Fredagsparty until you quit Noted.\nRight-click for \"until restart.\""
         };
-        btnTurnOffFredagspartyTemporarily.IsEnabled = !_isFredagspartyTemporarilyDisabled;
-        btnTurnOffFredagspartyTemporarily.Click += (_, _) =>
+        var miFredagspartyUntilRestart = new MenuItem { Header = "Turn off Fredagsparty until restart" };
+        btnFredagspartyUntilAppCloses.ContextMenu = new ContextMenu { Items = { miFredagspartyUntilRestart } };
+        void RefreshFredagspartyUntilCloseButtonLabel()
+        {
+            miFredagspartyUntilRestart.IsEnabled = !_isFredagspartyTemporarilyDisabled;
+            if (_isFredagspartyTemporarilyDisabled)
+            {
+                btnFredagspartyUntilAppCloses.Content = "Fredagsparty off until Noted restarts";
+                btnFredagspartyUntilAppCloses.IsEnabled = false;
+                return;
+            }
+
+            btnFredagspartyUntilAppCloses.IsEnabled = true;
+            btnFredagspartyUntilAppCloses.Content = untilCloseFredagsparty
+                ? "Turn off Fredagsparty until app closes"
+                : "Turn on Fredagsparty until app closes";
+        }
+        RefreshFredagspartyUntilCloseButtonLabel();
+        btnFredagspartyUntilAppCloses.Click += (_, _) =>
+        {
+            untilCloseFredagsparty = !untilCloseFredagsparty;
+            _isFredagspartySessionEnabled = untilCloseFredagsparty;
+            RefreshFredagspartyUntilCloseButtonLabel();
+            ApplyFridayFeelingToOpenEditors();
+        };
+        miFredagspartyUntilRestart.Click += (_, _) =>
         {
             _isFredagspartyTemporarilyDisabled = true;
             ApplyFridayFeelingToOpenEditors();
-            btnTurnOffFredagspartyTemporarily.IsEnabled = false;
+            RefreshFredagspartyUntilCloseButtonLabel();
         };
         fridayPanel.Children.Add(chkFridayFeeling);
-        fridayPanel.Children.Add(chkFredagsparty);
-        fridayPanel.Children.Add(btnTurnOffFredagspartyTemporarily);
+        fridayPanel.Children.Add(btnFredagspartyUntilAppCloses);
         tabControl.Items.Add(new TabItem
         {
             Header = "Friday",
@@ -1726,7 +1746,7 @@ public partial class MainWindow
                 _criticalHighlightedLineColor = criticalHighlightedLineColor;
                 _selectedCriticalHighlightedLineColor = selectedCriticalHighlightedLineColor;
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
-                _isFredagspartySessionEnabled = chkFredagsparty.IsChecked == true;
+                _isFredagspartySessionEnabled = untilCloseFredagsparty;
                 _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
                 _wrapLongLinesVisually = chkWrapLongLinesVisually.IsChecked == true;
                 _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
@@ -1794,6 +1814,9 @@ public partial class MainWindow
             _showBulletHoverTooltips = originalShowBulletHoverTooltips;
             _showInlineImages = originalShowInlineImages;
             _fancyBulletStyle = originalFancyBulletStyle;
+            _isFredagspartySessionEnabled = originalFredagspartySessionEnabled;
+            _isFredagspartyTemporarilyDisabled = originalFredagspartyTemporarilyDisabled;
+            ApplyFridayFeelingToOpenEditors();
             ApplyViewRenderingSettings();
         }
     }
