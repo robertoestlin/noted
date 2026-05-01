@@ -106,6 +106,7 @@ public partial class MainWindow
         bool originalShowLineAssignments = _showLineAssignments;
         bool originalShowBulletHoverTooltips = _showBulletHoverTooltips;
         bool originalShowInlineImages = _showInlineImages;
+        var originalExternalBrowserForLinks = _externalBrowserForLinks;
         var originalFancyBulletStyle = _fancyBulletStyle;
         bool originalFredagspartySessionEnabled = _isFredagspartySessionEnabled;
         bool originalFredagspartyTemporarilyDisabled = _isFredagspartyTemporarilyDisabled;
@@ -566,6 +567,43 @@ public partial class MainWindow
         });
 
         var viewPanel = new StackPanel { Margin = new Thickness(12) };
+        viewPanel.Children.Add(new TextBlock
+        {
+            Text = "Open http(s) links in:",
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var cmbExternalBrowser = new ComboBox
+        {
+            Width = 280,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        foreach (var (label, choice) in new (string Label, ExternalBrowserChoice Choice)[]
+        {
+            ("System default", ExternalBrowserChoice.Default),
+            ("Chrome", ExternalBrowserChoice.Chrome),
+            ("Edge", ExternalBrowserChoice.Edge),
+            ("Firefox", ExternalBrowserChoice.Firefox)
+        })
+            cmbExternalBrowser.Items.Add(new ComboBoxItem { Content = label, Tag = choice });
+        cmbExternalBrowser.SelectedIndex = 0;
+        for (int i = 0; i < cmbExternalBrowser.Items.Count; i++)
+        {
+            if (cmbExternalBrowser.Items[i] is ComboBoxItem item && item.Tag is ExternalBrowserChoice c && c == _externalBrowserForLinks)
+            {
+                cmbExternalBrowser.SelectedIndex = i;
+                break;
+            }
+        }
+
+        viewPanel.Children.Add(cmbExternalBrowser);
+        viewPanel.Children.Add(new TextBlock
+        {
+            Text = "Applies to the Useful menu, hyperlinks in notes (Ctrl+click), and plugins that open web links.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 10),
+            TextWrapping = TextWrapping.Wrap
+        });
         var chkStyledBullets = new CheckBox
         {
             Content = "Replace '- ' and '* ' prefixes with rendered bullet symbols",
@@ -1754,6 +1792,11 @@ public partial class MainWindow
                 _showLineAssignments = chkShowLineAssignments.IsChecked == true;
                 _showInlineImages = chkShowInlineImages.IsChecked == true;
                 _fancyBulletStyle = selectedFancyBulletStyle;
+                _externalBrowserForLinks = NormalizeExternalBrowserChoice(
+                    cmbExternalBrowser.SelectedItem is ComboBoxItem browserItem && browserItem.Tag is ExternalBrowserChoice eb
+                        ? eb
+                        : ExternalBrowserChoice.Default);
+                SyncExternalBrowserLauncherPreference();
 
                 // Task Panel settings
                 var newTitle = (txtTaskPanelTitle.Text ?? string.Empty).Trim();
@@ -1814,6 +1857,8 @@ public partial class MainWindow
             _showBulletHoverTooltips = originalShowBulletHoverTooltips;
             _showInlineImages = originalShowInlineImages;
             _fancyBulletStyle = originalFancyBulletStyle;
+            _externalBrowserForLinks = originalExternalBrowserForLinks;
+            SyncExternalBrowserLauncherPreference();
             _isFredagspartySessionEnabled = originalFredagspartySessionEnabled;
             _isFredagspartyTemporarilyDisabled = originalFredagspartyTemporarilyDisabled;
             ApplyFridayFeelingToOpenEditors();

@@ -307,6 +307,15 @@ public sealed class StandupNoteEntry
 }
 
 /// <summary>Persisted UI/session state stored in <c>state-config.json</c> (separate from <c>settings.json</c>).</summary>
+/// <summary>Which browser opens http(s) links (Useful menu, editor hyperlinks, plugins).</summary>
+public enum ExternalBrowserChoice
+{
+    Default = 0,
+    Chrome = 1,
+    Edge = 2,
+    Firefox = 3
+}
+
 public sealed class NotedStateConfig
 {
     /// <summary>Whether the task panel is visible.</summary>
@@ -422,4 +431,7 @@ public sealed class WindowSettings
     public int ClosedTabsRetentionDays { get; set; }
     /// <summary>Unify <c>* </c> / <c>- </c> list markers on backup save: <c>"-"</c> (default) or <c>"*"</c>.</summary>
     public string SaveBulletsAs { get; set; } = "-";
+
+    /// <summary>Browser for http(s) links; <see cref="ExternalBrowserChoice.Default"/> uses the system default handler.</summary>
+    public ExternalBrowserChoice ExternalBrowserForLinks { get; set; } = ExternalBrowserChoice.Default;
 }

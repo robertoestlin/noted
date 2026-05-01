@@ -122,7 +122,8 @@ public partial class MainWindow
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
             ClosedTabsRetentionDays = _closedTabsRetentionDays,
-            SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-"
+            SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-",
+            ExternalBrowserForLinks = _externalBrowserForLinks
         };
 
     private NotedSessionState CreateNotedSessionStateSnapshot()
@@ -957,6 +958,7 @@ public partial class MainWindow
         _showBulletHoverTooltips = true;
         _showHorizontalRuler = true;
         _showInlineImages = true;
+        _externalBrowserForLinks = ExternalBrowserChoice.Default;
         _fancyBulletStyle = FancyBulletStyle.Dot;
         _isFredagspartySessionEnabled = false;
         _users = [];
@@ -1079,7 +1081,14 @@ public partial class MainWindow
         _backupAdditionalIncludeImages = state.BackupAdditionalImages ?? true;
 
         ApplyThemeColorsFromSettings(state);
+        _externalBrowserForLinks = NormalizeExternalBrowserChoice(state.ExternalBrowserForLinks);
     }
+
+    private static ExternalBrowserChoice NormalizeExternalBrowserChoice(ExternalBrowserChoice value)
+        => Enum.IsDefined(typeof(ExternalBrowserChoice), value) ? value : ExternalBrowserChoice.Default;
+
+    private void SyncExternalBrowserLauncherPreference()
+        => SafeHttpUriLauncher.GetPreferredExternalBrowser = () => _externalBrowserForLinks;
 
     private void ApplyShortcutSettings(WindowSettings state)
     {

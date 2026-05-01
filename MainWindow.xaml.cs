@@ -270,6 +270,7 @@ public partial class MainWindow : Window
     private bool _showBulletHoverTooltips = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
+    private ExternalBrowserChoice _externalBrowserForLinks = ExternalBrowserChoice.Default;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
     private bool _isFredagspartySessionEnabled = false;
     private bool _isFredagspartyTemporarilyDisabled;
@@ -1274,6 +1275,7 @@ public partial class MainWindow : Window
 
         // Restore window position/size, then session
         LoadWindowSettings();
+        SyncExternalBrowserLauncherPreference();
         MaybeStampLastNotedVersionAfterLoad();
         UpdateAlarmSnoozeStatus();
         InitializeTodoPanel();

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using Noted.Models;
 
 namespace Noted;
 
@@ -9,6 +11,9 @@ namespace Noted;
 /// </summary>
 internal static class SafeHttpUriLauncher
 {
+    /// <summary>When set, http(s) URLs may be opened with a specific browser instead of the system default.</summary>
+    public static Func<ExternalBrowserChoice>? GetPreferredExternalBrowser { get; set; }
+
     public static bool TryOpenInDefaultBrowser(Uri? uri)
         => TryOpenHyperlinkUri(uri);
 
@@ -20,6 +25,15 @@ internal static class SafeHttpUriLauncher
         if (!TryGetShellSafeUriString(uri, out string launchUri))
             return false;
 
+        if (uri is not null
+            && (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            var choice = GetPreferredExternalBrowser?.Invoke() ?? ExternalBrowserChoice.Default;
+            if (choice != ExternalBrowserChoice.Default && TryLaunchHttpUrlWithSpecificBrowser(choice, launchUri))
+                return true;
+        }
+
         try
         {
             Process.Start(new ProcessStartInfo(launchUri) { UseShellExecute = true });
@@ -29,6 +43,58 @@ internal static class SafeHttpUriLauncher
         {
             return false;
         }
+    }
+
+    private static bool TryLaunchHttpUrlWithSpecificBrowser(ExternalBrowserChoice choice, string url)
+    {
+        var exe = ResolveBrowserExecutable(choice);
+        if (string.IsNullOrEmpty(exe) || !File.Exists(exe))
+            return false;
+
+        try
+        {
+            var psi = new ProcessStartInfo { FileName = exe, UseShellExecute = true };
+            psi.ArgumentList.Add(url);
+            Process.Start(psi);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? ResolveBrowserExecutable(ExternalBrowserChoice choice)
+    {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        return choice switch
+        {
+            ExternalBrowserChoice.Chrome => FindFirstExistingFile(
+                Path.Combine(programFiles, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(programFilesX86, @"Google\Chrome\Application\chrome.exe"),
+                Path.Combine(localAppData, @"Google\Chrome\Application\chrome.exe")),
+            ExternalBrowserChoice.Edge => FindFirstExistingFile(
+                Path.Combine(programFilesX86, @"Microsoft\Edge\Application\msedge.exe"),
+                Path.Combine(programFiles, @"Microsoft\Edge\Application\msedge.exe")),
+            ExternalBrowserChoice.Firefox => FindFirstExistingFile(
+                Path.Combine(programFiles, @"Mozilla Firefox\firefox.exe"),
+                Path.Combine(programFilesX86, @"Mozilla Firefox\firefox.exe")),
+            _ => null
+        };
+    }
+
+    private static string? FindFirstExistingFile(params string[] paths)
+    {
+        foreach (var p in paths)
+        {
+            if (!string.IsNullOrEmpty(p) && File.Exists(p))
+                return p;
+        }
+
+        return null;
     }
 
     internal static bool TryGetShellSafeUriString(Uri? uri, out string launchUri)
