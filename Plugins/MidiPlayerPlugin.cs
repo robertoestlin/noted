@@ -1062,7 +1062,7 @@ public partial class MainWindow
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
             Style = iconButtonStyle,
             Margin = new Thickness(8, 0, 0, 0),
-            ToolTip = "Add MIDI file(s) to Custom"
+            ToolTip = "Add MIDI file(s)"
         };
         queueButtons.Children.Add(btnAdd);
         Grid.SetColumn(queueButtons, 1);
@@ -2061,6 +2061,8 @@ public partial class MainWindow
             SetStatus(
                 $"{PlaylistDisplayName(currentPlaylistId)} · {playlist.Count} track{(playlist.Count == 1 ? string.Empty : "s")}");
 
+            UpdateAddButtonTooltip();
+
             // Persist, tear down warmup device, and restart preload after layout so the list repaints immediately.
             dlg.Dispatcher.BeginInvoke(
                 () =>
@@ -2074,6 +2076,13 @@ public partial class MainWindow
                         PrimeInitialPreload();
                 },
                 DispatcherPriority.Loaded);
+        }
+
+        void UpdateAddButtonTooltip()
+        {
+            btnAdd.ToolTip = currentPlaylistId == MidiPlaylistIdAll
+                ? "Add MIDI file(s) to your Custom library"
+                : $"Add MIDI file(s) to {PlaylistDisplayName(currentPlaylistId)}";
         }
 
         void AfterPlaylistPathsMutated()
@@ -3766,6 +3775,134 @@ public partial class MainWindow
             }
         }
 
+        void AddMidiPathsToCurrentPlaylist(IEnumerable<string> paths, bool playFirstAdded)
+        {
+            var validPaths = new List<string>();
+            foreach (var p in paths)
+            {
+                if (string.IsNullOrWhiteSpace(p))
+                    continue;
+                if (!File.Exists(p))
+                    continue;
+                var ext = Path.GetExtension(p).ToLowerInvariant();
+                if (ext != ".mid" && ext != ".midi" && ext != ".rmi")
+                    continue;
+                validPaths.Add(p);
+            }
+
+            if (validPaths.Count == 0)
+            {
+                SetStatus("No new MIDI files added.");
+                return;
+            }
+
+            if (currentPlaylistId == MidiPlaylistIdAll)
+            {
+                AddCustomFiles(validPaths, playFirstAdded);
+                return;
+            }
+
+            if (currentPlaylistId == MidiPlaylistIdClassical)
+            {
+                midiPlaylistStore.ClassicalPaths ??= new List<string>();
+                var added = new List<string>();
+                foreach (var p in validPaths)
+                {
+                    if (midiPlaylistStore.ClassicalPaths.Any(x =>
+                            string.Equals(x, p, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    midiPlaylistStore.ClassicalPaths.Add(p);
+                    added.Add(p);
+                }
+
+                if (added.Count == 0)
+                {
+                    SetStatus("No new MIDI files added (all were already in Classical).");
+                    return;
+                }
+
+                SaveMidiPlaylistsStore(midiPlaylistStore);
+                AfterPlaylistPathsMutated();
+                SetStatus($"Added {added.Count} track{(added.Count == 1 ? string.Empty : "s")} to Classical.");
+                if (playFirstAdded)
+                {
+                    var idx = playlist.FindIndex(s =>
+                        string.Equals(s.Path, added[0], StringComparison.OrdinalIgnoreCase));
+                    if (idx >= 0)
+                        PlayIndex(idx);
+                }
+
+                return;
+            }
+
+            if (currentPlaylistId == MidiPlaylistIdFocus)
+            {
+                midiPlaylistStore.FocusPaths ??= new List<string>();
+                var added = new List<string>();
+                foreach (var p in validPaths)
+                {
+                    if (midiPlaylistStore.FocusPaths.Any(x =>
+                            string.Equals(x, p, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    midiPlaylistStore.FocusPaths.Add(p);
+                    added.Add(p);
+                }
+
+                if (added.Count == 0)
+                {
+                    SetStatus("No new MIDI files added (all were already in Focus).");
+                    return;
+                }
+
+                SaveMidiPlaylistsStore(midiPlaylistStore);
+                AfterPlaylistPathsMutated();
+                SetStatus($"Added {added.Count} track{(added.Count == 1 ? string.Empty : "s")} to Focus.");
+                if (playFirstAdded)
+                {
+                    var idx = playlist.FindIndex(s =>
+                        string.Equals(s.Path, added[0], StringComparison.OrdinalIgnoreCase));
+                    if (idx >= 0)
+                        PlayIndex(idx);
+                }
+
+                return;
+            }
+
+            var user = midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == currentPlaylistId);
+            if (user == null)
+            {
+                SetStatus("Could not add files — playlist not found.");
+                return;
+            }
+
+            user.Paths ??= new List<string>();
+            var addedUser = new List<string>();
+            foreach (var p in validPaths)
+            {
+                if (user.Paths.Any(x => string.Equals(x, p, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                user.Paths.Add(p);
+                addedUser.Add(p);
+            }
+
+            if (addedUser.Count == 0)
+            {
+                SetStatus($"No new MIDI files added (all were already in \"{user.Name}\").");
+                return;
+            }
+
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+            AfterPlaylistPathsMutated();
+            SetStatus($"Added {addedUser.Count} track{(addedUser.Count == 1 ? string.Empty : "s")} to \"{user.Name}\".");
+            if (playFirstAdded)
+            {
+                var idx = playlist.FindIndex(s =>
+                    string.Equals(s.Path, addedUser[0], StringComparison.OrdinalIgnoreCase));
+                if (idx >= 0)
+                    PlayIndex(idx);
+            }
+        }
+
         // ---- Wire up events --------------------------------------------------------------
         btnAdd.Click += (_, _) =>
         {
@@ -3776,7 +3913,7 @@ public partial class MainWindow
                 Multiselect = true
             };
             if (ofd.ShowDialog(dlg) == true)
-                AddCustomFiles(ofd.FileNames, playFirstAdded: true);
+                AddMidiPathsToCurrentPlaylist(ofd.FileNames, playFirstAdded: true);
         };
 
         listScroll.ScrollChanged += (_, _) => SyncPlaylistScrollBarFromViewer();
@@ -3938,6 +4075,7 @@ public partial class MainWindow
             SetStatus($"{playlist.Count} tracks ready.");
 
         SyncPlaylistScrollBarFromViewer();
+        UpdateAddButtonTooltip();
         dlg.Content = root;
         _midiPlayerWindow = dlg;
         _midiPlayerDocked = false;

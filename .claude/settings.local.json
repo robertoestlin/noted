@@ -9,7 +9,8 @@
       "Bash(awk -F',source=' '{print $1}')",
       "Bash(dotnet --list-sdks)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -c Debug)",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Heartbeat/Heartbeat.csproj -c Debug)"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Heartbeat/Heartbeat.csproj -c Debug)",
+      "Bash(dotnet.exe build *)"
     ]
   }
 }

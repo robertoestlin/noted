@@ -143,6 +143,8 @@ public sealed class PluginAlarmSettings
 {
     public string Name { get; set; } = string.Empty;
     public List<PluginAlarmTime>? Times { get; set; }
+    /// <summary>Days of the week the alarm fires on. Null is treated as every day for backward compatibility.</summary>
+    public List<DayOfWeek>? Days { get; set; }
 }
 
 public sealed class PluginAlarmTime

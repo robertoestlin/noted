@@ -13,6 +13,28 @@ public partial class MainWindow
 {
     private const int MaxAlarmTimesPerAlarm = 10;
 
+    private static readonly DayOfWeek[] AlarmDayOrder =
+    [
+        DayOfWeek.Monday,
+        DayOfWeek.Tuesday,
+        DayOfWeek.Wednesday,
+        DayOfWeek.Thursday,
+        DayOfWeek.Friday,
+        DayOfWeek.Saturday,
+        DayOfWeek.Sunday
+    ];
+
+    private static readonly (DayOfWeek Day, string Label)[] AlarmDayDefinitions =
+    [
+        (DayOfWeek.Monday, "Mon"),
+        (DayOfWeek.Tuesday, "Tue"),
+        (DayOfWeek.Wednesday, "Wed"),
+        (DayOfWeek.Thursday, "Thu"),
+        (DayOfWeek.Friday, "Fri"),
+        (DayOfWeek.Saturday, "Sat"),
+        (DayOfWeek.Sunday, "Sun")
+    ];
+
     private static (double Left, double Top) ClampAlarmPopupPositionToVisibleArea(double left, double top, double width, double height)
     {
         var virtualLeft = SystemParameters.VirtualScreenLeft;
@@ -39,7 +61,7 @@ public partial class MainWindow
         if (alarms == null)
             return [];
 
-        var byName = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (HashSet<int> Times, HashSet<DayOfWeek> Days)>(StringComparer.OrdinalIgnoreCase);
         foreach (var alarm in alarms)
         {
             var name = (alarm?.Name ?? string.Empty).Trim();
@@ -50,14 +72,19 @@ public partial class MainWindow
             if (normalizedTimes.Count == 0)
                 continue;
 
+            var normalizedDays = NormalizePluginAlarmDays(alarm?.Days);
+
             if (!byName.TryGetValue(name, out var bucket))
             {
-                bucket = [];
+                bucket = ([], []);
                 byName[name] = bucket;
             }
 
             foreach (var time in normalizedTimes)
-                bucket.Add((time.Hour * 60) + time.Minute);
+                bucket.Times.Add((time.Hour * 60) + time.Minute);
+
+            foreach (var day in normalizedDays)
+                bucket.Days.Add(day);
         }
 
         return byName
@@ -65,7 +92,7 @@ public partial class MainWindow
             .Select(pair => new PluginAlarmSettings
             {
                 Name = pair.Key,
-                Times = pair.Value
+                Times = pair.Value.Times
                     .OrderBy(value => value)
                     .Take(MaxAlarmTimesPerAlarm)
                     .Select(value => new PluginAlarmTime
@@ -73,9 +100,28 @@ public partial class MainWindow
                         Hour = value / 60,
                         Minute = value % 60
                     })
-                    .ToList()
+                    .ToList(),
+                Days = AlarmDayOrder.Where(pair.Value.Days.Contains).ToList()
             })
             .ToList();
+    }
+
+    private static List<DayOfWeek> NormalizePluginAlarmDays(IEnumerable<DayOfWeek>? days)
+    {
+        if (days == null)
+            return [..AlarmDayOrder];
+
+        var seen = new HashSet<DayOfWeek>();
+        foreach (var day in days)
+        {
+            if (Enum.IsDefined(day))
+                seen.Add(day);
+        }
+
+        if (seen.Count == 0)
+            return [..AlarmDayOrder];
+
+        return AlarmDayOrder.Where(seen.Contains).ToList();
     }
 
     private static List<PluginAlarmTime> NormalizePluginAlarmTimes(IEnumerable<PluginAlarmTime>? times)
@@ -372,6 +418,9 @@ public partial class MainWindow
             if (string.IsNullOrWhiteSpace(alarm.Name) || alarm.Times == null)
                 continue;
 
+            if (alarm.Days != null && alarm.Days.Count > 0 && !alarm.Days.Contains(now.DayOfWeek))
+                continue;
+
             foreach (var time in alarm.Times)
             {
                 if (time.Hour != now.Hour || time.Minute != now.Minute)
@@ -551,9 +600,51 @@ public partial class MainWindow
         Grid.SetColumn(rightPanel, 2);
         body.Children.Add(rightPanel);
 
+        int selectedIndex = -1;
+        var suppressNameEvents = false;
+        var suppressListSelectionEvents = false;
+
         rightPanel.Children.Add(new TextBlock { Text = "Alarm name", FontWeight = FontWeights.SemiBold });
         var txtAlarmName = new TextBox { Margin = new Thickness(0, 4, 0, 10) };
         rightPanel.Children.Add(txtAlarmName);
+
+        rightPanel.Children.Add(new TextBlock { Text = "Days", FontWeight = FontWeights.SemiBold });
+        var daysPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 4, 0, 10)
+        };
+        var dayCheckBoxes = new Dictionary<DayOfWeek, CheckBox>();
+        var suppressDayEvents = false;
+
+        void UpdateDaysFromCheckBoxes()
+        {
+            if (suppressDayEvents)
+                return;
+            if (selectedIndex < 0 || selectedIndex >= workingAlarms.Count)
+                return;
+
+            workingAlarms[selectedIndex].Days = AlarmDayDefinitions
+                .Where(d => dayCheckBoxes[d.Day].IsChecked == true)
+                .Select(d => d.Day)
+                .ToList();
+        }
+
+        foreach (var (day, label) in AlarmDayDefinitions)
+        {
+            var chk = new CheckBox
+            {
+                Content = label,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                IsEnabled = false
+            };
+            chk.Checked += (_, _) => UpdateDaysFromCheckBoxes();
+            chk.Unchecked += (_, _) => UpdateDaysFromCheckBoxes();
+            dayCheckBoxes[day] = chk;
+            daysPanel.Children.Add(chk);
+        }
+        rightPanel.Children.Add(daysPanel);
 
         var timesHeader = new Grid { Margin = new Thickness(0, 0, 0, 6) };
         timesHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -593,10 +684,6 @@ public partial class MainWindow
 
         root.Children.Add(body);
         dlg.Content = root;
-
-        int selectedIndex = -1;
-        var suppressNameEvents = false;
-        var suppressListSelectionEvents = false;
 
         void SetAlarmNameText(string value, bool focusNameBox = false, bool selectAll = false)
         {
@@ -641,6 +728,35 @@ public partial class MainWindow
             suppressListSelectionEvents = false;
         }
 
+        void SyncDayCheckBoxesFromAlarm(PluginAlarmSettings? alarm)
+        {
+            suppressDayEvents = true;
+            try
+            {
+                if (alarm == null)
+                {
+                    foreach (var (day, _) in AlarmDayDefinitions)
+                    {
+                        dayCheckBoxes[day].IsChecked = false;
+                        dayCheckBoxes[day].IsEnabled = false;
+                    }
+                    return;
+                }
+
+                var allDays = alarm.Days == null;
+                var daySet = alarm.Days == null ? null : new HashSet<DayOfWeek>(alarm.Days);
+                foreach (var (day, _) in AlarmDayDefinitions)
+                {
+                    dayCheckBoxes[day].IsEnabled = true;
+                    dayCheckBoxes[day].IsChecked = allDays || daySet!.Contains(day);
+                }
+            }
+            finally
+            {
+                suppressDayEvents = false;
+            }
+        }
+
         void RebuildTimesEditor()
         {
             timesPanel.Children.Clear();
@@ -652,6 +768,7 @@ public partial class MainWindow
                 btnAddTime.IsEnabled = false;
                 btnTestAlarm.IsEnabled = false;
                 btnRemoveAlarm.IsEnabled = false;
+                SyncDayCheckBoxesFromAlarm(null);
                 return;
             }
 
@@ -661,6 +778,7 @@ public partial class MainWindow
             selectedAlarm.Times ??= [];
             btnAddTime.IsEnabled = selectedAlarm.Times.Count < MaxAlarmTimesPerAlarm;
             btnTestAlarm.IsEnabled = true;
+            SyncDayCheckBoxesFromAlarm(selectedAlarm);
 
             for (var i = 0; i < selectedAlarm.Times.Count; i++)
             {
@@ -852,6 +970,12 @@ public partial class MainWindow
             if (workingAlarms.Any(alarm => alarm.Times == null || alarm.Times.Count == 0))
             {
                 MessageBox.Show(dlg, "Every alarm needs at least one time.", "Alarms", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (workingAlarms.Any(alarm => alarm.Days != null && alarm.Days.Count == 0))
+            {
+                MessageBox.Show(dlg, "Every alarm needs at least one day selected.", "Alarms", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
