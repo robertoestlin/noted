@@ -42,6 +42,9 @@ public partial class MainWindow
                 opts);
             SaveTimeReports(opts);
             SaveProjectLineCounterState(opts);
+            SaveTaskPanelPluginState(opts);
+            SaveAlarmsPluginState(opts);
+            SaveStandupPluginState(opts);
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
             SaveSafePasteData(opts);
@@ -89,6 +92,9 @@ public partial class MainWindow
             BackupAdditionalSafePaste = _backupAdditionalIncludeSafePaste,
             BackupAdditionalTimeReports = _backupAdditionalIncludeTimeReports,
             BackupAdditionalProjectLineCounter = _backupAdditionalIncludeProjectLineCounter,
+            BackupAdditionalTaskPanel = _backupAdditionalIncludeTaskPanel,
+            BackupAdditionalAlarms = _backupAdditionalIncludeAlarms,
+            BackupAdditionalStandup = _backupAdditionalIncludeStandup,
             BackupAdditionalMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             BackupAdditionalImages = _backupAdditionalIncludeImages,
             CloudSaveHours = _cloudSaveIntervalHours,
@@ -109,8 +115,6 @@ public partial class MainWindow
             UseStandaloneHeartbeatApp = _useStandaloneHeartbeatApp,
             Users = _users.Select(user => user.Name).ToList(),
             UserProfiles = NormalizeUsers(_users),
-            PluginAlarms = BuildPluginAlarmsSnapshot(),
-            PluginAlarmsEnabled = _pluginAlarmsEnabled,
             SearchFilesHistoryLimit = _searchFilesHistoryLimit,
             TabCleanupStaleDays = _tabCleanupStaleDays,
             ClosedTabsMaxCount = _closedTabsMaxCount,
@@ -125,11 +129,7 @@ public partial class MainWindow
             MessageOverlayCountdownMinutes = _messageOverlayCountdownMinutes,
             MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
             MessageOverlayEffectEnabled = _messageOverlayEffectEnabled,
-            MessageOverlayEffect = _messageOverlayEffect,
-            TaskPanelTitle = _taskPanelTitle,
-            TaskAreas = BuildTaskAreasSnapshot(),
-            CurrentTaskAreaId = _currentTaskAreaId,
-            Standup = BuildStandupPreferencesSnapshot()
+            MessageOverlayEffect = _messageOverlayEffect
         };
 
     private NotedSessionState CreateNotedSessionStateSnapshot()
@@ -170,6 +170,41 @@ public partial class MainWindow
         _windowSettingsStore.Save(path, payload, options);
     }
 
+    private void SaveTaskPanelPluginState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, TaskPanelPluginStateFileName);
+        var payload = new TaskPanelPluginState
+        {
+            TaskPanelTitle = _taskPanelTitle,
+            TaskAreas = BuildTaskAreasSnapshot(),
+            CurrentTaskAreaId = _currentTaskAreaId
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void SaveAlarmsPluginState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, AlarmsPluginStateFileName);
+        var payload = new AlarmsPluginState
+        {
+            PluginAlarms = BuildPluginAlarmsSnapshot(),
+            PluginAlarmsEnabled = _pluginAlarmsEnabled
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void SaveStandupPluginState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, StandupPluginStateFileName);
+        var snap = BuildStandupPreferencesSnapshot();
+        var payload = new StandupPluginState
+        {
+            WeekdayTimes = snap.WeekdayTimes,
+            RetentionDays = snap.RetentionDays
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
     private void LoadProjectLineCounterState(string effectiveSettingsJsonPath)
     {
         var path = Path.Combine(_backupFolder, ProjectLineCounterStateFileName);
@@ -199,6 +234,242 @@ public partial class MainWindow
         }
 
         ApplyProjectLineCounterSettings(null, null, null);
+    }
+
+    private void LoadTaskPanelPluginState(string effectiveSettingsJsonPath)
+    {
+        var path = Path.Combine(_backupFolder, TaskPanelPluginStateFileName);
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<TaskPanelPluginState>(path);
+            if (fromDisk != null)
+            {
+                ApplyTaskPanelSettings(fromDisk);
+                return;
+            }
+        }
+
+        if (!SettingsJsonDeclaresTaskPanelKeys(effectiveSettingsJsonPath))
+            return;
+
+        var legacy = TryReadTaskPanelFromSettingsJson(effectiveSettingsJsonPath);
+        if (legacy != null)
+        {
+            ApplyTaskPanelSettings(legacy);
+            SaveTaskPanelPluginState(opts);
+        }
+    }
+
+    private void LoadAlarmsPluginState(string effectiveSettingsJsonPath)
+    {
+        var path = Path.Combine(_backupFolder, AlarmsPluginStateFileName);
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<AlarmsPluginState>(path);
+            if (fromDisk != null)
+            {
+                ApplyPluginAlarmSettings(fromDisk.PluginAlarms);
+                _pluginAlarmsEnabled = fromDisk.PluginAlarmsEnabled;
+                return;
+            }
+        }
+
+        if (!SettingsJsonDeclaresAlarmsKeys(effectiveSettingsJsonPath))
+            return;
+
+        var legacy = TryReadAlarmsPayloadFromSettingsJson(effectiveSettingsJsonPath);
+        if (legacy == null)
+            return;
+        ApplyPluginAlarmSettings(legacy.PluginAlarms);
+        _pluginAlarmsEnabled = legacy.PluginAlarmsEnabled ?? true;
+        SaveAlarmsPluginState(opts);
+    }
+
+    private void LoadStandupPluginState(string effectiveSettingsJsonPath)
+    {
+        var path = Path.Combine(_backupFolder, StandupPluginStateFileName);
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<StandupPluginState>(path);
+            if (fromDisk != null)
+            {
+                ApplyStandupSettings(fromDisk);
+                return;
+            }
+        }
+
+        if (!SettingsJsonDeclaresStandupKey(effectiveSettingsJsonPath))
+            return;
+
+        var legacy = TryReadLegacyStandupFromSettingsJson(effectiveSettingsJsonPath);
+        if (legacy?.Standup == null)
+            return;
+        ApplyStandupSettings(legacy.Standup);
+        SaveStandupPluginState(opts);
+    }
+
+    private sealed class LegacyStandupRoot
+    {
+        public StandupPluginState? Standup { get; set; }
+    }
+
+    private sealed class LegacyAlarmsPayload
+    {
+        public List<PluginAlarmSettings>? PluginAlarms { get; set; }
+        public bool? PluginAlarmsEnabled { get; set; }
+    }
+
+    private static TaskPanelPluginState? TryReadTaskPanelFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<TaskPanelPluginState>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static LegacyAlarmsPayload? TryReadAlarmsPayloadFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<LegacyAlarmsPayload>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static LegacyStandupRoot? TryReadLegacyStandupFromSettingsJson(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return null;
+            return JsonSerializer.Deserialize<LegacyStandupRoot>(
+                File.ReadAllText(settingsPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool SettingsJsonDeclaresTaskPanelKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            return doc.RootElement.TryGetProperty("TaskPanelTitle", out _)
+                   || doc.RootElement.TryGetProperty("TaskAreas", out _)
+                   || doc.RootElement.TryGetProperty("CurrentTaskAreaId", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool SettingsJsonDeclaresAlarmsKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            return doc.RootElement.TryGetProperty("PluginAlarms", out _)
+                   || doc.RootElement.TryGetProperty("PluginAlarmsEnabled", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool SettingsJsonDeclaresStandupKey(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("Standup", out _);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Detects split-plugin keys still present in <c>settings.json</c> so we can rewrite without those keys.
+    /// </summary>
+    private static bool SettingsJsonContainsLegacyPluginSplitKeys(string settingsPath)
+    {
+        try
+        {
+            if (!File.Exists(settingsPath))
+                return false;
+            using var doc = JsonDocument.Parse(
+                File.ReadAllText(settingsPath),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true
+                });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            return doc.RootElement.TryGetProperty("PluginAlarms", out _)
+                   || doc.RootElement.TryGetProperty("PluginAlarmsEnabled", out _)
+                   || doc.RootElement.TryGetProperty("TaskPanelTitle", out _)
+                   || doc.RootElement.TryGetProperty("TaskAreas", out _)
+                   || doc.RootElement.TryGetProperty("CurrentTaskAreaId", out _)
+                   || doc.RootElement.TryGetProperty("Standup", out _);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static ProjectLineCounterPluginState? TryReadProjectLineCounterFromSettingsJson(string settingsPath)
@@ -268,6 +539,9 @@ public partial class MainWindow
             _persistedLastNotedVersionForJson = loaded.EffectiveSettings.LastNotedVersion;
 
             LoadProjectLineCounterState(loaded.EffectiveSettingsJsonPath);
+            LoadTaskPanelPluginState(loaded.EffectiveSettingsJsonPath);
+            LoadAlarmsPluginState(loaded.EffectiveSettingsJsonPath);
+            LoadStandupPluginState(loaded.EffectiveSettingsJsonPath);
 
             var sessionPath = Path.Combine(_backupFolder, SessionStateFileName);
             LegacyCombinedSettings? legacyCombined = null;
@@ -290,9 +564,10 @@ public partial class MainWindow
             ApplyColorThemeToOpenEditors();
             ApplyFridayFeelingToOpenEditors();
 
-            // Line counter moved to plugin-project-line-counter.json; stale keys are ignored on deserialize
+            // Line counter / task panel / alarms / standup moved to plugin-*.json; stale keys are ignored on deserialize
             // and would never be removed if LastNotedVersion already matches (MaybeStamp skips SaveWindowSettings).
-            if (SettingsJsonContainsLegacyProjectLineCounterKeys(loaded.EffectiveSettingsJsonPath))
+            if (SettingsJsonContainsLegacyProjectLineCounterKeys(loaded.EffectiveSettingsJsonPath)
+                || SettingsJsonContainsLegacyPluginSplitKeys(loaded.EffectiveSettingsJsonPath))
                 SaveWindowSettings();
         }
         catch { /* ignore corrupt settings */ }
@@ -476,6 +751,9 @@ public partial class MainWindow
         _backupAdditionalIncludeSafePaste = false;
         _backupAdditionalIncludeTimeReports = true;
         _backupAdditionalIncludeProjectLineCounter = true;
+        _backupAdditionalIncludeTaskPanel = true;
+        _backupAdditionalIncludeAlarms = true;
+        _backupAdditionalIncludeStandup = true;
         _backupAdditionalIncludeMidiCustomSongs = false;
         _backupAdditionalIncludeImages = true;
         ResetQuickMessageOverlaySettings();
@@ -533,8 +811,6 @@ public partial class MainWindow
         if (loadedUsers.Count == 0)
             loadedUsers = BuildUsersFromLegacyNames(state.Users);
         _users = loadedUsers;
-        ApplyPluginAlarmSettings(state.PluginAlarms);
-        _pluginAlarmsEnabled = state.PluginAlarmsEnabled;
         _searchFilesHistoryLimit = NormalizeSearchFilesHistoryLimit(state.SearchFilesHistoryLimit);
         if (state.TabCleanupStaleDays >= 1 && state.TabCleanupStaleDays <= 3650)
             _tabCleanupStaleDays = state.TabCleanupStaleDays;
@@ -542,8 +818,6 @@ public partial class MainWindow
         _closedTabsRetentionDays = NormalizeClosedTabsRetentionDays(state.ClosedTabsRetentionDays);
         _saveBulletsAsMarker = string.Equals(state.SaveBulletsAs, "*", StringComparison.Ordinal) ? '*' : '-';
         ApplyQuickMessageOverlaySettings(state);
-        ApplyTaskPanelSettings(state);
-        ApplyStandupSettings(state.Standup);
         _midiPlayerVolumePercent = NormalizeMidiPlayerVolumePercent(state.MidiPlayerVolumePercent);
         _backupAdditionalIncludeSettingsFile = state.BackupAdditionalSettingsFile ?? true;
         _backupAdditionalIncludeAppLog = state.BackupAdditionalAppLog ?? true;
@@ -554,6 +828,9 @@ public partial class MainWindow
         _backupAdditionalIncludeSafePaste = state.BackupAdditionalSafePaste ?? false;
         _backupAdditionalIncludeTimeReports = state.BackupAdditionalTimeReports ?? true;
         _backupAdditionalIncludeProjectLineCounter = state.BackupAdditionalProjectLineCounter ?? true;
+        _backupAdditionalIncludeTaskPanel = state.BackupAdditionalTaskPanel ?? true;
+        _backupAdditionalIncludeAlarms = state.BackupAdditionalAlarms ?? true;
+        _backupAdditionalIncludeStandup = state.BackupAdditionalStandup ?? true;
         _backupAdditionalIncludeMidiCustomSongs = state.BackupAdditionalMidiCustomSongs ?? false;
         _backupAdditionalIncludeImages = state.BackupAdditionalImages ?? true;
 
@@ -698,7 +975,7 @@ public partial class MainWindow
             })
             .ToList();
 
-    private void ApplyTaskPanelSettings(WindowSettings state)
+    private void ApplyTaskPanelSettings(TaskPanelPluginState state)
     {
         _taskPanelTitle = string.IsNullOrWhiteSpace(state.TaskPanelTitle)
             ? DefaultTaskPanelTitle
@@ -789,6 +1066,15 @@ public partial class MainWindow
 
     private bool CopyProjectLineCounterStateFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, ProjectLineCounterStateFileName);
+
+    private bool CopyTaskPanelPluginStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TaskPanelPluginStateFileName);
+
+    private bool CopyAlarmsPluginStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, AlarmsPluginStateFileName);
+
+    private bool CopyStandupPluginStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, StandupPluginStateFileName);
 
     private bool CopyTodoItemsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TodoItemsFileName);
@@ -893,6 +1179,9 @@ public partial class MainWindow
         public bool IncludeSafePaste { get; init; }
         public bool IncludeTimeReports { get; init; }
         public bool IncludeProjectLineCounter { get; init; }
+        public bool IncludeTaskPanel { get; init; }
+        public bool IncludeAlarms { get; init; }
+        public bool IncludeStandup { get; init; }
         public bool IncludeMidiCustomSongs { get; init; }
         public bool IncludeImages { get; init; }
 
@@ -906,6 +1195,9 @@ public partial class MainWindow
         public int SafePasteFilesCopied { get; init; }
         public int TimeReportsFilesCopied { get; init; }
         public int ProjectLineCounterFilesCopied { get; init; }
+        public int TaskPanelFilesCopied { get; init; }
+        public int AlarmsFilesCopied { get; init; }
+        public int StandupFilesCopied { get; init; }
         public int MidiCustomSongsFilesCopied { get; init; }
         public int ImageFilesCopied { get; init; }
 
@@ -929,10 +1221,13 @@ public partial class MainWindow
             const string TagSafePaste = "Safe Paste";
             const string TagTimeReports = "Time Reports";
             const string TagProjectLineCounter = "Project Line Counter";
+            const string TagTaskPanel = "Task panel";
+            const string TagAlarms = "Alarms";
+            const string TagStandup = "Standup";
             const string TagMidiPaths = "MIDI Custom Songs Paths";
             const string TagImages = "Images";
 
-            var included = new List<string>(12);
+            var included = new List<string>(15);
             if (IncludeSettings)
                 included.Add($"{TagSettings}: {CopiesPhrase(SettingsFilesCopied)}");
             if (IncludeAppLog)
@@ -951,12 +1246,18 @@ public partial class MainWindow
                 included.Add($"{TagTimeReports}: {CopiesPhrase(TimeReportsFilesCopied)}");
             if (IncludeProjectLineCounter)
                 included.Add($"{TagProjectLineCounter}: {CopiesPhrase(ProjectLineCounterFilesCopied)}");
+            if (IncludeTaskPanel)
+                included.Add($"{TagTaskPanel}: {CopiesPhrase(TaskPanelFilesCopied)}");
+            if (IncludeAlarms)
+                included.Add($"{TagAlarms}: {CopiesPhrase(AlarmsFilesCopied)}");
+            if (IncludeStandup)
+                included.Add($"{TagStandup}: {CopiesPhrase(StandupFilesCopied)}");
             if (IncludeMidiCustomSongs)
                 included.Add($"{TagMidiPaths}: {CopiesPhrase(MidiCustomSongsFilesCopied)}");
             if (IncludeImages)
                 included.Add($"{TagImages}: {CopiesPhrase(ImageFilesCopied)}");
 
-            var excluded = new List<string>(11);
+            var excluded = new List<string>(14);
             if (!IncludeSettings)
                 excluded.Add(TagSettings);
             if (!IncludeAppLog)
@@ -975,6 +1276,12 @@ public partial class MainWindow
                 excluded.Add(TagTimeReports);
             if (!IncludeProjectLineCounter)
                 excluded.Add(TagProjectLineCounter);
+            if (!IncludeTaskPanel)
+                excluded.Add(TagTaskPanel);
+            if (!IncludeAlarms)
+                excluded.Add(TagAlarms);
+            if (!IncludeStandup)
+                excluded.Add(TagStandup);
             if (!IncludeMidiCustomSongs)
                 excluded.Add(TagMidiPaths);
             if (!IncludeImages)
@@ -1027,6 +1334,18 @@ public partial class MainWindow
             && CopyProjectLineCounterStateFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
+        var taskPanelCopied = _backupAdditionalIncludeTaskPanel
+            && CopyTaskPanelPluginStateFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var alarmsCopied = _backupAdditionalIncludeAlarms
+            && CopyAlarmsPluginStateFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
+        var standupCopied = _backupAdditionalIncludeStandup
+            && CopyStandupPluginStateFileToBackupFolder(fromFolder, toFolder)
+            ? 1
+            : 0;
         var midiCopied = _backupAdditionalIncludeMidiCustomSongs
             && _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, MidiCustomSongsFileName)
             ? 1
@@ -1046,6 +1365,9 @@ public partial class MainWindow
             IncludeSafePaste = _backupAdditionalIncludeSafePaste,
             IncludeTimeReports = _backupAdditionalIncludeTimeReports,
             IncludeProjectLineCounter = _backupAdditionalIncludeProjectLineCounter,
+            IncludeTaskPanel = _backupAdditionalIncludeTaskPanel,
+            IncludeAlarms = _backupAdditionalIncludeAlarms,
+            IncludeStandup = _backupAdditionalIncludeStandup,
             IncludeMidiCustomSongs = _backupAdditionalIncludeMidiCustomSongs,
             IncludeImages = _backupAdditionalIncludeImages,
             SettingsFilesCopied = settingsCopied,
@@ -1057,6 +1379,9 @@ public partial class MainWindow
             SafePasteFilesCopied = safePasteCopied,
             TimeReportsFilesCopied = timeReportsCopied,
             ProjectLineCounterFilesCopied = projectLineCounterCopied,
+            TaskPanelFilesCopied = taskPanelCopied,
+            AlarmsFilesCopied = alarmsCopied,
+            StandupFilesCopied = standupCopied,
             MidiCustomSongsFilesCopied = midiCopied,
             ImageFilesCopied = imageCopied
         };

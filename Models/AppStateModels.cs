@@ -179,6 +179,21 @@ public sealed class ProjectLineCounterPluginState
     public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
 }
 
+/// <summary>Task panel / task areas configuration in <c>plugin-task-panel.json</c>.</summary>
+public sealed class TaskPanelPluginState
+{
+    public string? TaskPanelTitle { get; set; }
+    public List<TaskAreaState>? TaskAreas { get; set; }
+    public string? CurrentTaskAreaId { get; set; }
+}
+
+/// <summary>Alarms plugin configuration in <c>plugin-alarms.json</c>.</summary>
+public sealed class AlarmsPluginState
+{
+    public List<PluginAlarmSettings>? PluginAlarms { get; set; }
+    public bool PluginAlarmsEnabled { get; set; } = true;
+}
+
 public sealed class SearchFilesHistoryMatch
 {
     public string RelativePath { get; set; } = string.Empty;
@@ -222,13 +237,18 @@ public sealed class StandupWeekdayTime
     public int Minute { get; set; }
 }
 
-/// <summary>Standup schedule preferences in <c>settings.json</c> (window bounds live in <c>session-state.json</c>).</summary>
-public sealed class StandupSettings
+/// <summary>Standup weekday schedule and retention; persisted to <c>plugin-standup.json</c> (window bounds live in <c>session-state.json</c>).</summary>
+public class StandupSettings
 {
     public List<StandupWeekdayTime>? WeekdayTimes { get; set; }
 
     /// <summary>0 means never delete; otherwise the number of days to keep.</summary>
     public int RetentionDays { get; set; }
+}
+
+/// <summary>Serialized payload for <c>plugin-standup.json</c> (same shape as <see cref="StandupSettings"/>).</summary>
+public sealed class StandupPluginState : StandupSettings
+{
 }
 
 /// <summary>Session-only UI state in <c>session-state.json</c>.</summary>
@@ -327,6 +347,15 @@ public sealed class WindowSettings
     /// <summary>Include <c>plugin-project-line-counter.json</c> (default true).</summary>
     public bool? BackupAdditionalProjectLineCounter { get; set; }
 
+    /// <summary>Include <c>plugin-task-panel.json</c> (default true).</summary>
+    public bool? BackupAdditionalTaskPanel { get; set; }
+
+    /// <summary>Include <c>plugin-alarms.json</c> (default true).</summary>
+    public bool? BackupAdditionalAlarms { get; set; }
+
+    /// <summary>Include <c>plugin-standup.json</c> (default true).</summary>
+    public bool? BackupAdditionalStandup { get; set; }
+
     /// <summary>Include <c>midi-custom-songs.json</c> (default false).</summary>
     public bool? BackupAdditionalMidiCustomSongs { get; set; }
 
@@ -351,8 +380,6 @@ public sealed class WindowSettings
     public string FancyBulletStyle { get; set; } = "dot";
     public List<string>? Users { get; set; }
     public List<UserProfile>? UserProfiles { get; set; }
-    public List<PluginAlarmSettings>? PluginAlarms { get; set; }
-    public bool PluginAlarmsEnabled { get; set; } = true;
     public int SearchFilesHistoryLimit { get; set; } = 20;
     public int TabCleanupStaleDays { get; set; } = 30;
     public int ClosedTabsMaxCount { get; set; } = 10;
@@ -371,10 +398,4 @@ public sealed class WindowSettings
     public int? MessageOverlayCountdownSeconds { get; set; }
     public bool? MessageOverlayEffectEnabled { get; set; }
     public string? MessageOverlayEffect { get; set; }
-    public string? TaskPanelTitle { get; set; }
-    public List<TaskAreaState>? TaskAreas { get; set; }
-    public string? CurrentTaskAreaId { get; set; }
-
-    /// <summary>Standup plugin per-weekday times and retention.</summary>
-    public StandupSettings? Standup { get; set; }
 }

@@ -243,6 +243,9 @@ public partial class MainWindow
         var chkBackupAddSafePaste = new CheckBox { Content = "Safe paste (safe-paste.dat + keys)", IsChecked = _backupAdditionalIncludeSafePaste, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddTimeReports = new CheckBox { Content = "Time Reports (plugin-time-reports.json)", IsChecked = _backupAdditionalIncludeTimeReports, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddProjectLineCounter = new CheckBox { Content = "Project Line Counter (plugin-project-line-counter.json)", IsChecked = _backupAdditionalIncludeProjectLineCounter, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddTaskPanel = new CheckBox { Content = "Task panel (plugin-task-panel.json)", IsChecked = _backupAdditionalIncludeTaskPanel, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddAlarms = new CheckBox { Content = "Alarms (plugin-alarms.json)", IsChecked = _backupAdditionalIncludeAlarms, Margin = new Thickness(0, 0, 0, 4) };
+        var chkBackupAddStandup = new CheckBox { Content = "Standup (plugin-standup.json)", IsChecked = _backupAdditionalIncludeStandup, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddMidi = new CheckBox { Content = "MIDI custom songs (midi-custom-songs.json)", IsChecked = _backupAdditionalIncludeMidiCustomSongs, Margin = new Thickness(0, 0, 0, 4) };
         var chkBackupAddImages = new CheckBox { Content = "Images (images folder)", IsChecked = _backupAdditionalIncludeImages, Margin = new Thickness(0, 0, 0, 0) };
         additionalBackupPanel.Children.Add(chkBackupAddSettings);
@@ -254,6 +257,9 @@ public partial class MainWindow
         additionalBackupPanel.Children.Add(chkBackupAddSafePaste);
         additionalBackupPanel.Children.Add(chkBackupAddTimeReports);
         additionalBackupPanel.Children.Add(chkBackupAddProjectLineCounter);
+        additionalBackupPanel.Children.Add(chkBackupAddTaskPanel);
+        additionalBackupPanel.Children.Add(chkBackupAddAlarms);
+        additionalBackupPanel.Children.Add(chkBackupAddStandup);
         additionalBackupPanel.Children.Add(chkBackupAddMidi);
         additionalBackupPanel.Children.Add(chkBackupAddImages);
         expanderAdditionalBackup.Content = additionalBackupPanel;
@@ -1669,6 +1675,9 @@ public partial class MainWindow
                 _backupAdditionalIncludeSafePaste = chkBackupAddSafePaste.IsChecked == true;
                 _backupAdditionalIncludeTimeReports = chkBackupAddTimeReports.IsChecked == true;
                 _backupAdditionalIncludeProjectLineCounter = chkBackupAddProjectLineCounter.IsChecked == true;
+                _backupAdditionalIncludeTaskPanel = chkBackupAddTaskPanel.IsChecked == true;
+                _backupAdditionalIncludeAlarms = chkBackupAddAlarms.IsChecked == true;
+                _backupAdditionalIncludeStandup = chkBackupAddStandup.IsChecked == true;
                 _backupAdditionalIncludeMidiCustomSongs = chkBackupAddMidi.IsChecked == true;
                 _backupAdditionalIncludeImages = chkBackupAddImages.IsChecked == true;
 
