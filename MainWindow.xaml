@@ -308,6 +308,14 @@
                                    FontSize="11"
                                    FontWeight="SemiBold"
                                    Foreground="#5FD4FF"/>
+                        <TextBlock x:Name="MessageOverlayNowPlayingPlaylist"
+                                   Text=""
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Foreground="#7FE0FF"
+                                   Margin="0,2,0,0"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="Collapsed"/>
                         <TextBlock x:Name="MessageOverlayNowPlayingTitle"
                                    Text=""
                                    FontSize="24"

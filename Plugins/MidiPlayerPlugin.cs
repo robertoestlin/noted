@@ -59,8 +59,30 @@ public partial class MainWindow
     }
 
     private const string MidiCustomSongsFileName = "midi-custom-songs.json";
+    private const string MidiPlaylistsFileName = "midi-playlists.json";
+    private const string MidiPlaylistIdAll = "__all__";
+    private const string MidiPlaylistIdClassical = "__classical__";
+    private const string MidiPlaylistIdFocus = "__focus__";
+    /// <summary>Bump when shipped defaults change (e.g. Brahms in Classical, Focus playlist).</summary>
+    private const int MidiPlaylistStoreRevisionCurrent = 2;
     private const string MidiCustomGroupName = "Custom";
     private const string MidiOtherGroupName = "Other";
+
+    private sealed class MidiPlaylistsFileDto
+    {
+        public string? SelectedPlaylistId { get; set; }
+        public int? StoreRevision { get; set; }
+        public List<string>? ClassicalPaths { get; set; }
+        public List<string>? FocusPaths { get; set; }
+        public List<MidiUserPlaylistDto>? UserPlaylists { get; set; }
+    }
+
+    private sealed class MidiUserPlaylistDto
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public List<string>? Paths { get; set; }
+    }
 
     private Window? _midiPlayerWindow;
     private bool _midiPlayerDocked;
@@ -71,6 +93,7 @@ public partial class MainWindow
     private bool _midiPlayerIsPlaying;
     private string? _midiPlayerCurrentTitle;
     private string? _midiPlayerCurrentGroup;
+    private string? _midiPlayerCurrentPlaylistName;
 
     private void UpdateMidiPlayerDockedIndicator()
     {
@@ -201,6 +224,212 @@ public partial class MainWindow
         return songs;
     }
 
+    private string MidiPlaylistsStorePath() => Path.Combine(_backupFolder, MidiPlaylistsFileName);
+
+    private static bool IsClassicalComposerGroup(string group) =>
+        group.Equals("Bach", StringComparison.OrdinalIgnoreCase)
+        || group.Equals("Mozart", StringComparison.OrdinalIgnoreCase)
+        || group.Equals("Albeniz", StringComparison.OrdinalIgnoreCase)
+        || group.Equals("Brahms", StringComparison.OrdinalIgnoreCase);
+
+    private static List<string> DefaultFocusPathsFromBundled(List<MidiSong> bundled)
+        => bundled
+            .Where(s => s.Group.Equals("Focus", StringComparison.OrdinalIgnoreCase))
+            .Select(s => s.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private static List<string> DefaultClassicalPathsFromBundled(List<MidiSong> bundled)
+        => bundled
+            .Where(s => IsClassicalComposerGroup(s.Group))
+            .Select(s => s.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private List<MidiSong> BuildBundledMidiSongsOnly()
+    {
+        var songs = new List<MidiSong>();
+        var resourcesDir = MidiResourcesDirectory();
+        if (!Directory.Exists(resourcesDir))
+            return songs;
+        foreach (var path in Directory
+                     .EnumerateFiles(resourcesDir, "*.mid", SearchOption.TopDirectoryOnly)
+                     .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            var (group, title) = SplitMidiTitle(name);
+            songs.Add(new MidiSong { Title = title, Path = path, Group = group, IsCustom = false });
+        }
+
+        return songs;
+    }
+
+    private MidiSong CreateMidiSongFromResolvedPath(string path, HashSet<string> customPathSet)
+    {
+        if (customPathSet.Contains(path))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            var (_, title) = SplitMidiTitle(name);
+            return new MidiSong { Title = title, Path = path, Group = MidiCustomGroupName, IsCustom = true };
+        }
+
+        try
+        {
+            var resourcesDir = Path.GetFullPath(MidiResourcesDirectory());
+            var full = Path.GetFullPath(path);
+            var prefix = resourcesDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                         + Path.DirectorySeparatorChar;
+            if (full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(full, resourcesDir, StringComparison.OrdinalIgnoreCase))
+            {
+                var name = Path.GetFileNameWithoutExtension(path);
+                var (group, title) = SplitMidiTitle(name);
+                return new MidiSong { Title = title, Path = path, Group = group, IsCustom = false };
+            }
+        }
+        catch
+        {
+            // Fall through to filename-only parsing.
+        }
+
+        var fn = Path.GetFileNameWithoutExtension(path);
+        var (g, t) = SplitMidiTitle(fn);
+        return new MidiSong { Title = t, Path = path, Group = g, IsCustom = false };
+    }
+
+    private List<MidiSong> BuildActiveMidiPlaylist(
+        string playlistId,
+        List<string> customPaths,
+        MidiPlaylistsFileDto store,
+        List<MidiSong> bundledOnlyCache)
+    {
+        var customSet = new HashSet<string>(customPaths, StringComparer.OrdinalIgnoreCase);
+        switch (playlistId)
+        {
+            case MidiPlaylistIdAll:
+                return bundledOnlyCache.ToList();
+            case MidiPlaylistIdClassical:
+                var classical = store.ClassicalPaths ?? new List<string>();
+                return classical
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+                    .Select(p => CreateMidiSongFromResolvedPath(p, customSet))
+                    .ToList();
+            case MidiPlaylistIdFocus:
+                var focus = store.FocusPaths ?? new List<string>();
+                return focus
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+                    .Select(p => CreateMidiSongFromResolvedPath(p, customSet))
+                    .ToList();
+            default:
+                var user = store.UserPlaylists?.FirstOrDefault(u => u.Id == playlistId);
+                if (user?.Paths == null)
+                    return new List<MidiSong>();
+                return user.Paths
+                    .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+                    .Select(p => CreateMidiSongFromResolvedPath(p, customSet))
+                    .ToList();
+        }
+    }
+
+    private static bool IsKnownMidiPlaylistId(string id, MidiPlaylistsFileDto store)
+    {
+        if (id == MidiPlaylistIdAll || id == MidiPlaylistIdClassical || id == MidiPlaylistIdFocus)
+            return true;
+        return store.UserPlaylists?.Any(u => u.Id == id) == true;
+    }
+
+    private MidiPlaylistsFileDto LoadMidiPlaylistsStoreOrCreate(List<MidiSong> bundledForDefaults)
+    {
+        var path = MidiPlaylistsStorePath();
+        try
+        {
+            if (File.Exists(path))
+            {
+                var json = File.ReadAllText(path);
+                var dto = JsonSerializer.Deserialize<MidiPlaylistsFileDto>(json);
+                if (dto != null)
+                {
+                    dto.UserPlaylists ??= new List<MidiUserPlaylistDto>();
+                    foreach (var u in dto.UserPlaylists)
+                        u.Paths ??= new List<string>();
+                    if (dto.ClassicalPaths == null || dto.ClassicalPaths.Count == 0)
+                        dto.ClassicalPaths = DefaultClassicalPathsFromBundled(bundledForDefaults);
+                    ApplyMidiPlaylistStoreMigrations(dto, bundledForDefaults);
+                    return dto;
+                }
+            }
+        }
+        catch
+        {
+            // Fall through to defaults.
+        }
+
+        var created = new MidiPlaylistsFileDto
+        {
+            SelectedPlaylistId = MidiPlaylistIdAll,
+            StoreRevision = MidiPlaylistStoreRevisionCurrent,
+            ClassicalPaths = DefaultClassicalPathsFromBundled(bundledForDefaults),
+            FocusPaths = DefaultFocusPathsFromBundled(bundledForDefaults),
+            UserPlaylists = new List<MidiUserPlaylistDto>()
+        };
+        SaveMidiPlaylistsStore(created);
+        return created;
+    }
+
+    /// <summary>
+    /// One-time updates for existing midi-playlists.json (e.g. seed Brahms into Classical, add Focus defaults).
+    /// </summary>
+    private void ApplyMidiPlaylistStoreMigrations(MidiPlaylistsFileDto dto, List<MidiSong> bundledForDefaults)
+    {
+        var rev = dto.StoreRevision ?? 0;
+        if (rev >= MidiPlaylistStoreRevisionCurrent)
+            return;
+
+        dto.ClassicalPaths ??= new List<string>();
+        var classicalSet = new HashSet<string>(dto.ClassicalPaths, StringComparer.OrdinalIgnoreCase);
+        var brahmsMerged = false;
+        foreach (var p in bundledForDefaults
+                     .Where(s => s.Group.Equals("Brahms", StringComparison.OrdinalIgnoreCase))
+                     .Select(s => s.Path))
+        {
+            if (classicalSet.Add(p))
+            {
+                dto.ClassicalPaths.Add(p);
+                brahmsMerged = true;
+            }
+        }
+
+        if (brahmsMerged)
+        {
+            dto.ClassicalPaths = dto.ClassicalPaths
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        if (dto.FocusPaths == null || dto.FocusPaths.Count == 0)
+            dto.FocusPaths = DefaultFocusPathsFromBundled(bundledForDefaults);
+
+        dto.StoreRevision = MidiPlaylistStoreRevisionCurrent;
+        SaveMidiPlaylistsStore(dto);
+    }
+
+    private void SaveMidiPlaylistsStore(MidiPlaylistsFileDto dto)
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            var json = JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true });
+            WindowSettingsStore.WriteUtf8IfChanged(MidiPlaylistsStorePath(), json);
+        }
+        catch
+        {
+            // Non-critical persistence.
+        }
+    }
+
     private static Brush BrushForMidiGroup(string group, int orderIndex, int totalGroups)
     {
         if (string.Equals(group, MidiCustomGroupName, StringComparison.Ordinal))
@@ -295,11 +524,36 @@ public partial class MainWindow
         var startTrackPrimedSilently = false;
 
         var customPaths = LoadCustomMidiPaths();
-        var playlist = BuildMidiPlaylist(customPaths);
+        var bundledOnlyCache = BuildBundledMidiSongsOnly();
+        var midiPlaylistStore = LoadMidiPlaylistsStoreOrCreate(bundledOnlyCache);
+        var currentPlaylistId = midiPlaylistStore.SelectedPlaylistId ?? MidiPlaylistIdAll;
+        if (!IsKnownMidiPlaylistId(currentPlaylistId, midiPlaylistStore))
+            currentPlaylistId = MidiPlaylistIdAll;
+        midiPlaylistStore.SelectedPlaylistId = currentPlaylistId;
+        var playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
+        var playbackPlaylistId = currentPlaylistId;
+        var playbackQueue = BuildActiveMidiPlaylist(playbackPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
         var currentIndex = -1;
         string? currentLoadedPath = null;
         var rng = new Random();
         var shuffleHistory = new List<int>();
+
+        void RebuildPlaybackQueueFromPlaybackId()
+        {
+            playbackQueue = BuildActiveMidiPlaylist(
+                playbackPlaylistId,
+                customPaths,
+                midiPlaylistStore,
+                bundledOnlyCache);
+        }
+
+        int ViewIndexOfPlayingTrack()
+        {
+            if (string.IsNullOrWhiteSpace(currentLoadedPath))
+                return -1;
+            return playlist.FindIndex(s =>
+                string.Equals(s.Path, currentLoadedPath, StringComparison.OrdinalIgnoreCase));
+        }
 
         var itemBordersByIndex = new Dictionary<int, Border>();
         var groupHeadersByName = new Dictionary<string, Border>(StringComparer.Ordinal);
@@ -595,6 +849,27 @@ public partial class MainWindow
             FontSize = 11,
             FontWeight = FontWeights.SemiBold
         });
+        string PlaylistDisplayName(string id)
+        {
+            return id switch
+            {
+                MidiPlaylistIdAll => "All",
+                MidiPlaylistIdClassical => "Classical",
+                MidiPlaylistIdFocus => "Focus",
+                _ => midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == id)?.Name ?? "Playlist"
+            };
+        }
+
+        var lblNowPlayingPlaylist = new TextBlock
+        {
+            Text = PlaylistDisplayName(playbackPlaylistId),
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x7F, 0xE0, 0xFF)),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 4, 0, 0)
+        };
+        nowPlayingStack.Children.Add(lblNowPlayingPlaylist);
         var lblNowPlaying = new TextBlock
         {
             Text = "Nothing playing",
@@ -1000,6 +1275,97 @@ public partial class MainWindow
             Child = volumePopupBorder
         };
 
+        Action? rebuildPlaylistPickerUi = null;
+        var playlistPickerList = new StackPanel();
+        var playlistPickerScroll = new ScrollViewer
+        {
+            MaxHeight = 280,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = playlistPickerList
+        };
+        var btnPlaylistAdd = new Button
+        {
+            Content = "\uE710",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 16,
+            Height = 36,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x63, 0xEA, 0xA0)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3D, 0x9B, 0x6A)),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            ToolTip = "New playlist"
+        };
+        var playlistPopupInner = new StackPanel();
+        playlistPopupInner.Children.Add(playlistPickerScroll);
+        playlistPopupInner.Children.Add(new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Margin = new Thickness(0, 6, 0, 0),
+            Padding = new Thickness(0, 8, 0, 0),
+            Child = btnPlaylistAdd
+        });
+        var playlistPopupBorder = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 10, 8),
+            MinWidth = 220,
+            MaxWidth = 360,
+            SnapsToDevicePixels = true,
+            Child = playlistPopupInner
+        };
+        // Popup content inherits from PlacementTarget (btnPlaylist uses Segoe MDL2 Assets).
+        // Without a real text font, playlist names render as empty boxes.
+        TextElement.SetFontFamily(playlistPopupBorder, new FontFamily("Segoe UI, Segoe UI Variable"));
+        TextElement.SetFontSize(playlistPopupBorder, 14);
+        var playlistPopup = new Popup
+        {
+            AllowsTransparency = true,
+            StaysOpen = false,
+            Placement = PlacementMode.Top,
+            PopupAnimation = PopupAnimation.Fade,
+            Child = playlistPopupBorder
+        };
+        var btnPlaylist = new Button
+        {
+            Content = "\uE762",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Width = 36,
+            Height = 36,
+            FontSize = 16,
+            Style = iconButtonStyle,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 0, 0),
+            ToolTip = "Playlists"
+        };
+        playlistPopup.PlacementTarget = btnPlaylist;
+        btnPlaylist.Click += (_, _) =>
+        {
+            volumePopup.IsOpen = false;
+            playlistPopup.IsOpen = !playlistPopup.IsOpen;
+            rebuildPlaylistPickerUi?.Invoke();
+        };
+        playlistPopup.Opened += (_, _) =>
+        {
+            rebuildPlaylistPickerUi?.Invoke();
+            dlg.Dispatcher.BeginInvoke(
+                () =>
+                {
+                    playlistPopup.HorizontalOffset =
+                        -(playlistPopupBorder.ActualWidth > 1
+                            ? playlistPopupBorder.ActualWidth
+                            : 220) / 2
+                        + btnPlaylist.ActualWidth / 2;
+                },
+                DispatcherPriority.Loaded);
+        };
+
         void SyncMidiPlayerVolumeFromPopupUi()
         {
             var pct = (int)Math.Round(volumeBarPopup.Value);
@@ -1072,6 +1438,7 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 0)
         };
         preloadVolumeHost.Children.Add(btnVolume);
+        preloadVolumeHost.Children.Add(btnPlaylist);
         preloadVolumeHost.Children.Add(preloadDot);
         btnShuffle.Checked += (_, _) =>
         {
@@ -1093,6 +1460,7 @@ public partial class MainWindow
         volumePopup.PlacementTarget = btnVolume;
         btnVolume.Click += (_, _) =>
         {
+            playlistPopup.IsOpen = false;
             volumePopup.IsOpen = !volumePopup.IsOpen;
             if (volumePopup.IsOpen)
             {
@@ -1112,6 +1480,7 @@ public partial class MainWindow
         };
         volumePopup.Opened += (_, _) =>
         {
+            playlistPopup.IsOpen = false;
             SyncMidiPlayerVolumeFromWindowsMixer();
             SyncVolumePopupBarLength();
             volumePopup.HorizontalOffset =
@@ -1345,16 +1714,19 @@ public partial class MainWindow
         {
             btnPlay.Content = "▶";
             btnPlay.ToolTip = isPaused ? "Resume" : "Play";
-            btnPlay.IsEnabled = playlist.Count > 0 && !isPlaying;
+            btnPlay.IsEnabled = playbackQueue.Count > 0 && !isPlaying;
             btnPause.IsEnabled = isOpen && isPlaying && !isPaused;
             btnStop.IsEnabled = isOpen && (isPlaying || isPaused);
             seekSlider.IsEnabled = isOpen && lengthMs > 0;
-            btnPrev.IsEnabled = playlist.Count > 0;
-            btnNext.IsEnabled = playlist.Count > 0;
+            btnPrev.IsEnabled = playbackQueue.Count > 0;
+            btnNext.IsEnabled = playbackQueue.Count > 0;
             RefreshDockedIndicator();
             _midiPlayerIsPlaying = isPlaying;
             _midiPlayerCurrentTitle = isPlaying ? lblNowPlaying.Text : null;
             _midiPlayerCurrentGroup = isPlaying ? lblNowPlayingMeta.Text : null;
+            var playingPlName = PlaylistDisplayName(playbackPlaylistId);
+            lblNowPlayingPlaylist.Text = playingPlName;
+            _midiPlayerCurrentPlaylistName = playingPlName;
             RefreshMessageOverlayNowPlaying();
         }
 
@@ -1454,9 +1826,10 @@ public partial class MainWindow
                     // a group this keeps the genre/instrument label on screen;
                     // for songs further down (where pinning the header would
                     // push the song off-screen) we fall through to centering.
-                    if (currentIndex >= 0
-                        && currentIndex < playlist.Count
-                        && groupHeadersByName.TryGetValue(playlist[currentIndex].Group, out var headerBorder)
+                    var pinViewIdx = ViewIndexOfPlayingTrack();
+                    if (pinViewIdx >= 0
+                        && pinViewIdx < playlist.Count
+                        && groupHeadersByName.TryGetValue(playlist[pinViewIdx].Group, out var headerBorder)
                         && headerBorder.IsLoaded
                         && headerBorder.ActualHeight > 0)
                     {
@@ -1483,6 +1856,236 @@ public partial class MainWindow
             DoCenter();
         }
 
+        void RemoveMidiPathFromStoredPlaylists(string path)
+        {
+            if (midiPlaylistStore.ClassicalPaths != null)
+            {
+                midiPlaylistStore.ClassicalPaths = midiPlaylistStore.ClassicalPaths
+                    .Where(p => !string.Equals(p, path, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            if (midiPlaylistStore.FocusPaths != null)
+            {
+                midiPlaylistStore.FocusPaths = midiPlaylistStore.FocusPaths
+                    .Where(p => !string.Equals(p, path, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            foreach (var u in midiPlaylistStore.UserPlaylists ?? new List<MidiUserPlaylistDto>())
+            {
+                if (u.Paths == null)
+                    continue;
+                u.Paths = u.Paths
+                    .Where(p => !string.Equals(p, path, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+        }
+
+        void ApplyPlaylistSelection(string newId)
+        {
+            if (newId == currentPlaylistId)
+                return;
+
+            currentPlaylistId = newId;
+            midiPlaylistStore.SelectedPlaylistId = currentPlaylistId;
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+
+            playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
+            ClearStartPreload();
+            ClearNextPreload(closeDevice: true);
+
+            RebuildPlaylistUi();
+            HighlightCurrent();
+            UpdateButtons();
+
+            if (isPlaying)
+            {
+                dlg.Dispatcher.BeginInvoke(
+                    () => TryPreloadUpcomingTrack(force: true),
+                    DispatcherPriority.Background);
+            }
+            else
+                PrimeInitialPreload();
+
+            rebuildPlaylistPickerUi?.Invoke();
+            SetStatus(
+                $"{PlaylistDisplayName(currentPlaylistId)} · {playlist.Count} track{(playlist.Count == 1 ? string.Empty : "s")}");
+        }
+
+        void AfterPlaylistPathsMutated()
+        {
+            var rememberedPath = currentLoadedPath;
+            playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
+            RebuildPlaybackQueueFromPlaybackId();
+            shuffleHistory.Clear();
+            ClearStartPreload();
+            ClearNextPreload(closeDevice: true);
+
+            if (rememberedPath != null
+                && playbackQueue.Any(s => string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                currentIndex = playbackQueue.FindIndex(s =>
+                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
+                RebuildPlaylistUi();
+                HighlightCurrent();
+                UpdateButtons();
+                PrimeInitialPreload();
+            }
+            else
+            {
+                CloseDevice();
+                RebuildPlaylistUi();
+                ResetPlayerView();
+            }
+        }
+
+        void AddSongToTargetPlaylist(string targetId, string songPath)
+        {
+            if (targetId == MidiPlaylistIdAll || string.IsNullOrWhiteSpace(songPath) || !File.Exists(songPath))
+                return;
+
+            if (targetId == MidiPlaylistIdClassical)
+            {
+                midiPlaylistStore.ClassicalPaths ??= new List<string>();
+                if (midiPlaylistStore.ClassicalPaths.Any(p =>
+                        string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SetStatus("Already in Classical.");
+                    return;
+                }
+
+                midiPlaylistStore.ClassicalPaths.Add(songPath);
+            }
+            else if (targetId == MidiPlaylistIdFocus)
+            {
+                midiPlaylistStore.FocusPaths ??= new List<string>();
+                if (midiPlaylistStore.FocusPaths.Any(p =>
+                        string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SetStatus("Already in Focus.");
+                    return;
+                }
+
+                midiPlaylistStore.FocusPaths.Add(songPath);
+            }
+            else
+            {
+                var user = midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == targetId);
+                if (user == null)
+                    return;
+                user.Paths ??= new List<string>();
+                if (user.Paths.Any(p => string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    SetStatus($"Already in \"{user.Name}\".");
+                    return;
+                }
+
+                user.Paths.Add(songPath);
+            }
+
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+            if (targetId == currentPlaylistId)
+                AfterPlaylistPathsMutated();
+            else
+                SetStatus($"Added to {PlaylistDisplayName(targetId)}.");
+        }
+
+        void RemoveSongFromCurrentPlaylist(string songPath)
+        {
+            if (currentPlaylistId == MidiPlaylistIdAll || string.IsNullOrWhiteSpace(songPath))
+                return;
+
+            if (currentPlaylistId == MidiPlaylistIdClassical)
+            {
+                midiPlaylistStore.ClassicalPaths ??= new List<string>();
+                midiPlaylistStore.ClassicalPaths = midiPlaylistStore.ClassicalPaths
+                    .Where(p => !string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+            else if (currentPlaylistId == MidiPlaylistIdFocus)
+            {
+                midiPlaylistStore.FocusPaths ??= new List<string>();
+                midiPlaylistStore.FocusPaths = midiPlaylistStore.FocusPaths
+                    .Where(p => !string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+            else
+            {
+                var user = midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == currentPlaylistId);
+                if (user?.Paths == null)
+                    return;
+                user.Paths = user.Paths
+                    .Where(p => !string.Equals(p, songPath, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+            AfterPlaylistPathsMutated();
+        }
+
+        void RebuildPlaylistPickerUiImpl()
+        {
+            playlistPickerList.Children.Clear();
+            var selectedBg = new SolidColorBrush(Color.FromRgb(0x2A, 0x4A, 0x78));
+            var idleBg = new SolidColorBrush(Color.FromRgb(0x12, 0x1D, 0x31));
+
+            void AddPickerRow(string id, string label)
+            {
+                var bid = id;
+                var row = new Button
+                {
+                    Content = label,
+                    FontFamily = new FontFamily("Segoe UI, Segoe UI Variable"),
+                    FontSize = 14,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(10, 8, 10, 8),
+                    Margin = new Thickness(0, 0, 0, 4),
+                    Background = string.Equals(bid, currentPlaylistId, StringComparison.OrdinalIgnoreCase)
+                        ? selectedBg
+                        : idleBg,
+                    Foreground = Brushes.White,
+                    BorderBrush = new SolidColorBrush(Color.FromRgb(0x2D, 0x3F, 0x63)),
+                    BorderThickness = new Thickness(1),
+                    Cursor = Cursors.Hand
+                };
+                row.Click += (_, _) =>
+                {
+                    ApplyPlaylistSelection(bid);
+                    playlistPopup.IsOpen = false;
+                };
+                playlistPickerList.Children.Add(row);
+            }
+
+            AddPickerRow(MidiPlaylistIdAll, "All");
+            AddPickerRow(MidiPlaylistIdClassical, "Classical");
+            AddPickerRow(MidiPlaylistIdFocus, "Focus");
+            foreach (var u in (midiPlaylistStore.UserPlaylists ?? new List<MidiUserPlaylistDto>())
+                         .OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase))
+                AddPickerRow(u.Id, u.Name);
+        }
+
+        rebuildPlaylistPickerUi = RebuildPlaylistPickerUiImpl;
+
+        btnPlaylistAdd.Click += (_, _) =>
+        {
+            var name = PromptForText("New playlist", "Playlist name:", string.Empty);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            name = name.Trim();
+            midiPlaylistStore.UserPlaylists ??= new List<MidiUserPlaylistDto>();
+            midiPlaylistStore.UserPlaylists.Add(new MidiUserPlaylistDto
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = name,
+                Paths = new List<string>()
+            });
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+            rebuildPlaylistPickerUi?.Invoke();
+            SetStatus($"Created playlist \"{name}\".");
+        };
+
         void HighlightCurrent()
         {
             if (currentHighlightedItem is not null)
@@ -1493,7 +2096,8 @@ public partial class MainWindow
             }
             currentHighlightedItem = null;
 
-            if (currentIndex >= 0 && itemBordersByIndex.TryGetValue(currentIndex, out var item))
+            var viewIdx = ViewIndexOfPlayingTrack();
+            if (viewIdx >= 0 && itemBordersByIndex.TryGetValue(viewIdx, out var item))
             {
                 item.Background = rowSelectedFillBrush;
                 item.BorderBrush = rowHighlightBrush;
@@ -1537,9 +2141,9 @@ public partial class MainWindow
             var info = TryParseMidiHeader(path);
             UpdateInfo(path, info);
 
-            if (currentIndex >= 0 && currentIndex < playlist.Count)
+            if (currentIndex >= 0 && currentIndex < playbackQueue.Count)
             {
-                var song = playlist[currentIndex];
+                var song = playbackQueue[currentIndex];
                 lblNowPlaying.Text = song.Title;
                 lblNowPlayingMeta.Text = song.Group;
             }
@@ -1559,9 +2163,9 @@ public partial class MainWindow
         void Play()
         {
             if (!isOpen) return;
-            if (startTrackPrimedSilently && currentIndex >= 0 && currentIndex < playlist.Count)
+            if (startTrackPrimedSilently && currentIndex >= 0 && currentIndex < playbackQueue.Count)
             {
-                var song = playlist[currentIndex];
+                var song = playbackQueue[currentIndex];
                 seekSlider.Maximum = Math.Max(1, lengthMs);
                 seekSlider.Value = 0;
                 lblLength.Text = FormatTime(lengthMs);
@@ -1641,21 +2245,21 @@ public partial class MainWindow
 
         int ResolveInitialPlayIndex()
         {
-            if (playlist.Count == 0)
+            if (playbackQueue.Count == 0)
                 return -1;
-            if (currentIndex >= 0 && currentIndex < playlist.Count)
+            if (currentIndex >= 0 && currentIndex < playbackQueue.Count)
                 return currentIndex;
             if (btnShuffle.IsChecked == true)
-                return rng.Next(playlist.Count);
+                return rng.Next(playbackQueue.Count);
             return 0;
         }
 
         bool TryPrimeStartTrack(int index)
         {
-            if (!IsValidIndex(index, playlist.Count))
+            if (!IsValidIndex(index, playbackQueue.Count))
                 return false;
 
-            var song = playlist[index];
+            var song = playbackQueue[index];
             if (string.IsNullOrWhiteSpace(song.Path) || !File.Exists(song.Path))
                 return false;
 
@@ -1687,15 +2291,15 @@ public partial class MainWindow
 
         int ResolveStartPlayIndex()
         {
-            if (playlist.Count == 0)
+            if (playbackQueue.Count == 0)
                 return -1;
 
-            if (currentIndex >= 0 && currentIndex < playlist.Count)
+            if (currentIndex >= 0 && currentIndex < playbackQueue.Count)
                 return currentIndex;
 
             if (preloadedStartIndex.HasValue
-                && IsValidIndex(preloadedStartIndex.Value, playlist.Count)
-                && string.Equals(playlist[preloadedStartIndex.Value].Path, preloadedStartPath, StringComparison.OrdinalIgnoreCase))
+                && IsValidIndex(preloadedStartIndex.Value, playbackQueue.Count)
+                && string.Equals(playbackQueue[preloadedStartIndex.Value].Path, preloadedStartPath, StringComparison.OrdinalIgnoreCase))
             {
                 return preloadedStartIndex.Value;
             }
@@ -1705,12 +2309,12 @@ public partial class MainWindow
 
         void PrimeInitialPreload()
         {
-            if (!hasDialogShown || isPlaying || playlist.Count == 0)
+            if (!hasDialogShown || isPlaying || playbackQueue.Count == 0)
                 return;
             var startIndex = ResolveInitialPlayIndex();
-            if (!IsValidIndex(startIndex, playlist.Count))
+            if (!IsValidIndex(startIndex, playbackQueue.Count))
                 return;
-            var path = playlist[startIndex].Path;
+            var path = playbackQueue[startIndex].Path;
             if (string.Equals(path, preloadedStartPath, StringComparison.OrdinalIgnoreCase)
                 && preloadedStartIndex == startIndex)
                 return;
@@ -1720,11 +2324,11 @@ public partial class MainWindow
 
         int ResolveAutoNextIndex(bool allowShuffle)
         {
-            if (playlist.Count == 0)
+            if (playbackQueue.Count == 0)
                 return -1;
             if (allowShuffle && btnShuffle.IsChecked == true)
                 return PickShuffleIndex();
-            if (currentIndex >= 0 && currentIndex + 1 < playlist.Count)
+            if (currentIndex >= 0 && currentIndex + 1 < playbackQueue.Count)
                 return currentIndex + 1;
             return -1;
         }
@@ -1744,7 +2348,7 @@ public partial class MainWindow
             var candidateIndex = preloadedNextIndex;
             if (candidateIndex is null
                 || candidateIndex < 0
-                || candidateIndex >= playlist.Count
+                || candidateIndex >= playbackQueue.Count
                 || candidateIndex == currentIndex)
             {
                 var resolved = ResolveAutoNextIndex(allowShuffle: true);
@@ -1753,7 +2357,7 @@ public partial class MainWindow
                 candidateIndex = resolved;
             }
 
-            var nextPath = playlist[candidateIndex.Value].Path;
+            var nextPath = playbackQueue[candidateIndex.Value].Path;
             if (string.IsNullOrWhiteSpace(nextPath) || !File.Exists(nextPath))
                 return;
             if (preloadedNextDeviceOpen
@@ -1859,14 +2463,26 @@ public partial class MainWindow
             UpdateButtons();
         }
 
-        void PlayIndex(int index)
+        void PlayIndex(int index, bool slotIsViewRow = true)
         {
-            if (index < 0 || index >= playlist.Count)
-                return;
+            if (slotIsViewRow)
+            {
+                if (index < 0 || index >= playlist.Count)
+                    return;
+                playbackPlaylistId = currentPlaylistId;
+                RebuildPlaybackQueueFromPlaybackId();
+                currentIndex = index;
+            }
+            else
+            {
+                if (index < 0 || index >= playbackQueue.Count)
+                    return;
+                currentIndex = index;
+            }
+
             ClearStartPreload();
-            currentIndex = index;
-            shuffleHistory.Add(index);
-            var song = playlist[index];
+            shuffleHistory.Add(currentIndex);
+            var song = playbackQueue[currentIndex];
             if (LoadFile(song.Path))
             {
                 Play();
@@ -1882,14 +2498,14 @@ public partial class MainWindow
             if (!preloadedNextDeviceOpen
                 || !preloadedNextIndex.HasValue
                 || preloadedNextIndex.Value < 0
-                || preloadedNextIndex.Value >= playlist.Count
+                || preloadedNextIndex.Value >= playbackQueue.Count
                 || preloadedNextIndex.Value == currentIndex)
             {
                 return false;
             }
 
             var nextIndex = preloadedNextIndex.Value;
-            var nextSong = playlist[nextIndex];
+            var nextSong = playbackQueue[nextIndex];
             if (string.IsNullOrWhiteSpace(nextSong.Path) || !File.Exists(nextSong.Path))
             {
                 ClearNextPreload(closeDevice: true);
@@ -1942,22 +2558,22 @@ public partial class MainWindow
 
         int PickShuffleIndex()
         {
-            if (playlist.Count == 0)
+            if (playbackQueue.Count == 0)
                 return -1;
-            if (playlist.Count == 1)
+            if (playbackQueue.Count == 1)
                 return 0;
             for (var attempts = 0; attempts < 8; attempts++)
             {
-                var pick = rng.Next(playlist.Count);
+                var pick = rng.Next(playbackQueue.Count);
                 if (pick != currentIndex)
                     return pick;
             }
-            return rng.Next(playlist.Count);
+            return rng.Next(playbackQueue.Count);
         }
 
         void PlayNext()
         {
-            if (playlist.Count == 0) return;
+            if (playbackQueue.Count == 0) return;
             if (TryPlayPreloadedNext())
                 return;
 
@@ -1965,14 +2581,14 @@ public partial class MainWindow
             if (btnShuffle.IsChecked == true)
                 next = PickShuffleIndex();
             else
-                next = currentIndex < 0 ? 0 : (currentIndex + 1) % playlist.Count;
+                next = currentIndex < 0 ? 0 : (currentIndex + 1) % playbackQueue.Count;
             ClearNextPreload(closeDevice: true);
-            PlayIndex(next);
+            PlayIndex(next, slotIsViewRow: false);
         }
 
         void PlayPrev()
         {
-            if (playlist.Count == 0) return;
+            if (playbackQueue.Count == 0) return;
             int prev;
             if (btnShuffle.IsChecked == true && shuffleHistory.Count >= 2)
             {
@@ -1982,10 +2598,10 @@ public partial class MainWindow
             }
             else
             {
-                prev = currentIndex < 0 ? 0 : (currentIndex - 1 + playlist.Count) % playlist.Count;
+                prev = currentIndex < 0 ? 0 : (currentIndex - 1 + playbackQueue.Count) % playbackQueue.Count;
             }
             ClearNextPreload();
-            PlayIndex(prev);
+            PlayIndex(prev, slotIsViewRow: false);
         }
 
         void OnTick()
@@ -2021,13 +2637,13 @@ public partial class MainWindow
                     Play();
                     SetStatus("Looping.");
                 }
-                else if (btnShuffle.IsChecked == true && playlist.Count > 0)
+                else if (btnShuffle.IsChecked == true && playbackQueue.Count > 0)
                 {
                     PlayNext();
                 }
-                else if (currentIndex >= 0 && currentIndex + 1 < playlist.Count)
+                else if (currentIndex >= 0 && currentIndex + 1 < playbackQueue.Count)
                 {
-                    PlayIndex(currentIndex + 1);
+                    PlayIndex(currentIndex + 1, slotIsViewRow: false);
                 }
                 else
                 {
@@ -2130,12 +2746,12 @@ public partial class MainWindow
                     };
                     itemBorder.MouseEnter += (_, _) =>
                     {
-                        if (currentIndex != index)
+                        if (ViewIndexOfPlayingTrack() != index)
                             itemBorder.Background = rowHoverBrush;
                     };
                     itemBorder.MouseLeave += (_, _) =>
                     {
-                        if (currentIndex != index)
+                        if (ViewIndexOfPlayingTrack() != index)
                             itemBorder.Background = rowBaseBrush;
                     };
                     itemBorder.MouseLeftButtonDown += (_, e) =>
@@ -2144,39 +2760,113 @@ public partial class MainWindow
                         e.Handled = true;
                     };
 
+                    var rowMenu = new ContextMenu();
                     if (song.IsCustom)
                     {
-                        var pathToRemove = song.Path;
-                        var removeMenu = new MenuItem { Header = "Remove from playlist" };
-                        removeMenu.Click += (_, e) =>
+                        var pathDropCustom = song.Path;
+                        var removeCustomLib = new MenuItem { Header = "Remove from Custom library" };
+                        removeCustomLib.Click += (_, e) =>
                         {
                             e.Handled = true;
                             customPaths = customPaths
-                                .Where(p => !string.Equals(p, pathToRemove, StringComparison.OrdinalIgnoreCase))
+                                .Where(p => !string.Equals(p, pathDropCustom, StringComparison.OrdinalIgnoreCase))
                                 .ToList();
                             SaveCustomMidiPaths(customPaths);
-                            var wasCurrent = currentIndex == index;
-                            if (wasCurrent)
+                            RemoveMidiPathFromStoredPlaylists(pathDropCustom);
+                            SaveMidiPlaylistsStore(midiPlaylistStore);
+                            playlist = BuildActiveMidiPlaylist(
+                                currentPlaylistId,
+                                customPaths,
+                                midiPlaylistStore,
+                                bundledOnlyCache);
+                            RebuildPlaybackQueueFromPlaybackId();
+                            shuffleHistory.Clear();
+                            ClearStartPreload();
+                            ClearNextPreload(closeDevice: true);
+                            var rememberedPath = currentLoadedPath;
+                            if (rememberedPath != null
+                                && playbackQueue.Any(s =>
+                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                currentIndex = playbackQueue.FindIndex(s =>
+                                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
+                                RebuildPlaylistUi();
+                                HighlightCurrent();
+                                UpdateButtons();
+                                PrimeInitialPreload();
+                            }
+                            else
                             {
                                 CloseDevice();
+                                RebuildPlaylistUi();
                                 ResetPlayerView();
                             }
-                            playlist = BuildMidiPlaylist(customPaths);
-                            ClearStartPreload();
-                            ClearNextPreload();
-                            if (!wasCurrent && currentIndex >= 0)
-                            {
-                                var stillPlayingPath = currentLoadedPath;
-                                currentIndex = playlist.FindIndex(s => string.Equals(s.Path, stillPlayingPath, StringComparison.OrdinalIgnoreCase));
-                            }
-                            RebuildPlaylistUi();
-                            UpdateButtons();
-                            PrimeInitialPreload();
+
+                            SetStatus("Removed from Custom library.");
+                        };
+                        rowMenu.Items.Add(removeCustomLib);
+                    }
+
+                    var addMenu = new MenuItem { Header = "Add to playlist" };
+                    if (currentPlaylistId != MidiPlaylistIdClassical)
+                    {
+                        var addClassical = new MenuItem { Header = "Classical" };
+                        var pathC = song.Path;
+                        addClassical.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            AddSongToTargetPlaylist(MidiPlaylistIdClassical, pathC);
+                        };
+                        addMenu.Items.Add(addClassical);
+                    }
+
+                    if (currentPlaylistId != MidiPlaylistIdFocus)
+                    {
+                        var addFocus = new MenuItem { Header = "Focus" };
+                        var pathFo = song.Path;
+                        addFocus.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            AddSongToTargetPlaylist(MidiPlaylistIdFocus, pathFo);
+                        };
+                        addMenu.Items.Add(addFocus);
+                    }
+
+                    foreach (var up in midiPlaylistStore.UserPlaylists
+                                 ?? new List<MidiUserPlaylistDto>())
+                    {
+                        if (string.Equals(up.Id, currentPlaylistId, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        var pathU = song.Path;
+                        var uid = up.Id;
+                        var label = up.Name;
+                        var mi = new MenuItem { Header = label };
+                        mi.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            AddSongToTargetPlaylist(uid, pathU);
+                        };
+                        addMenu.Items.Add(mi);
+                    }
+
+                    if (addMenu.Items.Count > 0)
+                        rowMenu.Items.Add(addMenu);
+
+                    if (currentPlaylistId != MidiPlaylistIdAll)
+                    {
+                        var removeFromPl = new MenuItem { Header = "Remove from playlist" };
+                        var pathRm = song.Path;
+                        removeFromPl.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            RemoveSongFromCurrentPlaylist(pathRm);
                             SetStatus("Removed from playlist.");
                         };
-                        itemBorder.ContextMenu = new ContextMenu();
-                        itemBorder.ContextMenu.Items.Add(removeMenu);
+                        rowMenu.Items.Add(removeFromPl);
                     }
+
+                    if (rowMenu.Items.Count > 0)
+                        itemBorder.ContextMenu = rowMenu;
 
                     itemBordersByIndex[index] = itemBorder;
                     listStack.Children.Add(itemBorder);
@@ -2414,16 +3104,16 @@ public partial class MainWindow
             }
             SaveCustomMidiPaths(customPaths);
 
-            string? rememberedPath = null;
-            if (currentIndex >= 0 && currentIndex < playlist.Count)
-                rememberedPath = playlist[currentIndex].Path;
+            var rememberedPath = currentLoadedPath;
 
-            playlist = BuildMidiPlaylist(customPaths);
+            playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
+            RebuildPlaybackQueueFromPlaybackId();
             ClearStartPreload();
             ClearNextPreload();
 
             if (rememberedPath is not null)
-                currentIndex = playlist.FindIndex(s => string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
+                currentIndex = playbackQueue.FindIndex(s =>
+                    string.Equals(s.Path, rememberedPath, StringComparison.OrdinalIgnoreCase));
 
             RebuildPlaylistUi();
             UpdateButtons();
@@ -2470,11 +3160,11 @@ public partial class MainWindow
 
         btnPlay.Click += (_, _) =>
         {
-            if (!isOpen && playlist.Count > 0)
+            if (!isOpen && playbackQueue.Count > 0)
             {
                 var startIndex = ResolveStartPlayIndex();
                 if (startIndex >= 0)
-                    PlayIndex(startIndex);
+                    PlayIndex(startIndex, slotIsViewRow: false);
                 return;
             }
             Play();
@@ -2532,23 +3222,23 @@ public partial class MainWindow
                         if (isPlaying) Pause(); else Play();
                         e.Handled = true;
                     }
-                    else if (playlist.Count > 0)
+                    else if (playbackQueue.Count > 0)
                     {
                         var startIndex = ResolveStartPlayIndex();
                         if (startIndex >= 0)
-                            PlayIndex(startIndex);
+                            PlayIndex(startIndex, slotIsViewRow: false);
                         e.Handled = true;
                     }
                     break;
                 case Key.Right:
-                    if (playlist.Count > 0)
+                    if (playbackQueue.Count > 0)
                     {
                         PlayNext();
                         e.Handled = true;
                     }
                     break;
                 case Key.Left:
-                    if (playlist.Count > 0)
+                    if (playbackQueue.Count > 0)
                     {
                         PlayPrev();
                         e.Handled = true;
@@ -2588,6 +3278,7 @@ public partial class MainWindow
             _midiPlayerIsPlaying = false;
             _midiPlayerCurrentTitle = null;
             _midiPlayerCurrentGroup = null;
+            _midiPlayerCurrentPlaylistName = null;
             RefreshMessageOverlayNowPlaying();
             UpdateMidiPlayerDockedIndicator();
         };
@@ -2618,11 +3309,11 @@ public partial class MainWindow
         {
             if (!isOpen)
             {
-                if (playlist.Count == 0)
+                if (playbackQueue.Count == 0)
                     return;
                 var startIndex = ResolveStartPlayIndex();
                 if (startIndex >= 0)
-                    PlayIndex(startIndex);
+                    PlayIndex(startIndex, slotIsViewRow: false);
                 return;
             }
             if (isPlaying)

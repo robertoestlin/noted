@@ -1298,6 +1298,15 @@ public partial class MainWindow
 
         MessageOverlayNowPlayingTitle.Text = _midiPlayerCurrentTitle ?? string.Empty;
         MessageOverlayNowPlayingMeta.Text = _midiPlayerCurrentGroup ?? string.Empty;
+        if (MessageOverlayNowPlayingPlaylist != null)
+        {
+            var pl = _midiPlayerCurrentPlaylistName ?? string.Empty;
+            MessageOverlayNowPlayingPlaylist.Text = pl;
+            MessageOverlayNowPlayingPlaylist.Visibility = string.IsNullOrWhiteSpace(pl)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Visible;
     }
 
