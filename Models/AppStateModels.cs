@@ -301,6 +301,12 @@ public sealed class NotedStateConfig
 {
     /// <summary>Whether the task panel is visible.</summary>
     public bool TaskPanelOpen { get; set; }
+
+    /// <summary>How many times each user name has been picked in the Add Assignment dialog. Drives the most-used quick-pick buttons.</summary>
+    public Dictionary<string, int>? LineAssigneeUsageCounts { get; set; }
+
+    /// <summary>Most recently picked user in the Add Assignment dialog. Used as the default selection.</summary>
+    public string? LastLineAssignee { get; set; }
 }
 
 public sealed class WindowSettings

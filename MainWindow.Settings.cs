@@ -820,7 +820,14 @@ public partial class MainWindow
     }
 
     private NotedStateConfig CreateStateConfigSnapshot()
-        => new() { TaskPanelOpen = _todoPanelVisible };
+        => new()
+        {
+            TaskPanelOpen = _todoPanelVisible,
+            LineAssigneeUsageCounts = _lineAssigneeUsageCounts.Count > 0
+                ? new Dictionary<string, int>(_lineAssigneeUsageCounts, StringComparer.OrdinalIgnoreCase)
+                : null,
+            LastLineAssignee = string.IsNullOrWhiteSpace(_lastLineAssignee) ? null : _lastLineAssignee
+        };
 
     private void SaveStateConfig(JsonSerializerOptions options)
     {
@@ -844,7 +851,20 @@ public partial class MainWindow
         var path = Path.Combine(_backupFolder, StateConfigFileName);
         var loaded = _windowSettingsStore.Load<NotedStateConfig>(path);
         if (loaded != null)
+        {
             _todoPanelVisible = loaded.TaskPanelOpen;
+            _lineAssigneeUsageCounts.Clear();
+            if (loaded.LineAssigneeUsageCounts != null)
+            {
+                foreach (var kvp in loaded.LineAssigneeUsageCounts)
+                {
+                    if (string.IsNullOrWhiteSpace(kvp.Key) || kvp.Value <= 0)
+                        continue;
+                    _lineAssigneeUsageCounts[kvp.Key] = kvp.Value;
+                }
+            }
+            _lastLineAssignee = string.IsNullOrWhiteSpace(loaded.LastLineAssignee) ? null : loaded.LastLineAssignee;
+        }
 
         UpdateTodoPanelVisibility();
     }
@@ -936,6 +956,8 @@ public partial class MainWindow
         _safePasteSavedEntries.Clear();
         ResetStandupSettingsToDefaults();
         _todoPanelVisible = false;
+        _lineAssigneeUsageCounts.Clear();
+        _lastLineAssignee = null;
         _backupAdditionalIncludeSettingsFile = true;
         _backupAdditionalIncludeAppLog = true;
         _backupAdditionalIncludeHeartbeatLogs = true;

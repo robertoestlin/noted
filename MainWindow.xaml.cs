@@ -73,6 +73,8 @@ public partial class MainWindow : Window
     private int _activeTabIndex = 0;
     private readonly List<ClosedTabEntry> _closedTabHistory = [];
     private List<UserProfile> _users = [];
+    private readonly Dictionary<string, int> _lineAssigneeUsageCounts = new(StringComparer.OrdinalIgnoreCase);
+    private string? _lastLineAssignee;
     private readonly Dictionary<string, TimeReportMonthState> _timeReports = new(StringComparer.OrdinalIgnoreCase);
     private List<PluginAlarmSettings> _pluginAlarms = [];
     private string _taskPanelTitle = DefaultTaskPanelTitle;
@@ -4525,6 +4527,17 @@ public partial class MainWindow : Window
             MarkDirty(doc);
             RedrawHighlight(doc);
         }
+
+        RecordLineAssigneeUsage(cleaned);
+    }
+
+    private void RecordLineAssigneeUsage(string userName)
+    {
+        if (string.IsNullOrWhiteSpace(userName))
+            return;
+        _lineAssigneeUsageCounts.TryGetValue(userName, out var current);
+        _lineAssigneeUsageCounts[userName] = current + 1;
+        _lastLineAssignee = userName;
     }
 
     private void ClearSelectedLineAssignments(TextEditor editor)
@@ -4566,15 +4579,43 @@ public partial class MainWindow : Window
     {
         var dlg = new Window
         {
-            Title = "Assign Line Owner",
+            Title = "Add assignment",
             Width = 390,
-            Height = 180,
+            SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
         };
 
+        string? quickPick = null;
         var root = new StackPanel { Margin = new Thickness(12) };
+
+        var topUserNames = GetTopAssignedUserNames(3);
+        if (topUserNames.Count > 0)
+        {
+            var quickPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            foreach (var name in topUserNames)
+            {
+                var btn = new Button
+                {
+                    Content = name,
+                    Margin = new Thickness(0, 0, 6, 0),
+                    Padding = new Thickness(10, 4, 10, 4)
+                };
+                btn.Click += (_, _) =>
+                {
+                    quickPick = name;
+                    dlg.DialogResult = true;
+                };
+                quickPanel.Children.Add(btn);
+            }
+            root.Children.Add(quickPanel);
+        }
+
         root.Children.Add(new TextBlock
         {
             Text = "Assign to user:",
@@ -4583,11 +4624,12 @@ public partial class MainWindow : Window
         var combo = new ComboBox { Margin = new Thickness(0, 0, 0, 10), IsEditable = false };
         foreach (var user in _users)
             combo.Items.Add(user.Name);
-        if (!string.IsNullOrWhiteSpace(initialOwner))
+        var preferredInitial = !string.IsNullOrWhiteSpace(initialOwner) ? initialOwner : _lastLineAssignee;
+        if (!string.IsNullOrWhiteSpace(preferredInitial))
         {
             var selected = _users
                 .Select(user => user.Name)
-                .FirstOrDefault(userName => string.Equals(userName, initialOwner, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(userName => string.Equals(userName, preferredInitial, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(selected))
                 combo.SelectedItem = selected;
         }
@@ -4625,7 +4667,24 @@ public partial class MainWindow : Window
 
         dlg.Content = root;
         var result = dlg.ShowDialog();
-        return result == true ? combo.SelectedItem as string : null;
+        if (result != true)
+            return null;
+        return quickPick ?? combo.SelectedItem as string;
+    }
+
+    private List<string> GetTopAssignedUserNames(int limit)
+    {
+        if (limit <= 0 || _lineAssigneeUsageCounts.Count == 0 || _users.Count == 0)
+            return [];
+
+        var existingNames = new HashSet<string>(_users.Select(u => u.Name), StringComparer.OrdinalIgnoreCase);
+        return _lineAssigneeUsageCounts
+            .Where(kvp => existingNames.Contains(kvp.Key))
+            .OrderByDescending(kvp => kvp.Value)
+            .ThenBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .Select(kvp => _users.First(u => string.Equals(u.Name, kvp.Key, StringComparison.OrdinalIgnoreCase)).Name)
+            .ToList();
     }
 
     private static void RedrawHighlight(TabDocument doc)
