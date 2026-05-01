@@ -555,6 +555,17 @@ public partial class MainWindow
                 string.Equals(s.Path, currentLoadedPath, StringComparison.OrdinalIgnoreCase));
         }
 
+        string PlaylistDisplayName(string id)
+        {
+            return id switch
+            {
+                MidiPlaylistIdAll => "All",
+                MidiPlaylistIdClassical => "Classical",
+                MidiPlaylistIdFocus => "Focus",
+                _ => midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == id)?.Name ?? "Playlist"
+            };
+        }
+
         var itemBordersByIndex = new Dictionary<int, Border>();
         var groupHeadersByName = new Dictionary<string, Border>(StringComparer.Ordinal);
         Border? currentHighlightedItem = null;
@@ -594,7 +605,24 @@ public partial class MainWindow
         };
         Grid.SetColumn(headerDragArea, 0);
         header.Children.Add(headerDragArea);
-        var headerButtons = new StackPanel { Orientation = Orientation.Horizontal };
+        var headerButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var lblHeaderViewPlaylist = new TextBlock
+        {
+            Text = PlaylistDisplayName(currentPlaylistId),
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x9F, 0xD4, 0xFF)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 14, 0),
+            MaxWidth = 280,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            ToolTip = "Playlist shown in the list below"
+        };
+        headerButtons.Children.Add(lblHeaderViewPlaylist);
         var btnHeaderDock = new Button
         {
             Content = "\uE738",
@@ -849,16 +877,6 @@ public partial class MainWindow
             FontSize = 11,
             FontWeight = FontWeights.SemiBold
         });
-        string PlaylistDisplayName(string id)
-        {
-            return id switch
-            {
-                MidiPlaylistIdAll => "All",
-                MidiPlaylistIdClassical => "Classical",
-                MidiPlaylistIdFocus => "Focus",
-                _ => midiPlaylistStore.UserPlaylists?.FirstOrDefault(u => u.Id == id)?.Name ?? "Playlist"
-            };
-        }
 
         var lblNowPlayingPlaylist = new TextBlock
         {
@@ -1329,7 +1347,8 @@ public partial class MainWindow
             AllowsTransparency = true,
             StaysOpen = false,
             Placement = PlacementMode.Top,
-            PopupAnimation = PopupAnimation.Fade,
+            // Instant dismiss when picking a playlist (fade kept click handler blocked ~200ms).
+            PopupAnimation = PopupAnimation.None,
             Child = playlistPopupBorder
         };
         var btnPlaylist = new Button
@@ -1889,28 +1908,31 @@ public partial class MainWindow
 
             currentPlaylistId = newId;
             midiPlaylistStore.SelectedPlaylistId = currentPlaylistId;
-            SaveMidiPlaylistsStore(midiPlaylistStore);
 
             playlist = BuildActiveMidiPlaylist(currentPlaylistId, customPaths, midiPlaylistStore, bundledOnlyCache);
-            ClearStartPreload();
-            ClearNextPreload(closeDevice: true);
+            lblHeaderViewPlaylist.Text = PlaylistDisplayName(currentPlaylistId);
 
             RebuildPlaylistUi();
             HighlightCurrent();
             UpdateButtons();
 
-            if (isPlaying)
-            {
-                dlg.Dispatcher.BeginInvoke(
-                    () => TryPreloadUpcomingTrack(force: true),
-                    DispatcherPriority.Background);
-            }
-            else
-                PrimeInitialPreload();
-
             rebuildPlaylistPickerUi?.Invoke();
             SetStatus(
                 $"{PlaylistDisplayName(currentPlaylistId)} · {playlist.Count} track{(playlist.Count == 1 ? string.Empty : "s")}");
+
+            // Persist, tear down warmup device, and restart preload after layout so the list repaints immediately.
+            dlg.Dispatcher.BeginInvoke(
+                () =>
+                {
+                    SaveMidiPlaylistsStore(midiPlaylistStore);
+                    ClearStartPreload();
+                    ClearNextPreload(closeDevice: true);
+                    if (isPlaying)
+                        TryPreloadUpcomingTrack(force: true);
+                    else
+                        PrimeInitialPreload();
+                },
+                DispatcherPriority.Loaded);
         }
 
         void AfterPlaylistPathsMutated()
@@ -2024,6 +2046,34 @@ public partial class MainWindow
             AfterPlaylistPathsMutated();
         }
 
+        void DuplicateViewPlaylistAsNewUserPlaylist()
+        {
+            if (playlist.Count == 0)
+                return;
+
+            var name = PromptForText("Duplicate playlist", "New playlist name:", string.Empty);
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            name = name.Trim();
+
+            var paths = playlist
+                .Select(s => s.Path)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            midiPlaylistStore.UserPlaylists ??= new List<MidiUserPlaylistDto>();
+            midiPlaylistStore.UserPlaylists.Add(new MidiUserPlaylistDto
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = name,
+                Paths = paths
+            });
+            SaveMidiPlaylistsStore(midiPlaylistStore);
+            rebuildPlaylistPickerUi?.Invoke();
+            SetStatus($"Duplicated as \"{name}\" ({paths.Count} track{(paths.Count == 1 ? string.Empty : "s")}).");
+        }
+
         void RebuildPlaylistPickerUiImpl()
         {
             playlistPickerList.Children.Clear();
@@ -2052,8 +2102,12 @@ public partial class MainWindow
                 };
                 row.Click += (_, _) =>
                 {
-                    ApplyPlaylistSelection(bid);
                     playlistPopup.IsOpen = false;
+                    var id = bid;
+                    // Let the popup actually collapse and paint before rebuilding the main playlist UI.
+                    dlg.Dispatcher.BeginInvoke(
+                        () => ApplyPlaylistSelection(id),
+                        DispatcherPriority.ApplicationIdle);
                 };
                 playlistPickerList.Children.Add(row);
             }
@@ -2863,6 +2917,17 @@ public partial class MainWindow
                             SetStatus("Removed from playlist.");
                         };
                         rowMenu.Items.Add(removeFromPl);
+                    }
+
+                    if (playlist.Count > 0)
+                    {
+                        var dupPlaylist = new MenuItem { Header = "Duplicate playlist…" };
+                        dupPlaylist.Click += (_, e) =>
+                        {
+                            e.Handled = true;
+                            DuplicateViewPlaylistAsNewUserPlaylist();
+                        };
+                        rowMenu.Items.Add(dupPlaylist);
                     }
 
                     if (rowMenu.Items.Count > 0)
