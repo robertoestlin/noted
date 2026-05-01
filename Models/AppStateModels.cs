@@ -364,6 +364,12 @@ public sealed class WindowSettings
     public string? BackupFolder { get; set; }
     public string? CloudBackupFolder { get; set; }
 
+    /// <summary>During cloud save, also write each open tab as a UTF-8 plain text file (default off).</summary>
+    public bool? CloudSyncTabsPlainTextEnabled { get; set; }
+
+    /// <summary>Destination folder for per-tab plain text files when <see cref="CloudSyncTabsPlainTextEnabled"/> is true.</summary>
+    public string? CloudSyncTabsPlainTextFolder { get; set; }
+
     /// <summary>When backing up or syncing to cloud, include <c>settings.json</c> (default true).</summary>
     public bool? BackupAdditionalSettingsFile { get; set; }
 

@@ -136,6 +136,8 @@ public partial class MainWindow : Window
 
     private string _backupFolder = DefaultBackupFolder();
     private string _cloudBackupFolder = DefaultCloudBackupFolder();
+    private bool _cloudSyncTabsPlainTextEnabled;
+    private string _cloudSyncTabsPlainTextFolder = string.Empty;
     private int _cloudSaveIntervalHours = 1;
     private int _cloudSaveIntervalMinutes = 0;
     private DateTime _lastCloudSaveUtc = DateTime.MinValue;
@@ -3162,6 +3164,100 @@ public partial class MainWindow : Window
             ? $"Assigned to {person}"
             : $"{content} - Assigned to {person}";
         return true;
+    }
+
+    /// <summary>
+    /// Strips trailing <c>[assignee]</c> suffix used for inline assignments (plain export only).
+    /// </summary>
+    private static bool TryStripInlineAssigneeSuffix(string lineText, out string contentOnly)
+    {
+        contentOnly = lineText;
+        var match = InlineAssigneeSuffixRegex.Match(lineText);
+        if (!match.Success)
+            return false;
+
+        var person = match.Groups["person"].Value.Trim();
+        if (person.Length == 0)
+            return false;
+
+        contentOnly = match.Groups["content"].Value.TrimEnd();
+        return true;
+    }
+
+    private static string BuildCloudPlainTextTabExport(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return string.Empty;
+
+        var parts = Regex.Split(text, @"(\r\n|\n)");
+        var builder = new StringBuilder(text.Length);
+        for (int i = 0; i < parts.Length; i += 2)
+        {
+            builder.Append(TransformLineForCloudPlainExport(parts[i]));
+            if (i + 1 < parts.Length)
+                builder.Append(parts[i + 1]);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string TransformLineForCloudPlainExport(string lineText)
+    {
+        if (TryStripInlineAssigneeSuffix(lineText, out var withoutAssignee))
+            lineText = withoutAssignee;
+
+        var trimmed = lineText.Trim();
+        if (TryGetInlineImageMarker(trimmed, out var marker))
+            return new InlineImageMarker(marker.FileName, 100).ToMarkerText();
+
+        return lineText;
+    }
+
+    private static string SanitizeTabHeaderForPlainTabFile(string header)
+    {
+        var trimmed = (header ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+            return "tab";
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(trimmed.Length);
+        foreach (var ch in trimmed)
+            sb.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
+
+        var name = sb.ToString().TrimEnd(' ', '.');
+        if (name.Length == 0 || name is "." or "..")
+            return "tab";
+
+        return name;
+    }
+
+    private static string AllocatePlainTabFilePath(string folderPath, string header, HashSet<string> usedPaths)
+    {
+        var baseName = SanitizeTabHeaderForPlainTabFile(header);
+        var candidate = Path.Combine(folderPath, baseName + ".txt");
+        var n = 2;
+        while (usedPaths.Contains(candidate))
+        {
+            candidate = Path.Combine(folderPath, $"{baseName} ({n}).txt");
+            n++;
+        }
+
+        usedPaths.Add(candidate);
+        return candidate;
+    }
+
+    private void SyncCloudPlainTextTabFiles(string folderPath)
+    {
+        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in MainTabControl.Items)
+        {
+            if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
+                continue;
+
+            var plain = BuildCloudPlainTextTabExport(doc.CachedText);
+            var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
+            File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
     }
 
     private static bool IsLineSelected(TextEditor editor, int lineNumber)
@@ -6450,7 +6546,9 @@ public partial class MainWindow : Window
         bool updateStatus = true,
         bool forceCloudBackup = false,
         string? cloudBackupFolderOverride = null,
-        bool persistCloudMetadata = true)
+        bool persistCloudMetadata = true,
+        bool? cloudPlainTabsEnabledOverride = null,
+        string? cloudPlainTabsFolderOverride = null)
     {
         try
         {
@@ -6517,7 +6615,13 @@ public partial class MainWindow : Window
             _backupBundleService.WriteBundle(path, sections, BundleDivider, MetadataPrefix);
 
             PruneBackups();
-            TrySaveCloudBackup(path, forceCloudBackup, cloudBackupFolderOverride, persistCloudMetadata);
+            TrySaveCloudBackup(
+                path,
+                forceCloudBackup,
+                cloudBackupFolderOverride,
+                persistCloudMetadata,
+                cloudPlainTabsEnabledOverride,
+                cloudPlainTabsFolderOverride);
 
             // Bundle save is the "real" save - clear dirty flags
             foreach (var doc in _docs.Values)
@@ -6566,7 +6670,9 @@ public partial class MainWindow : Window
         string justSavedBackupPath,
         bool forceCloudBackup = false,
         string? cloudBackupFolderOverride = null,
-        bool persistCloudMetadata = true)
+        bool persistCloudMetadata = true,
+        bool? cloudPlainTabsEnabledOverride = null,
+        string? cloudPlainTabsFolderOverride = null)
     {
         var cloudFolder = string.IsNullOrWhiteSpace(cloudBackupFolderOverride)
             ? _cloudBackupFolder
@@ -6599,6 +6705,23 @@ public partial class MainWindow : Window
         cloudCopyStopwatch.Stop();
         AppendAppLog(
             $"Cloud copy completed successfully in {cloudCopyStopwatch.ElapsedMilliseconds} ms. size={FormatSizeForLog(sourceSizeBytes)}, throughput={FormatThroughputForLog(sourceSizeBytes, cloudCopyStopwatch.Elapsed)}. source='{justSavedBackupPath}', target='{cloudFolder}'");
+
+        var plainEnabled = cloudPlainTabsEnabledOverride ?? _cloudSyncTabsPlainTextEnabled;
+        var plainFolderRaw = cloudPlainTabsFolderOverride ?? _cloudSyncTabsPlainTextFolder;
+        if (!plainEnabled || string.IsNullOrWhiteSpace(plainFolderRaw))
+            return;
+
+        try
+        {
+            var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
+            Directory.CreateDirectory(plainFolder);
+            SyncCloudPlainTextTabFiles(plainFolder);
+            AppendAppLog($"Cloud plain-text tab sync completed. target='{plainFolder}'");
+        }
+        catch (Exception ex)
+        {
+            AppendAppLog($"Cloud plain-text tab sync failed: {ex.Message}");
+        }
     }
 
     private static long GetFileSizeBytesOrZero(string path)

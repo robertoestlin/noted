@@ -85,6 +85,10 @@ public partial class MainWindow
             SelectedCriticalHighlightedLineColor = ColorToHex(_selectedCriticalHighlightedLineColor),
             BackupFolder = _backupFolder,
             CloudBackupFolder = _cloudBackupFolder,
+            CloudSyncTabsPlainTextEnabled = _cloudSyncTabsPlainTextEnabled,
+            CloudSyncTabsPlainTextFolder = string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder)
+                ? null
+                : _cloudSyncTabsPlainTextFolder,
             BackupAdditionalSettingsFile = _backupAdditionalIncludeSettingsFile,
             BackupAdditionalAppLog = _backupAdditionalIncludeAppLog,
             BackupAdditionalHeartbeatLogs = _backupAdditionalIncludeHeartbeatLogs,
@@ -928,6 +932,8 @@ public partial class MainWindow
         _persistedLastNotedVersionForJson = null;
         _backupFolder = DefaultBackupFolder();
         _cloudBackupFolder = DefaultCloudBackupFolder();
+        _cloudSyncTabsPlainTextEnabled = false;
+        _cloudSyncTabsPlainTextFolder = string.Empty;
         _selectedLineColor = DefaultSelectedLineColor;
         _highlightedLineColor = DefaultHighlightedLineColor;
         _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
@@ -1009,6 +1015,19 @@ public partial class MainWindow
     {
         _backupFolder = backupFolder;
         _cloudBackupFolder = cloudBackupFolder;
+        _cloudSyncTabsPlainTextEnabled = bootstrap.CloudSyncTabsPlainTextEnabled ?? false;
+        if (!string.IsNullOrWhiteSpace(bootstrap.CloudSyncTabsPlainTextFolder))
+        {
+            try
+            {
+                _cloudSyncTabsPlainTextFolder = Path.GetFullPath(bootstrap.CloudSyncTabsPlainTextFolder.Trim());
+            }
+            catch
+            {
+                _cloudSyncTabsPlainTextFolder = bootstrap.CloudSyncTabsPlainTextFolder.Trim();
+            }
+        }
+
         if (_windowSettingsService.TryGetValidCloudHours(bootstrap.CloudSaveHours, out var cloudHours))
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(bootstrap.CloudSaveMinutes, out var cloudMinutes))
@@ -1032,6 +1051,21 @@ public partial class MainWindow
 
         _backupFolder = _windowSettingsService.NormalizePathOrFallback(state.BackupFolder, _backupFolder);
         _cloudBackupFolder = _windowSettingsService.NormalizePathOrFallback(state.CloudBackupFolder, _cloudBackupFolder);
+        _cloudSyncTabsPlainTextEnabled = state.CloudSyncTabsPlainTextEnabled ?? false;
+        if (!string.IsNullOrWhiteSpace(state.CloudSyncTabsPlainTextFolder))
+        {
+            try
+            {
+                _cloudSyncTabsPlainTextFolder = Path.GetFullPath(state.CloudSyncTabsPlainTextFolder.Trim());
+            }
+            catch
+            {
+                _cloudSyncTabsPlainTextFolder = state.CloudSyncTabsPlainTextFolder.Trim();
+            }
+        }
+        else
+            _cloudSyncTabsPlainTextFolder = string.Empty;
+
         if (_windowSettingsService.TryGetValidCloudHours(state.CloudSaveHours, out var cloudHours))
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSaveMinutes, out var cloudMinutes))
