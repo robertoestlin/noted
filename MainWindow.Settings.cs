@@ -45,6 +45,7 @@ public partial class MainWindow
             SaveTaskPanelPluginState(opts);
             SaveAlarmsPluginState(opts);
             SaveStandupPluginState(opts);
+            SaveComputerStatisticsPluginState(opts);
             SaveMessageOverlayPluginState(opts);
             SaveSearchFilesHistory(opts);
             SaveTodoItems(opts);
@@ -195,6 +196,30 @@ public partial class MainWindow
             RetentionDays = snap.RetentionDays
         };
         _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void SaveComputerStatisticsPluginState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, ComputerStatisticsPluginStateFileName);
+        var payload = new ComputerStatisticsPluginState
+        {
+            IdleThresholdSeconds = _computerStatisticsIdleThresholdSeconds,
+            PassiveProgramKeys = _computerStatisticsPassiveProgramKeys.ToList()
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void LoadComputerStatisticsPluginState()
+    {
+        var path = Path.Combine(_backupFolder, ComputerStatisticsPluginStateFileName);
+        if (!File.Exists(path))
+        {
+            ApplyComputerStatisticsSettings(null);
+            return;
+        }
+
+        var fromDisk = _windowSettingsStore.Load<ComputerStatisticsPluginState>(path);
+        ApplyComputerStatisticsSettings(fromDisk);
     }
 
     private void SaveMessageOverlayPluginState(JsonSerializerOptions options)
@@ -735,6 +760,7 @@ public partial class MainWindow
             LoadTaskPanelPluginState(loaded.EffectiveSettingsJsonPath);
             LoadAlarmsPluginState(loaded.EffectiveSettingsJsonPath);
             LoadStandupPluginState(loaded.EffectiveSettingsJsonPath);
+            LoadComputerStatisticsPluginState();
             LoadMessageOverlayPluginState(loaded.EffectiveSettingsJsonPath);
 
             var sessionPath = Path.Combine(_backupFolder, SessionStateFileName);
@@ -955,6 +981,7 @@ public partial class MainWindow
         _currentTaskAreaId = DefaultTaskAreaId;
         _safePasteSavedEntries.Clear();
         ResetStandupSettingsToDefaults();
+        ResetComputerStatisticsSettingsToDefaults();
         _todoPanelVisible = false;
         _lineAssigneeUsageCounts.Clear();
         _lastLineAssignee = null;

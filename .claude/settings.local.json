@@ -5,7 +5,11 @@
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -nologo --verbosity minimal)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" --list-sdks)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build -nologo)",
-      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build -nologo -t:Compile)"
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build -nologo -t:Compile)",
+      "Bash(awk -F',source=' '{print $1}')",
+      "Bash(dotnet --list-sdks)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -c Debug)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Heartbeat/Heartbeat.csproj -c Debug)"
     ]
   }
 }

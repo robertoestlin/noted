@@ -166,6 +166,7 @@
                 <MenuItem Header="_Plugins">
                     <MenuItem Header="_Alarms" Click="MenuAlarms_Click"/>
                     <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
+                    <MenuItem Header="Computer _Statistics" Click="MenuComputerStatistics_Click"/>
                     <MenuItem Header="JS_ON Pretty" Click="MenuJsonPretty_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_Message Overlay" InputGestureText="Ctrl+O" Click="MenuQuickMessageOverlay_Click"/>

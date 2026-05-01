@@ -100,6 +100,7 @@ public partial class MainWindow : Window
     private const string TaskPanelPluginStateFileName = "plugin-task-panel.json";
     private const string AlarmsPluginStateFileName = "plugin-alarms.json";
     private const string StandupPluginStateFileName = "plugin-standup.json";
+    private const string ComputerStatisticsPluginStateFileName = "plugin-computer-statistics.json";
     private const string MessageOverlayPluginStateFileName = "plugin-msg-overlay.json";
     private const string TodoItemsFileName = "todo-items.json";
     private const string StateConfigFileName = "state-config.json";
@@ -7011,6 +7012,7 @@ public partial class MainWindow : Window
     private void MenuPasswordGenerator_Click(object sender, RoutedEventArgs e) => ShowPasswordGeneratorDialog();
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();
     private void MenuStandup_Click(object sender, RoutedEventArgs e) => ShowStandupDialog();
+    private void MenuComputerStatistics_Click(object sender, RoutedEventArgs e) => ShowComputerStatisticsDialog();
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
     private void MenuJsonPretty_Click(object sender, RoutedEventArgs e) => ShowJsonPrettyDialog();
     private void MenuSearchFiles_Click(object sender, RoutedEventArgs e) => ShowSearchFilesDialog();

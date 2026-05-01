@@ -268,6 +268,16 @@ public sealed class StandupPluginState : StandupSettings
 {
 }
 
+/// <summary>Computer Statistics plugin configuration in <c>plugin-computer-statistics.json</c>.</summary>
+public sealed class ComputerStatisticsPluginState
+{
+    /// <summary>Idle threshold in seconds — above this a slot is Passive (with sound) or Away (without).</summary>
+    public int? IdleThresholdSeconds { get; set; }
+
+    /// <summary>Process-name keys (case-insensitive) whose audio counts as "Passive" sound.</summary>
+    public List<string>? PassiveProgramKeys { get; set; }
+}
+
 /// <summary>Session-only UI state in <c>session-state.json</c>.</summary>
 public sealed class NotedSessionState
 {
