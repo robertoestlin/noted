@@ -21,6 +21,7 @@
     <Resource Include="logo\logo.png" />
     <Resource Include="logo\friday.png" />
     <Resource Include="logo\world-map-equirectangular.png" />
+    <Resource Include="Assets\MessageOverlayGnome.png" />
   </ItemGroup>
 
   <ItemGroup>

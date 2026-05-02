@@ -253,6 +253,7 @@ public partial class MainWindow
             MessageOverlayCountdownSeconds = _messageOverlayCountdownSeconds,
             MessageOverlayEffectEnabled = _messageOverlayEffectEnabled,
             MessageOverlayEffect = _messageOverlayEffect,
+            MessageOverlayGnomeProbabilityPercent = _messageOverlayGnomeProbabilityPercent,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
             QuickMessageCustom = _quickMessageCustom
@@ -439,6 +440,7 @@ public partial class MainWindow
             MessageOverlayCountdownSeconds = plugin.MessageOverlayCountdownSeconds,
             MessageOverlayEffectEnabled = plugin.MessageOverlayEffectEnabled,
             MessageOverlayEffect = plugin.MessageOverlayEffect,
+            MessageOverlayGnomeProbabilityPercent = plugin.MessageOverlayGnomeProbabilityPercent,
             QuickMessagePresets = plugin.QuickMessagePresets ?? legacyQuick.QuickMessagePresets,
             QuickMessageColor = plugin.QuickMessageColor ?? legacyQuick.QuickMessageColor,
             QuickMessageCustom = plugin.QuickMessageCustom ?? legacyQuick.QuickMessageCustom

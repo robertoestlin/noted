@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -7,6 +8,7 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Noted.Models;
 
@@ -61,6 +63,11 @@ public partial class MainWindow
     private DateTime _messageOverlayEffectLastTickUtc;
     private RotateTransform? _messageOverlaySunRayRotation;
     private double _messageOverlaySunRayAngle;
+    private const int MaxMessageOverlayGnomeProbabilityPercent = 100;
+    private const int MessageOverlayGnomeProbabilityWindowSeconds = 300;
+    private int _messageOverlayGnomeProbabilityPercent;
+    private DispatcherTimer? _messageOverlayGnomeTimer;
+    private static BitmapImage? _messageOverlayGnomeBitmap;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -107,6 +114,7 @@ public partial class MainWindow
         _messageOverlayShowNowPlaying = false;
         _messageOverlayEffectEnabled = false;
         _messageOverlayEffect = DefaultMessageOverlayEffect;
+        _messageOverlayGnomeProbabilityPercent = 0;
     }
 
     private static int ClampMessageOverlayCountdown(int? value, int max)
@@ -151,6 +159,16 @@ public partial class MainWindow
             MaxMessageOverlayCountdownSeconds);
         _messageOverlayEffectEnabled = state.MessageOverlayEffectEnabled ?? false;
         _messageOverlayEffect = NormalizeMessageOverlayEffect(state.MessageOverlayEffect);
+        _messageOverlayGnomeProbabilityPercent = NormalizeMessageOverlayGnomeProbabilityPercent(
+            state.MessageOverlayGnomeProbabilityPercent);
+    }
+
+    private static int NormalizeMessageOverlayGnomeProbabilityPercent(int? value)
+    {
+        if (value is null) return 0;
+        if (value < 0) return 0;
+        if (value > MaxMessageOverlayGnomeProbabilityPercent) return MaxMessageOverlayGnomeProbabilityPercent;
+        return value.Value;
     }
 
     private static string NormalizeMessageOverlayEffect(string? value)
@@ -607,9 +625,9 @@ public partial class MainWindow
         {
             Title = "Message Overlay Settings",
             Width = 520,
-            Height = 470,
+            Height = 580,
             MinWidth = 380,
-            MinHeight = 360,
+            MinHeight = 460,
             Owner = owner,
             WindowStartupLocation = WindowStartupLocation.CenterOwner
         };
@@ -617,6 +635,7 @@ public partial class MainWindow
         // Layout: list on the left, icon button column on the right, input at bottom
         var root = new Grid { Margin = new Thickness(12) };
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -747,6 +766,84 @@ public partial class MainWindow
 
         behaviorGroup.Content = behaviorGrid;
         root.Children.Add(behaviorGroup);
+
+        var gnomeGroup = new GroupBox
+        {
+            Header = "Gnome peek",
+            Margin = new Thickness(0, 12, 0, 0)
+        };
+        Grid.SetRow(gnomeGroup, 3);
+        Grid.SetColumn(gnomeGroup, 0);
+        Grid.SetColumnSpan(gnomeGroup, 2);
+
+        var gnomeGrid = new Grid { Margin = new Thickness(8) };
+        gnomeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        gnomeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        gnomeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        gnomeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var lblGnomePercent = new TextBlock
+        {
+            Text = "Chance per 5 minutes (%)",
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold
+        };
+        gnomeGrid.Children.Add(lblGnomePercent);
+
+        var txtGnomePercent = new TextBox
+        {
+            Text = _messageOverlayGnomeProbabilityPercent.ToString(CultureInfo.InvariantCulture),
+            MinWidth = 80,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        Grid.SetColumn(txtGnomePercent, 1);
+        gnomeGrid.Children.Add(txtGnomePercent);
+
+        var lblGnomeHint = new TextBlock
+        {
+            Text = "0 = never, 100 = certain. Sets how likely it is a tiny gnome peeks behind a letter within 5 minutes.",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 6, 0, 0),
+            TextWrapping = TextWrapping.Wrap
+        };
+        Grid.SetRow(lblGnomeHint, 1);
+        Grid.SetColumnSpan(lblGnomeHint, 2);
+        gnomeGrid.Children.Add(lblGnomeHint);
+
+        gnomeGroup.Content = gnomeGrid;
+        root.Children.Add(gnomeGroup);
+
+        void CommitGnomeSettings()
+        {
+            var raw = (txtGnomePercent.Text ?? string.Empty).Trim();
+            if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                var clamped = Math.Clamp(parsed, 0, MaxMessageOverlayGnomeProbabilityPercent);
+                if (clamped != parsed)
+                    txtGnomePercent.Text = clamped.ToString(CultureInfo.InvariantCulture);
+                _messageOverlayGnomeProbabilityPercent = clamped;
+            }
+            else
+            {
+                txtGnomePercent.Text = _messageOverlayGnomeProbabilityPercent.ToString(CultureInfo.InvariantCulture);
+            }
+            SaveWindowSettings();
+            if (MessageOverlay.Visibility == Visibility.Visible)
+            {
+                StopMessageOverlayGnomeTimer();
+                StartMessageOverlayGnomeTimer();
+            }
+        }
+
+        txtGnomePercent.LostFocus += (_, _) => CommitGnomeSettings();
+        txtGnomePercent.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter)
+                return;
+            e.Handled = true;
+            CommitGnomeSettings();
+        };
 
         void CommitPresets()
         {
@@ -894,6 +991,7 @@ public partial class MainWindow
                 return;
             e.Handled = true;
             CommitBlinkBehaviorSettings();
+            CommitGnomeSettings();
             dlg.Close();
         };
 
@@ -902,7 +1000,11 @@ public partial class MainWindow
             txtMessage.Focus();
             RefreshButtonState();
         };
-        dlg.Closing += (_, _) => CommitBlinkBehaviorSettings();
+        dlg.Closing += (_, _) =>
+        {
+            CommitBlinkBehaviorSettings();
+            CommitGnomeSettings();
+        };
 
         dlg.Content = root;
         return dlg.ShowDialog();
@@ -927,6 +1029,7 @@ public partial class MainWindow
         StartMessageOverlayCountdown(countdownSeconds, foreground);
         RefreshMessageOverlayNowPlaying();
         StartMessageOverlayEffect();
+        StartMessageOverlayGnomeTimer();
         if (MessageOverlayHelpContainer != null)
             MessageOverlayHelpContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Focus();
@@ -939,6 +1042,8 @@ public partial class MainWindow
         StopMessageOverlayCountdown();
         StopMessageOverlayCountdownExpiredBlink();
         StopMessageOverlayEffect();
+        StopMessageOverlayGnomeTimer();
+        MessageOverlayTextEffectCanvas?.Children.Clear();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
         if (MessageOverlayHelpContainer != null)
@@ -1716,5 +1821,674 @@ public partial class MainWindow
         MessageOverlayText.BeginAnimation(UIElement.OpacityProperty, null);
         MessageOverlayText.Opacity = 1.0;
         MessageOverlayText.Text = text;
+    }
+
+    private void StartMessageOverlayGnomeTimer()
+    {
+        StopMessageOverlayGnomeTimer();
+        if (_messageOverlayGnomeProbabilityPercent <= 0)
+            return;
+        _messageOverlayGnomeTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _messageOverlayGnomeTimer.Tick += MessageOverlayGnomeTimer_Tick;
+        _messageOverlayGnomeTimer.Start();
+    }
+
+    private void StopMessageOverlayGnomeTimer()
+    {
+        if (_messageOverlayGnomeTimer == null)
+            return;
+        _messageOverlayGnomeTimer.Stop();
+        _messageOverlayGnomeTimer.Tick -= MessageOverlayGnomeTimer_Tick;
+        _messageOverlayGnomeTimer = null;
+    }
+
+    private void MessageOverlayGnomeTimer_Tick(object? sender, EventArgs e)
+    {
+        if (MessageOverlay.Visibility != Visibility.Visible)
+        {
+            StopMessageOverlayGnomeTimer();
+            return;
+        }
+        if (_messageOverlayGnomeProbabilityPercent <= 0)
+        {
+            StopMessageOverlayGnomeTimer();
+            return;
+        }
+
+        var perFiveMinutes = Math.Clamp(_messageOverlayGnomeProbabilityPercent, 0, 100) / 100.0;
+        var perSecond = perFiveMinutes >= 1.0
+            ? 1.0
+            : 1.0 - Math.Pow(1.0 - perFiveMinutes, 1.0 / MessageOverlayGnomeProbabilityWindowSeconds);
+        if (Random.Shared.NextDouble() < perSecond)
+            ShowMessageOverlayGnomePeek();
+    }
+
+    private static void AttachMessageOverlayGnomeRotateThenTranslate(
+        FrameworkElement gnome,
+        TranslateTransform translate,
+        double tiltDegrees,
+        double gnomeWidth,
+        double gnomeHeight)
+    {
+        var rot = new RotateTransform(tiltDegrees, gnomeWidth * 0.5, gnomeHeight);
+        var group = new TransformGroup();
+        group.Children.Add(rot);
+        group.Children.Add(translate);
+        gnome.RenderTransform = group;
+    }
+
+    /// <summary>
+    /// Element-space transform applied before <see cref="Canvas.SetLeft"/> / <see cref="Canvas.SetTop"/> (rotate around feet, then peek/hide translation).
+    /// </summary>
+    private static Matrix MessageOverlayGnomeElementPoseMatrix(double gw, double gh, double tiltDeg, double transX, double transY)
+    {
+        var rot = new RotateTransform(tiltDeg, gw * 0.5, gh);
+        var mat = rot.Value;
+        mat.Translate(transX, transY);
+        return mat;
+    }
+
+    private static bool MessageOverlayTryCanvasPointToInkPixel(
+        GeneralTransform textToEffect,
+        Rect inkLocalRect,
+        int rasterScale,
+        int pw,
+        int ph,
+        Point canvasPt,
+        out int ix,
+        out int iy)
+    {
+        ix = 0;
+        iy = 0;
+        if (!textToEffect.Inverse.TryTransform(canvasPt, out var localPt))
+            return false;
+        var px = (localPt.X - inkLocalRect.Left) * rasterScale;
+        var py = (localPt.Y - inkLocalRect.Top) * rasterScale;
+        ix = (int)Math.Floor(px + 1e-4);
+        iy = (int)Math.Floor(py + 1e-4);
+        return ix >= 0 && iy >= 0 && ix < pw && iy < ph;
+    }
+
+    /// <summary>
+    /// True if every sample on the gnome bitmap (including corners after rotation) maps to solid ink.
+    /// </summary>
+    private static bool MessageOverlayGnomePoseFullyOverSolidInk(
+        bool[,] solid,
+        int pw,
+        int ph,
+        int rasterScale,
+        Rect inkLocalRect,
+        GeneralTransform textToEffect,
+        double canvasLeft,
+        double canvasTop,
+        double gw,
+        double gh,
+        double tiltDeg,
+        double transX,
+        double transY,
+        int grid)
+    {
+        if (grid < 2)
+            grid = 2;
+        var m = MessageOverlayGnomeElementPoseMatrix(gw, gh, tiltDeg, transX, transY);
+        for (var iu = 0; iu < grid; iu++)
+        {
+            for (var iv = 0; iv < grid; iv++)
+            {
+                var ex = iu * gw / (grid - 1);
+                var ey = iv * gh / (grid - 1);
+                var p = m.Transform(new Point(ex, ey));
+                var canvasPt = new Point(canvasLeft + p.X, canvasTop + p.Y);
+                if (!MessageOverlayTryCanvasPointToInkPixel(textToEffect, inkLocalRect, rasterScale, pw, ph, canvasPt, out var ix, out var iy))
+                    return false;
+                if (!solid[iy, ix])
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Unit vector from feet toward head after <see cref="RotateTransform.Angle"/> clockwise (WPF),
+    /// in device coords (+X right, +Y down).
+    /// </summary>
+    private static Vector TransformMessageOverlayDirection(GeneralTransform t, Vector v)
+    {
+        var o = t.Transform(new Point(0, 0));
+        var p = t.Transform(new Point(v.X, v.Y));
+        var r = new Vector(p.X - o.X, p.Y - o.Y);
+        if (r.LengthSquared < 1e-12)
+            return v;
+        r.Normalize();
+        return r;
+    }
+
+    /// <summary>
+    /// Unit peek/travel directions from horizontal-left through straight-up to horizontal-right.
+    /// Uses φ ∈ [-π, 0] so sin φ ≤ 0 (+Y is down): never aims straight down or into the lower half-plane.
+    /// </summary>
+    private static Vector SampleMessageOverlayGnomePeekDirectionUpperSemicircle()
+    {
+        var phi = -Random.Shared.NextDouble() * Math.PI;
+        var u = new Vector(Math.Cos(phi), Math.Sin(phi));
+        u.Normalize();
+        return u;
+    }
+
+    /// <summary>
+    /// On the left–up–right arc, picks the direction best aligned with <paramref name="target"/> (e.g. ink outward normal).
+    /// </summary>
+    private static Vector MessageOverlayGnomeBestDirectionUpperArcToward(Vector target)
+    {
+        if (target.LengthSquared < 1e-12)
+            target = new Vector(0, -1);
+        else
+            target.Normalize();
+
+        Vector best = new Vector(0, -1);
+        var bestDot = Vector.Multiply(best, target);
+        const int steps = 96;
+        for (var k = 1; k < steps; k++)
+        {
+            var phi = -Math.PI * k / steps;
+            var u = new Vector(Math.Cos(phi), Math.Sin(phi));
+            var d = Vector.Multiply(u, target);
+            if (d > bestDot)
+            {
+                bestDot = d;
+                best = u;
+            }
+        }
+        best.Normalize();
+        return best;
+    }
+
+    private void ShowMessageOverlayGnomePeek()
+    {
+        if (MessageOverlayTextEffectCanvas == null || MessageOverlayText == null)
+            return;
+        var text = MessageOverlayText.Text ?? string.Empty;
+        if (text.Length == 0)
+            return;
+
+        var indices = new List<int>();
+        for (var i = 0; i < text.Length; i++)
+            if (!char.IsWhiteSpace(text[i]))
+                indices.Add(i);
+        if (indices.Count == 0)
+            return;
+
+        const double peekOutMs = 2200;
+        const double holdMsFull = 3600;
+        var holdMs = holdMsFull / 3.0;
+        var peekBackMs = peekOutMs / 4.0;
+        var totalMs = peekOutMs + holdMs + peekBackMs;
+        var holdEndMs = peekOutMs + holdMs;
+        const double peekTravelScale = 1.0 / 3.0;
+        const double minGnomeScale = 0.34;
+        const double gnomeScaleStep = 0.065;
+        const int inkSampleGrid = 9;
+
+        foreach (var idx in indices.OrderBy(_ => Random.Shared.Next()))
+        {
+            if (!TryRasterMessageOverlayCharInkSolid(text, idx, out var solid, out var pw, out var ph, out var rs, out var inkLocalRect, out var textToEffect, out var lineH))
+                continue;
+
+            for (var pickAttempt = 0; pickAttempt < 14; pickAttempt++)
+            {
+                if (!TryPickMessageOverlayGnomeInkPeekOrigin(solid, pw, ph, rs, inkLocalRect, textToEffect, out var anchorCanvas, out var outwardCanvas))
+                    break;
+
+                var nInk = outwardCanvas;
+                if (nInk.LengthSquared < 1e-12)
+                    nInk = new Vector(0, -1);
+                else
+                    nInk.Normalize();
+
+                var headDir = MessageOverlayGnomeBestDirectionUpperArcToward(nInk);
+                for (var attempt = 0; attempt < 72; attempt++)
+                {
+                    var u = SampleMessageOverlayGnomePeekDirectionUpperSemicircle();
+                    if (Vector.Multiply(u, nInk) >= 0.015)
+                    {
+                        headDir = u;
+                        break;
+                    }
+                }
+
+                headDir.Normalize();
+                if (headDir.Y > 1e-6 || Vector.Multiply(headDir, nInk) < -0.02)
+                    headDir = MessageOverlayGnomeBestDirectionUpperArcToward(nInk);
+
+                headDir.Normalize();
+                var tiltDeg = Math.Atan2(headDir.X, -headDir.Y) * 180.0 / Math.PI;
+
+                for (var gnomeScale = 1.0; gnomeScale >= minGnomeScale - 1e-6; gnomeScale -= gnomeScaleStep)
+                {
+                    var gnome = BuildMessageOverlayGnomeVisual(lineH * gnomeScale);
+                    var gw = gnome.Width;
+                    var gh = gnome.Height;
+
+                    var maxOutX = gw * 0.45 * peekTravelScale;
+                    var maxOutY = gh * 0.42 * peekTravelScale;
+                    var inset = Math.Max(1.5, Math.Min(gw, gh) * 0.07);
+
+                    var magPeek = Math.Sqrt(maxOutX * maxOutX + maxOutY * maxOutY);
+                    var maxPeekForSixtyPercentShown = Math.Max(gw, gh) * 0.6;
+                    magPeek = Math.Min(magPeek, maxPeekForSixtyPercentShown);
+                    var magHide = magPeek + inset;
+
+                    var inwardDepth = Math.Min(gw, gh) * 0.26;
+                    var centerCanvas = anchorCanvas - headDir * inwardDepth;
+
+                    var canvasLeft = centerCanvas.X - gw / 2.0;
+                    var canvasTop = centerCanvas.Y - gh / 2.0;
+
+                    var peekX = magPeek * headDir.X;
+                    var peekY = magPeek * headDir.Y;
+                    var hidX = -magHide * headDir.X;
+                    var hidY = -magHide * headDir.Y;
+
+                    if (!MessageOverlayGnomePoseFullyOverSolidInk(
+                            solid, pw, ph, rs, inkLocalRect, textToEffect, canvasLeft, canvasTop, gw, gh, tiltDeg, hidX, hidY, inkSampleGrid))
+                        continue;
+
+                    var translate = new TranslateTransform();
+                    AttachMessageOverlayGnomeRotateThenTranslate(gnome, translate, tiltDeg, gw, gh);
+
+                    translate.X = hidX;
+                    translate.Y = hidY;
+                    Canvas.SetLeft(gnome, canvasLeft);
+                    Canvas.SetTop(gnome, canvasTop);
+                    gnome.Opacity = 1;
+                    MessageOverlayTextEffectCanvas.Children.Add(gnome);
+
+                    var xAnim = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(totalMs) };
+                    xAnim.KeyFrames.Add(new LinearDoubleKeyFrame(hidX, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                    xAnim.KeyFrames.Add(new LinearDoubleKeyFrame(peekX, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(peekOutMs))));
+                    xAnim.KeyFrames.Add(new LinearDoubleKeyFrame(peekX, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdEndMs))));
+                    xAnim.KeyFrames.Add(new LinearDoubleKeyFrame(hidX, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(totalMs))));
+
+                    var yAnim = new DoubleAnimationUsingKeyFrames { Duration = TimeSpan.FromMilliseconds(totalMs) };
+                    yAnim.KeyFrames.Add(new LinearDoubleKeyFrame(hidY, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                    yAnim.KeyFrames.Add(new LinearDoubleKeyFrame(peekY, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(peekOutMs))));
+                    yAnim.KeyFrames.Add(new LinearDoubleKeyFrame(peekY, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdEndMs))));
+                    yAnim.KeyFrames.Add(new LinearDoubleKeyFrame(hidY, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(totalMs))));
+                    yAnim.Completed += (_, _) =>
+                    {
+                        if (MessageOverlayTextEffectCanvas != null && MessageOverlayTextEffectCanvas.Children.Contains(gnome))
+                            MessageOverlayTextEffectCanvas.Children.Remove(gnome);
+                    };
+
+                    translate.BeginAnimation(TranslateTransform.XProperty, xAnim);
+                    translate.BeginAnimation(TranslateTransform.YProperty, yAnim);
+                    return;
+                }
+            }
+        }
+    }
+
+    private static BitmapImage MessageOverlayGnomeBitmap
+    {
+        get
+        {
+            if (_messageOverlayGnomeBitmap != null)
+                return _messageOverlayGnomeBitmap;
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri("pack://application:,,,/Assets/MessageOverlayGnome.png", UriKind.Absolute);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            _messageOverlayGnomeBitmap = bmp;
+            return bmp;
+        }
+    }
+
+    private static FrameworkElement BuildMessageOverlayGnomeVisual(double letterHeight)
+    {
+        var src = MessageOverlayGnomeBitmap;
+        var aspect = src.PixelWidth / (double)src.PixelHeight;
+        var totalHeight = Math.Clamp(letterHeight * 0.08, 3.0, 74.0);
+        var width = totalHeight * aspect;
+
+        return new Image
+        {
+            Source = src,
+            Width = width,
+            Height = totalHeight,
+            Stretch = Stretch.Uniform,
+            IsHitTestVisible = false,
+            SnapsToDevicePixels = true
+        };
+    }
+
+    private bool TryGetMessageOverlayCharLocalMetrics(
+        string text,
+        int charIndex,
+        out Rect localRect,
+        out GeneralTransform textToCanvas,
+        out double lineHeight,
+        out FormattedText charFormatted)
+    {
+        localRect = default;
+        textToCanvas = default!;
+        lineHeight = 0;
+        charFormatted = new FormattedText(
+            " ",
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            new Typeface("Arial"),
+            12,
+            Brushes.Black,
+            1.0);
+        if (MessageOverlayText == null || MessageOverlayTextEffectCanvas == null)
+            return false;
+        if (string.IsNullOrEmpty(text) || charIndex < 0 || charIndex >= text.Length)
+            return false;
+
+        var typeface = new Typeface(
+            MessageOverlayText.FontFamily,
+            MessageOverlayText.FontStyle,
+            MessageOverlayText.FontWeight,
+            MessageOverlayText.FontStretch);
+        double dpi;
+        try
+        {
+            dpi = VisualTreeHelper.GetDpi(MessageOverlayText).PixelsPerDip;
+        }
+        catch
+        {
+            dpi = 1.0;
+        }
+        var fontSize = MessageOverlayText.FontSize;
+
+        var normalized = text.Replace("\r", string.Empty);
+        var lines = normalized.Split('\n');
+        var lineWidths = new double[lines.Length];
+        var lineHeights = new double[lines.Length];
+        var maxWidth = 0.0;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var ft = new FormattedText(
+                lines[i].Length == 0 ? " " : lines[i],
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                Brushes.Black,
+                dpi);
+            lineWidths[i] = ft.WidthIncludingTrailingWhitespace;
+            lineHeights[i] = ft.Height;
+            if (lineWidths[i] > maxWidth)
+                maxWidth = lineWidths[i];
+        }
+
+        var runIdx = charIndex;
+        var lineNum = 0;
+        while (lineNum < lines.Length)
+        {
+            if (runIdx <= lines[lineNum].Length)
+                break;
+            runIdx -= lines[lineNum].Length + 1;
+            lineNum++;
+        }
+        if (lineNum >= lines.Length || runIdx < 0 || runIdx >= lines[lineNum].Length)
+            return false;
+
+        var lineText = lines[lineNum];
+        double prefixWidth = 0;
+        if (runIdx > 0)
+        {
+            var prefixFt = new FormattedText(
+                lineText.Substring(0, runIdx),
+                CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight,
+                typeface,
+                fontSize,
+                Brushes.Black,
+                dpi);
+            prefixWidth = prefixFt.WidthIncludingTrailingWhitespace;
+        }
+        charFormatted = new FormattedText(
+            lineText[runIdx].ToString(),
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            fontSize,
+            Brushes.Black,
+            dpi);
+        var charWidth = charFormatted.WidthIncludingTrailingWhitespace;
+        lineHeight = lineHeights[lineNum];
+
+        var centerOffset = (maxWidth - lineWidths[lineNum]) / 2.0;
+        double y = 0;
+        for (var i = 0; i < lineNum; i++)
+            y += lineHeights[i];
+
+        localRect = new Rect(prefixWidth + centerOffset, y, charWidth, lineHeight);
+
+        try
+        {
+            textToCanvas = MessageOverlayText.TransformToVisual(MessageOverlayTextEffectCanvas);
+        }
+        catch
+        {
+            return false;
+        }
+        return true;
+    }
+
+    private bool TryGetMessageOverlayCharRect(string text, int charIndex, out Rect canvasRect)
+    {
+        canvasRect = default;
+        if (!TryGetMessageOverlayCharLocalMetrics(text, charIndex, out var localRect, out var t, out _, out _))
+            return false;
+        canvasRect = t.TransformBounds(localRect);
+        return true;
+    }
+
+    private bool TryRasterMessageOverlayCharInkSolid(
+        string text,
+        int charIndex,
+        out bool[,] solid,
+        out int pw,
+        out int ph,
+        out int rasterScale,
+        out Rect inkLocalRect,
+        out GeneralTransform textToEffect,
+        out double lineHeight)
+    {
+        solid = null!;
+        pw = 0;
+        ph = 0;
+        rasterScale = 4;
+        inkLocalRect = default;
+        textToEffect = default!;
+        lineHeight = 0;
+        if (!TryGetMessageOverlayCharLocalMetrics(text, charIndex, out inkLocalRect, out textToEffect, out lineHeight, out var charFt))
+            return false;
+
+        rasterScale = 4;
+        pw = Math.Max(8, (int)Math.Ceiling(charFt.WidthIncludingTrailingWhitespace * rasterScale));
+        ph = Math.Max(8, (int)Math.Ceiling(charFt.Height * rasterScale));
+
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+        {
+            dc.DrawRectangle(Brushes.Transparent, null, new Rect(0, 0, pw, ph));
+            dc.PushTransform(new ScaleTransform(rasterScale, rasterScale));
+            dc.DrawText(charFt, new Point(0, 0));
+            dc.Pop();
+        }
+
+        var rtb = new RenderTargetBitmap(pw, ph, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(dv);
+
+        var stride = pw * 4;
+        var pixels = new byte[stride * ph];
+        rtb.CopyPixels(new Int32Rect(0, 0, pw, ph), pixels, stride, 0);
+
+        solid = new bool[ph, pw];
+        var inkCount = 0;
+        for (var py = 0; py < ph; py++)
+        {
+            var row = py * stride;
+            for (var px = 0; px < pw; px++)
+            {
+                var a = pixels[row + px * 4 + 3];
+                if (a > 140)
+                {
+                    solid[py, px] = true;
+                    inkCount++;
+                }
+            }
+        }
+
+        return inkCount > 0;
+    }
+
+    private bool TryPickMessageOverlayGnomeInkPeekOrigin(
+        bool[,] solid,
+        int pw,
+        int ph,
+        int rasterScale,
+        Rect inkLocalRect,
+        GeneralTransform textToEffect,
+        out Point anchorCanvas,
+        out Vector outwardCanvas)
+    {
+        anchorCanvas = default;
+        outwardCanvas = new Vector(0, -1);
+
+        var exterior = new bool[ph, pw];
+        var q = new Queue<(int x, int y)>();
+
+        void TryNeighbor(int nx, int ny)
+        {
+            if (nx < 0 || ny < 0 || nx >= pw || ny >= ph)
+                return;
+            if (solid[ny, nx] || exterior[ny, nx])
+                return;
+            exterior[ny, nx] = true;
+            q.Enqueue((nx, ny));
+        }
+
+        for (var x = 0; x < pw; x++)
+        {
+            if (!solid[0, x])
+            {
+                exterior[0, x] = true;
+                q.Enqueue((x, 0));
+            }
+            if (!solid[ph - 1, x])
+            {
+                exterior[ph - 1, x] = true;
+                q.Enqueue((x, ph - 1));
+            }
+        }
+        for (var y = 0; y < ph; y++)
+        {
+            if (!solid[y, 0])
+            {
+                exterior[y, 0] = true;
+                q.Enqueue((0, y));
+            }
+            if (!solid[y, pw - 1])
+            {
+                exterior[y, pw - 1] = true;
+                q.Enqueue((pw - 1, y));
+            }
+        }
+
+        while (q.Count > 0)
+        {
+            var (x, y) = q.Dequeue();
+            TryNeighbor(x + 1, y);
+            TryNeighbor(x - 1, y);
+            TryNeighbor(x, y + 1);
+            TryNeighbor(x, y - 1);
+        }
+
+        var hole = new bool[ph, pw];
+        for (var py = 0; py < ph; py++)
+        {
+            for (var px = 0; px < pw; px++)
+                hole[py, px] = !solid[py, px] && !exterior[py, px];
+        }
+
+        bool TouchesHole(int px, int py)
+        {
+            if (px + 1 < pw && hole[py, px + 1])
+                return true;
+            if (px > 0 && hole[py, px - 1])
+                return true;
+            if (py + 1 < ph && hole[py + 1, px])
+                return true;
+            if (py > 0 && hole[py - 1, px])
+                return true;
+            return false;
+        }
+
+        bool IsExtNeighbor(int nx, int ny)
+        {
+            if (nx < 0 || ny < 0 || nx >= pw || ny >= ph)
+                return true;
+            return exterior[ny, nx];
+        }
+
+        var boundary = new List<(int bx, int by)>();
+        for (var py = 0; py < ph; py++)
+        {
+            for (var px = 0; px < pw; px++)
+            {
+                if (!solid[py, px])
+                    continue;
+                if (TouchesHole(px, py))
+                    continue;
+                if (IsExtNeighbor(px + 1, py) || IsExtNeighbor(px - 1, py) ||
+                    IsExtNeighbor(px, py + 1) || IsExtNeighbor(px, py - 1))
+                    boundary.Add((px, py));
+            }
+        }
+
+        if (boundary.Count == 0)
+            return false;
+
+        var pick = boundary[Random.Shared.Next(boundary.Count)];
+        var bx = pick.bx;
+        var by = pick.by;
+
+        double ox = 0, oy = 0;
+        void AddOut(int nx, int ny)
+        {
+            if (!IsExtNeighbor(nx, ny))
+                return;
+            ox += nx - bx;
+            oy += ny - by;
+        }
+        AddOut(bx + 1, by);
+        AddOut(bx - 1, by);
+        AddOut(bx, by + 1);
+        AddOut(bx, by - 1);
+
+        var dirBmp = new Vector(ox, oy);
+        if (dirBmp.LengthSquared < 1e-6)
+            dirBmp = new Vector(0, -1);
+        else
+            dirBmp.Normalize();
+
+        var vLocal = new Vector(dirBmp.X / rasterScale, dirBmp.Y / rasterScale);
+        vLocal.Normalize();
+        outwardCanvas = TransformMessageOverlayDirection(textToEffect, vLocal);
+
+        var ptLocal = new Point(inkLocalRect.X + (bx + 0.5) / rasterScale, inkLocalRect.Y + (by + 0.5) / rasterScale);
+        anchorCanvas = textToEffect.Transform(ptLocal);
+
+        return true;
     }
 }

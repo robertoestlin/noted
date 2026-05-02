@@ -211,6 +211,7 @@ public sealed class MessageOverlayPluginState
     public int? MessageOverlayCountdownSeconds { get; set; }
     public bool? MessageOverlayEffectEnabled { get; set; }
     public string? MessageOverlayEffect { get; set; }
+    public int? MessageOverlayGnomeProbabilityPercent { get; set; }
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }
     public string? QuickMessageCustom { get; set; }

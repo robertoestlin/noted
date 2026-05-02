@@ -276,14 +276,21 @@
                         IsHitTestVisible="False"
                         ClipToBounds="True"/>
                 <Viewbox Stretch="Uniform" StretchDirection="Both" Margin="30">
-                    <TextBlock x:Name="MessageOverlayText"
-                               Text="GG"
-                               Foreground="#62E5FF"
-                               FontWeight="Black"
-                               FontFamily="Segoe UI Black, Segoe UI, Arial"
-                               TextAlignment="Center"
-                               VerticalAlignment="Center"
-                               HorizontalAlignment="Center"/>
+                    <Grid>
+                        <Canvas x:Name="MessageOverlayTextEffectCanvas"
+                                Panel.ZIndex="0"
+                                IsHitTestVisible="False"
+                                ClipToBounds="True"/>
+                        <TextBlock x:Name="MessageOverlayText"
+                                   Panel.ZIndex="1"
+                                   Text="GG"
+                                   Foreground="#62E5FF"
+                                   FontWeight="Black"
+                                   FontFamily="Segoe UI Black, Segoe UI, Arial"
+                                   TextAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"/>
+                    </Grid>
                 </Viewbox>
                 <Border x:Name="MessageOverlayCountdownContainer"
                         HorizontalAlignment="Right"
