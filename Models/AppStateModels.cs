@@ -215,6 +215,15 @@ public sealed class MessageOverlayPluginState
     public List<string>? QuickMessagePresets { get; set; }
     public string? QuickMessageColor { get; set; }
     public string? QuickMessageCustom { get; set; }
+    /// <summary>Most recently shown overlay message (picker dialog Enter uses this).</summary>
+    public string? QuickMessageLastUsed { get; set; }
+    /// <summary>ARGB hex for <see cref="QuickMessageLastUsed"/> session (Enter replay).</summary>
+    public string? QuickMessageLastUsedColorHex { get; set; }
+    /// <summary>Countdown duration from last overlay session (0 = none).</summary>
+    public int? QuickMessageLastUsedCountdownSeconds { get; set; }
+    public bool? QuickMessageLastUsedEffectEnabled { get; set; }
+    public string? QuickMessageLastUsedEffect { get; set; }
+    public bool? QuickMessageLastUsedShowNowPlaying { get; set; }
 }
 
 public sealed class SearchFilesHistoryMatch

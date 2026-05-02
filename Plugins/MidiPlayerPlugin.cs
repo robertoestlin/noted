@@ -39,6 +39,92 @@ public partial class MainWindow
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathName(string lpszLongPath, StringBuilder lpszShortPath, uint cchBuffer);
 
+    private const uint SendInputKeyboard = 1;
+    private const uint KeyeventfExtendedkey = 0x0001;
+    private const uint KeyeventfKeyup = 0x0002;
+    private const ushort VkMediaPlayPause = 0xB3;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, MidiSendInputRecord[] pInputs, int cbSize);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MidiMouseInput
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MidiKeybdInput
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MidiHardwareInput
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct MidiInputUnion
+    {
+        [FieldOffset(0)] public MidiMouseInput mi;
+        [FieldOffset(0)] public MidiKeybdInput ki;
+        [FieldOffset(0)] public MidiHardwareInput hi;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MidiSendInputRecord
+    {
+        public uint type;
+        public MidiInputUnion U;
+    }
+
+    /// <summary>
+    /// Sends the system media Play/Pause key. Does not open Noted's MIDI player window.
+    /// </summary>
+    private static void TrySendGlobalMediaPlayPause()
+    {
+        try
+        {
+            var inputs = new MidiSendInputRecord[2];
+            inputs[0].type = SendInputKeyboard;
+            inputs[0].U.ki = new MidiKeybdInput
+            {
+                wVk = VkMediaPlayPause,
+                wScan = 0,
+                dwFlags = KeyeventfExtendedkey,
+                time = 0,
+                dwExtraInfo = IntPtr.Zero
+            };
+            inputs[1].type = SendInputKeyboard;
+            inputs[1].U.ki = new MidiKeybdInput
+            {
+                wVk = VkMediaPlayPause,
+                wScan = 0,
+                dwFlags = KeyeventfExtendedkey | KeyeventfKeyup,
+                time = 0,
+                dwExtraInfo = IntPtr.Zero
+            };
+            SendInput(2, inputs, Marshal.SizeOf<MidiSendInputRecord>());
+        }
+        catch
+        {
+            /* best effort */
+        }
+    }
+
     private sealed class MidiHeaderInfo
     {
         public int FormatType { get; init; }
@@ -596,7 +682,7 @@ public partial class MainWindow
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 
-    private void ShowMidiPlayerDialog()
+    private void ShowMidiPlayerDialog(bool startDockedHidden = false)
     {
         // Guard against double-open if invoked while a player is already alive.
         if (_midiPlayerWindow != null)
@@ -616,7 +702,8 @@ public partial class MainWindow
             ResizeMode = ResizeMode.CanResize,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ShowInTaskbar = true,
-            Owner = this
+            Owner = this,
+            ShowActivated = !startDockedHidden
         };
 
         var alias = "noted_midi_" + Guid.NewGuid().ToString("N").Substring(0, 8);
@@ -4100,5 +4187,7 @@ public partial class MainWindow
         };
         UpdateMidiPlayerDockedIndicator();
         dlg.Show();
+        if (startDockedHidden)
+            DockMidiPlayerWindow();
     }
 }

@@ -256,7 +256,15 @@ public partial class MainWindow
             MessageOverlayGnomeProbabilityPercent = _messageOverlayGnomeProbabilityPercent,
             QuickMessagePresets = BuildQuickMessagePresetsSnapshot(),
             QuickMessageColor = _quickMessageColorHex,
-            QuickMessageCustom = _quickMessageCustom
+            QuickMessageCustom = _quickMessageCustom,
+            QuickMessageLastUsed = _quickMessageLastUsed,
+            QuickMessageLastUsedColorHex = string.IsNullOrEmpty(_quickMessageLastUsedColorHex)
+                ? null
+                : _quickMessageLastUsedColorHex,
+            QuickMessageLastUsedCountdownSeconds = _quickMessageLastUsedCountdownSeconds,
+            QuickMessageLastUsedEffectEnabled = _quickMessageLastUsedEffectEnabled,
+            QuickMessageLastUsedEffect = _quickMessageLastUsedEffect,
+            QuickMessageLastUsedShowNowPlaying = _quickMessageLastUsedShowNowPlaying
         };
         _windowSettingsStore.Save(path, payload, options);
     }
@@ -443,7 +451,13 @@ public partial class MainWindow
             MessageOverlayGnomeProbabilityPercent = plugin.MessageOverlayGnomeProbabilityPercent,
             QuickMessagePresets = plugin.QuickMessagePresets ?? legacyQuick.QuickMessagePresets,
             QuickMessageColor = plugin.QuickMessageColor ?? legacyQuick.QuickMessageColor,
-            QuickMessageCustom = plugin.QuickMessageCustom ?? legacyQuick.QuickMessageCustom
+            QuickMessageCustom = plugin.QuickMessageCustom ?? legacyQuick.QuickMessageCustom,
+            QuickMessageLastUsed = plugin.QuickMessageLastUsed,
+            QuickMessageLastUsedColorHex = plugin.QuickMessageLastUsedColorHex,
+            QuickMessageLastUsedCountdownSeconds = plugin.QuickMessageLastUsedCountdownSeconds,
+            QuickMessageLastUsedEffectEnabled = plugin.QuickMessageLastUsedEffectEnabled,
+            QuickMessageLastUsedEffect = plugin.QuickMessageLastUsedEffect,
+            QuickMessageLastUsedShowNowPlaying = plugin.QuickMessageLastUsedShowNowPlaying
         };
     }
 

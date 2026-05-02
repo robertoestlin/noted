@@ -33,6 +33,12 @@ public partial class MainWindow
     private const string DefaultMessageOverlayEffect = MessageOverlayEffectSnow;
     private List<string> _quickMessagePresets = [.. DefaultQuickMessagePresets];
     private string _quickMessageCustom = string.Empty;
+    private string _quickMessageLastUsed = string.Empty;
+    private string _quickMessageLastUsedColorHex = string.Empty;
+    private int _quickMessageLastUsedCountdownSeconds;
+    private bool _quickMessageLastUsedEffectEnabled;
+    private string _quickMessageLastUsedEffect = DefaultMessageOverlayEffect;
+    private bool _quickMessageLastUsedShowNowPlaying;
     private string _quickMessageColorHex = DefaultQuickMessageColorHex;
     private bool _isMessageOverlayBlinking;
     private int _messageOverlayBlinkIntervalMs = DefaultMessageOverlayBlinkIntervalMs;
@@ -69,6 +75,7 @@ public partial class MainWindow
     private int _messageOverlayGnomeProbabilityPercent;
     private DispatcherTimer? _messageOverlayGnomeTimer;
     private static BitmapImage? _messageOverlayGnomeBitmap;
+    private int _messageOverlayGnomeManualCycle;
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -106,6 +113,12 @@ public partial class MainWindow
     {
         _quickMessagePresets = [.. DefaultQuickMessagePresets];
         _quickMessageCustom = string.Empty;
+        _quickMessageLastUsed = string.Empty;
+        _quickMessageLastUsedColorHex = string.Empty;
+        _quickMessageLastUsedCountdownSeconds = 0;
+        _quickMessageLastUsedEffectEnabled = false;
+        _quickMessageLastUsedEffect = DefaultMessageOverlayEffect;
+        _quickMessageLastUsedShowNowPlaying = false;
         _quickMessageColorHex = DefaultQuickMessageColorHex;
         _messageOverlayBlinkIntervalMs = DefaultMessageOverlayBlinkIntervalMs;
         _messageOverlayFadeMs = DefaultMessageOverlayFadeMs;
@@ -133,11 +146,30 @@ public partial class MainWindow
         return normalized.Count == 0 ? [.. DefaultQuickMessagePresets] : normalized;
     }
 
+    /// <summary>Presets plus optional custom line for Left/Right cycling in the overlay.</summary>
+    private List<string> BuildMessageOverlaySavedMessagesSnapshot()
+    {
+        var list = BuildQuickMessagePresetsSnapshot();
+        var custom = (_quickMessageCustom ?? string.Empty).Trim();
+        if (custom.Length > 0 && list.TrueForAll(s => !string.Equals(s, custom, StringComparison.Ordinal)))
+            list.Add(custom);
+        return list;
+    }
+
     private void ApplyQuickMessagePresetsFromPluginState(MessageOverlayPluginState state)
     {
         var presets = NormalizeQuickMessagePresets(state.QuickMessagePresets);
         _quickMessagePresets = presets.Count == 0 ? [.. DefaultQuickMessagePresets] : presets;
         _quickMessageCustom = (state.QuickMessageCustom ?? string.Empty).Trim();
+        _quickMessageLastUsed = (state.QuickMessageLastUsed ?? string.Empty).Trim();
+        _quickMessageLastUsedColorHex = NormalizeStoredLastUsedColorHex(state.QuickMessageLastUsedColorHex);
+        _quickMessageLastUsedCountdownSeconds = Math.Clamp(
+            state.QuickMessageLastUsedCountdownSeconds ?? 0,
+            0,
+            MessageOverlayCountdownMaxTotalSeconds());
+        _quickMessageLastUsedEffectEnabled = state.QuickMessageLastUsedEffectEnabled ?? false;
+        _quickMessageLastUsedEffect = NormalizeMessageOverlayEffect(state.QuickMessageLastUsedEffect);
+        _quickMessageLastUsedShowNowPlaying = state.QuickMessageLastUsedShowNowPlaying ?? false;
         _quickMessageColorHex = NormalizeQuickMessageColorHex(state.QuickMessageColor);
     }
 
@@ -202,6 +234,24 @@ public partial class MainWindow
         if (TryParseColor(colorHex, out var color))
             return ColorToHex(color);
         return DefaultQuickMessageColorHex;
+    }
+
+    private static string NormalizeStoredLastUsedColorHex(string? colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex))
+            return string.Empty;
+        return TryParseColor(colorHex.Trim(), out var c) ? ColorToHex(c) : string.Empty;
+    }
+
+    private static string BrushToStoredLastUsedColorHex(Brush brush)
+        => brush is SolidColorBrush sb ? ColorToHex(sb.Color) : string.Empty;
+
+    private Brush ResolveBrushForLastUsedReplay()
+    {
+        if (!string.IsNullOrEmpty(_quickMessageLastUsedColorHex)
+            && TryParseColor(_quickMessageLastUsedColorHex, out var c))
+            return new SolidColorBrush(c);
+        return ResolveQuickMessageBrush();
     }
 
     private static int NormalizeMessageOverlayTimingMs(int? value, int fallback)
@@ -468,6 +518,21 @@ public partial class MainWindow
             dlg.Close();
         }
 
+        void TryShowLastUsedFromEnter(KeyEventArgs e)
+        {
+            var last = (_quickMessageLastUsed ?? string.Empty).Trim();
+            if (last.Length == 0)
+                return;
+
+            _messageOverlayShowNowPlaying = _quickMessageLastUsedShowNowPlaying;
+            _messageOverlayEffectEnabled = _quickMessageLastUsedEffectEnabled;
+            _messageOverlayEffect = NormalizeMessageOverlayEffect(_quickMessageLastUsedEffect);
+
+            ShowQuickMessageOverlay(last, ResolveBrushForLastUsedReplay(), _quickMessageLastUsedCountdownSeconds);
+            e.Handled = true;
+            dlg.Close();
+        }
+
         void RefreshEffectPickerVisibility()
             => cmbEffect.Visibility = chkEffect.IsChecked == true
                 ? Visibility.Visible
@@ -591,6 +656,12 @@ public partial class MainWindow
 
         dlg.PreviewKeyDown += (_, e) =>
         {
+            if (e.Key == Key.Enter)
+            {
+                TryShowLastUsedFromEnter(e);
+                return;
+            }
+
             if (e.Key == Key.Escape)
             {
                 e.Handled = true;
@@ -1017,14 +1088,15 @@ public partial class MainWindow
     private void ShowQuickMessageOverlay(string text, Brush foreground, int countdownSeconds)
     {
         SetMessageOverlayBlinking(false);
-        _messageOverlayCharacterBaseText = text;
+        var displayText = string.IsNullOrWhiteSpace(text) ? "..." : text.Trim();
+        _messageOverlayCharacterBaseText = displayText;
         _messageOverlayCharacterForeground = foreground;
         _messageOverlayActiveColorIndex = FindQuickMessageColorIndex(foreground);
         _messageOverlayActiveBlinkMode = _messageOverlayBlinkMode;
-        _messageOverlaySavedMessages = BuildQuickMessagePresetsSnapshot();
+        _messageOverlaySavedMessages = BuildMessageOverlaySavedMessagesSnapshot();
         _messageOverlaySavedMessageIndex = _messageOverlaySavedMessages.FindIndex(
-            value => string.Equals(value, text, StringComparison.Ordinal));
-        MessageOverlayText.Text = text;
+            value => string.Equals(value, displayText, StringComparison.Ordinal));
+        MessageOverlayText.Text = displayText;
         MessageOverlayText.Foreground = foreground;
         MessageOverlay.Visibility = Visibility.Visible;
         StartMessageOverlayCountdown(countdownSeconds, foreground);
@@ -1035,6 +1107,16 @@ public partial class MainWindow
             MessageOverlayHelpContainer.Visibility = Visibility.Collapsed;
         MessageOverlay.Focus();
         Keyboard.Focus(MessageOverlay);
+        _messageOverlayGnomeManualCycle = 0;
+        _quickMessageLastUsed = displayText;
+        _quickMessageLastUsedColorHex =
+            NormalizeStoredLastUsedColorHex(BrushToStoredLastUsedColorHex(foreground));
+        _quickMessageLastUsedCountdownSeconds =
+            Math.Clamp(countdownSeconds, 0, MessageOverlayCountdownMaxTotalSeconds());
+        _quickMessageLastUsedEffectEnabled = _messageOverlayEffectEnabled;
+        _quickMessageLastUsedEffect = _messageOverlayEffect;
+        _quickMessageLastUsedShowNowPlaying = _messageOverlayShowNowPlaying;
+        SaveWindowSettings();
     }
 
     private void HideQuickMessageOverlay()
@@ -1536,7 +1618,14 @@ public partial class MainWindow
     private void ResetMessageOverlayCountdown()
     {
         if (_messageOverlayCountdownInitialSeconds <= 0)
+        {
+            StartMessageOverlayCountdown(
+                MessageOverlayCountdownDurationFromSettings(),
+                MessageOverlayText.Foreground,
+                updateResetBaseline: true);
             return;
+        }
+
         _messageOverlayCountdownTurnedOff = false;
         StartMessageOverlayCountdown(_messageOverlayCountdownInitialSeconds, MessageOverlayText.Foreground, updateResetBaseline: false);
     }
@@ -1809,19 +1898,18 @@ public partial class MainWindow
             return true;
         }
 
-        if (key == Key.M && _midiPlayerPauseToggleAction != null)
+        if (key == Key.M)
         {
-            // Toggling pause from inside the overlay also turns on the
-            // Now Playing pill so it follows the player state: visible
-            // while audio is playing, hidden the moment we pause.
+            if (_midiPlayerPauseToggleAction == null)
+                ShowMidiPlayerDialog(startDockedHidden: true);
+            _midiPlayerPauseToggleAction?.Invoke();
             _messageOverlayShowNowPlaying = true;
-            _midiPlayerPauseToggleAction.Invoke();
             RefreshMessageOverlayNowPlaying();
             e.Handled = true;
             return true;
         }
 
-        if (key == Key.R && _messageOverlayCountdownInitialSeconds > 0)
+        if (key == Key.R)
         {
             ResetMessageOverlayCountdown();
             e.Handled = true;
@@ -1859,6 +1947,13 @@ public partial class MainWindow
         if (key == Key.E)
         {
             CycleMessageOverlayEffect();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.G)
+        {
+            ShowMessageOverlayGnomePeek(manualTrigger: true);
             e.Handled = true;
             return true;
         }
@@ -2125,11 +2220,14 @@ public partial class MainWindow
         return best;
     }
 
-    private void ShowMessageOverlayGnomePeek()
+    private void ShowMessageOverlayGnomePeek(bool manualTrigger = false)
     {
         if (MessageOverlayTextEffectCanvas == null || MessageOverlayText == null)
             return;
-        var text = MessageOverlayText.Text ?? string.Empty;
+        // Character-sweep blink uses Inlines; Text can be empty while _messageOverlayCharacterBaseText holds the message.
+        var text = !string.IsNullOrEmpty(_messageOverlayCharacterBaseText)
+            ? _messageOverlayCharacterBaseText
+            : (MessageOverlayText.Text ?? string.Empty);
         if (text.Length == 0)
             return;
 
@@ -2139,6 +2237,15 @@ public partial class MainWindow
                 indices.Add(i);
         if (indices.Count == 0)
             return;
+
+        IEnumerable<int> indexOrder;
+        if (manualTrigger)
+        {
+            var rot = (_messageOverlayGnomeManualCycle++) % indices.Count;
+            indexOrder = indices.Skip(rot).Concat(indices.Take(rot));
+        }
+        else
+            indexOrder = indices.OrderBy(_ => Random.Shared.Next());
 
         const double peekOutMs = 2200;
         const double holdMsFull = 3600;
@@ -2151,12 +2258,15 @@ public partial class MainWindow
         const double gnomeScaleStep = 0.065;
         const int inkSampleGrid = 9;
 
-        foreach (var idx in indices.OrderBy(_ => Random.Shared.Next()))
+        var maxPickAttempts = manualTrigger ? 28 : 14;
+        var maxHeadDirAttempts = manualTrigger ? 96 : 72;
+
+        foreach (var idx in indexOrder)
         {
             if (!TryRasterMessageOverlayCharInkSolid(text, idx, out var solid, out var pw, out var ph, out var rs, out var inkLocalRect, out var textToEffect, out var lineH))
                 continue;
 
-            for (var pickAttempt = 0; pickAttempt < 14; pickAttempt++)
+            for (var pickAttempt = 0; pickAttempt < maxPickAttempts; pickAttempt++)
             {
                 if (!TryPickMessageOverlayGnomeInkPeekOrigin(solid, pw, ph, rs, inkLocalRect, textToEffect, out var anchorCanvas, out var outwardCanvas))
                     break;
@@ -2168,7 +2278,7 @@ public partial class MainWindow
                     nInk.Normalize();
 
                 var headDir = MessageOverlayGnomeBestDirectionUpperArcToward(nInk);
-                for (var attempt = 0; attempt < 72; attempt++)
+                for (var attempt = 0; attempt < maxHeadDirAttempts; attempt++)
                 {
                     var u = SampleMessageOverlayGnomePeekDirectionUpperSemicircle();
                     if (Vector.Multiply(u, nInk) >= 0.015)
