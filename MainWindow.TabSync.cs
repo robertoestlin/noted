@@ -27,37 +27,90 @@ public partial class MainWindow
         _tabSyncWindowState?.Refresh();
     }
 
-    private TimeSpan InstreamPlainTabsInterval()
-        => TimeSpan.FromHours(_cloudSyncTabsPlainTextInstreamHours)
-           + TimeSpan.FromMinutes(_cloudSyncTabsPlainTextInstreamMinutes);
+    private TimeSpan PlainTabsFolderSyncInterval()
+        => TimeSpan.FromHours(_cloudSyncTabsPlainTextSyncHours)
+           + TimeSpan.FromMinutes(_cloudSyncTabsPlainTextSyncMinutes);
 
     /// <summary>
-    /// Polls the plain text tabs folder. Auto-applies an incoming file when:
-    ///   1. the file's <c># lastupdated:</c> equals the most recent outstream timestamp recorded for this tab
-    ///   2. the matching tab has no unsaved changes
-    ///   3. content actually differs.
-    /// Anything else with a content difference is logged as a Conflict.
+    /// Runs instream (if enabled) then outstream (if enabled) on one timer schedule so pull always happens before push.
     /// </summary>
-    private void TickInstreamPlainTextTabSync()
+    private void TickCoordinatedPlainTextTabSync()
     {
-        if (!_cloudSyncTabsPlainTextEnabled || !_cloudSyncTabsPlainTextInstreamEnabled)
+        var wantInstream = _cloudSyncTabsPlainTextInstreamEnabled
+                           && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder);
+        var wantOutstream = _cloudSyncTabsPlainTextEnabled
+                            && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder);
+        if (!wantInstream && !wantOutstream)
             return;
 
-        if (string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
-            return;
-
-        var interval = InstreamPlainTabsInterval();
+        var interval = PlainTabsFolderSyncInterval();
         if (interval <= TimeSpan.Zero)
             return;
 
-        if (_lastInstreamPlainTabsSyncUtc != DateTime.MinValue
-            && DateTime.UtcNow - _lastInstreamPlainTabsSyncUtc < interval)
+        if (_lastPlainTabsFolderSyncPassUtc != DateTime.MinValue
+            && DateTime.UtcNow - _lastPlainTabsFolderSyncPassUtc < interval)
+            return;
+
+        RunPlainTextTabFolderSyncPass();
+    }
+
+    /// <summary>
+    /// Pull from folder (if enabled) then push to folder (if enabled). Does not enforce interval.
+    /// </summary>
+    private void RunPlainTextTabFolderSyncPass(bool advanceSchedulerThrottle = true)
+    {
+        var wantInstream = _cloudSyncTabsPlainTextInstreamEnabled
+                           && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder);
+        var wantOutstream = _cloudSyncTabsPlainTextEnabled
+                            && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder);
+        if (!wantInstream && !wantOutstream)
+            return;
+
+        if (wantInstream)
+            RunInstreamPlainTextTabSyncOnce();
+
+        if (wantOutstream)
+        {
+            try
+            {
+                _ = Path.GetFullPath(_cloudSyncTabsPlainTextFolder.Trim());
+                _ = TrySyncPlainTextTabsOutstreamCore(_cloudSyncTabsPlainTextFolder);
+            }
+            catch
+            {
+                /* invalid path — skip outstream */
+            }
+        }
+
+        var completedUtc = DateTime.UtcNow;
+        _lastPlainTabsFolderSyncDisplayUtc = completedUtc;
+        if (advanceSchedulerThrottle)
+            _lastPlainTabsFolderSyncPassUtc = completedUtc;
+        RefreshSettingsPlainTabsFolderSyncLabelIfOpen();
+    }
+
+    /// <summary>
+    /// Polls the plain text tabs folder. Auto-applies an incoming file when:
+    ///   1. the file's <c># lastupdated:</c> is <b>strictly newer</b> than the most recent outstream we recorded for this tab
+    ///      (so an external editor that changes the body but reuses an old header cannot overwrite Noted — avoids losing
+    ///      local-only edits that have not been outstreamed yet)
+    ///   2. the matching tab has no unsaved changes
+    ///   3. content actually differs.
+    /// If we have no outstream baseline for the tab, or the header is missing / not newer, a content mismatch is a Conflict.
+    /// External tools should advance or rewrite the <c># lastupdated:</c> line when they save meaningful edits.
+    /// </summary>
+    private void RunInstreamPlainTextTabSyncOnce()
+    {
+        if (!_cloudSyncTabsPlainTextInstreamEnabled)
+            return;
+
+        if (string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder))
             return;
 
         string folder;
         try
         {
-            folder = Path.GetFullPath(_cloudSyncTabsPlainTextFolder.Trim());
+            folder = Path.GetFullPath(_cloudSyncTabsPlainTextInFolder.Trim());
         }
         catch
         {
@@ -65,10 +118,7 @@ public partial class MainWindow
         }
 
         if (!Directory.Exists(folder))
-        {
-            _lastInstreamPlainTabsSyncUtc = DateTime.UtcNow;
             return;
-        }
 
         var lastOutstreamByHeader = LookupLastOutstreamPerTab();
         var items = new List<TabSyncItem>();
@@ -124,11 +174,11 @@ public partial class MainWindow
             }
 
             lastOutstreamByHeader.TryGetValue(doc.Header, out var lastOutUtc);
-            var matchesLastOutstream = headerUtc.HasValue
+            var headerStrictlyNewerThanLastExport = headerUtc.HasValue
                 && lastOutUtc.HasValue
-                && Math.Abs((headerUtc.Value - lastOutUtc.Value).TotalSeconds) < 1.0;
+                && headerUtc.Value > lastOutUtc.Value;
 
-            if (matchesLastOutstream && !doc.IsDirty)
+            if (headerStrictlyNewerThanLastExport && !doc.IsDirty)
             {
                 ApplyIncomingTextToTab(doc, incomingBody, headerUtc ?? DateTime.UtcNow);
                 items.Add(new TabSyncItem
@@ -146,7 +196,9 @@ public partial class MainWindow
                     ? "no header timestamp in file"
                     : doc.IsDirty
                         ? "tab has unsaved changes"
-                        : "incoming timestamp does not match last outstream";
+                        : !lastOutUtc.HasValue
+                            ? "no prior Noted export recorded for this tab (resolve in Tab Sync)"
+                            : "file header is not newer than last Noted export (external edit may have reused a stale # lastupdated line)";
                 items.Add(new TabSyncItem
                 {
                     TabHeader = doc.Header,
@@ -159,8 +211,6 @@ public partial class MainWindow
                 });
             }
         }
-
-        _lastInstreamPlainTabsSyncUtc = DateTime.UtcNow;
 
         if (items.Count > 0)
             RecordTabSyncHistory(TabSyncDirection.Instream, items);

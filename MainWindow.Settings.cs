@@ -89,9 +89,17 @@ public partial class MainWindow
             CloudSyncTabsPlainTextFolder = string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder)
                 ? null
                 : _cloudSyncTabsPlainTextFolder,
+            CloudSyncTabsPlainTextAlsoDuringCloudSave = _cloudSyncTabsPlainTextAlsoDuringCloudSave,
+            CloudSyncTabsPlainTextSyncHours = _cloudSyncTabsPlainTextSyncHours,
+            CloudSyncTabsPlainTextSyncMinutes = _cloudSyncTabsPlainTextSyncMinutes,
+            CloudSyncTabsPlainTextOutstreamHours = null,
+            CloudSyncTabsPlainTextOutstreamMinutes = null,
+            CloudSyncTabsPlainTextInFolder = string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder)
+                ? null
+                : _cloudSyncTabsPlainTextInFolder,
             CloudSyncTabsPlainTextInstreamEnabled = _cloudSyncTabsPlainTextInstreamEnabled,
-            CloudSyncTabsPlainTextInstreamHours = _cloudSyncTabsPlainTextInstreamHours,
-            CloudSyncTabsPlainTextInstreamMinutes = _cloudSyncTabsPlainTextInstreamMinutes,
+            CloudSyncTabsPlainTextInstreamHours = null,
+            CloudSyncTabsPlainTextInstreamMinutes = null,
             BackupAdditionalSettingsFile = _backupAdditionalIncludeSettingsFile,
             BackupAdditionalAppLog = _backupAdditionalIncludeAppLog,
             BackupAdditionalHeartbeatLogs = _backupAdditionalIncludeHeartbeatLogs,
@@ -143,6 +151,9 @@ public partial class MainWindow
             Maximized = WindowState == WindowState.Maximized,
             ActiveTabIndex = MainTabControl.SelectedIndex,
             LastCloudCopyUtc = _lastCloudSaveUtc == DateTime.MinValue ? null : _lastCloudSaveUtc,
+            LastPlainTabsFolderSyncUtc = _lastPlainTabsFolderSyncDisplayUtc == DateTime.MinValue
+                ? null
+                : _lastPlainTabsFolderSyncDisplayUtc,
             AlarmPopupLeft = _alarmPopupLeft,
             AlarmPopupTop = _alarmPopupTop,
             PluginAlarmsSnoozedUntilLocal = _pluginAlarmsSnoozedUntilLocal,
@@ -810,6 +821,11 @@ public partial class MainWindow
         Height = s.Height;
         if (_windowSettingsService.TryGetNormalizedUtc(s.LastCloudCopyUtc, out var cloudCopyUtc))
             _lastCloudSaveUtc = cloudCopyUtc;
+        if (_windowSettingsService.TryGetNormalizedUtc(s.LastPlainTabsFolderSyncUtc, out var plainTabsSyncUtc))
+        {
+            _lastPlainTabsFolderSyncDisplayUtc = plainTabsSyncUtc;
+            _lastPlainTabsFolderSyncPassUtc = plainTabsSyncUtc;
+        }
         if (s.ActiveTabIndex >= 0)
             _activeTabIndex = s.ActiveTabIndex;
         _pluginAlarmsSnoozedUntilLocal = s.PluginAlarmsSnoozedUntilLocal;
@@ -937,9 +953,13 @@ public partial class MainWindow
         _cloudBackupFolder = DefaultCloudBackupFolder();
         _cloudSyncTabsPlainTextEnabled = false;
         _cloudSyncTabsPlainTextFolder = string.Empty;
+        _cloudSyncTabsPlainTextAlsoDuringCloudSave = false;
+        _cloudSyncTabsPlainTextSyncHours = 0;
+        _cloudSyncTabsPlainTextSyncMinutes = 5;
+        _lastPlainTabsFolderSyncPassUtc = DateTime.MinValue;
+        _lastPlainTabsFolderSyncDisplayUtc = DateTime.MinValue;
         _cloudSyncTabsPlainTextInstreamEnabled = false;
-        _cloudSyncTabsPlainTextInstreamHours = 0;
-        _cloudSyncTabsPlainTextInstreamMinutes = 5;
+        _cloudSyncTabsPlainTextInFolder = string.Empty;
         _selectedLineColor = DefaultSelectedLineColor;
         _highlightedLineColor = DefaultHighlightedLineColor;
         _selectedHighlightedLineColor = DefaultSelectedHighlightedLineColor;
@@ -1034,16 +1054,47 @@ public partial class MainWindow
             }
         }
 
+        _cloudSyncTabsPlainTextAlsoDuringCloudSave = bootstrap.CloudSyncTabsPlainTextAlsoDuringCloudSave
+            ?? (bootstrap.CloudSyncTabsPlainTextEnabled == true);
+        ApplyPlainTabsSyncIntervalFromSettings(bootstrap);
+
+        if (!string.IsNullOrWhiteSpace(bootstrap.CloudSyncTabsPlainTextInFolder))
+        {
+            try
+            {
+                _cloudSyncTabsPlainTextInFolder = Path.GetFullPath(bootstrap.CloudSyncTabsPlainTextInFolder.Trim());
+            }
+            catch
+            {
+                _cloudSyncTabsPlainTextInFolder = bootstrap.CloudSyncTabsPlainTextInFolder.Trim();
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
+            _cloudSyncTabsPlainTextInFolder = _cloudSyncTabsPlainTextFolder;
+
         if (_windowSettingsService.TryGetValidCloudHours(bootstrap.CloudSaveHours, out var cloudHours))
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(bootstrap.CloudSaveMinutes, out var cloudMinutes))
             _cloudSaveIntervalMinutes = cloudMinutes;
 
         _cloudSyncTabsPlainTextInstreamEnabled = bootstrap.CloudSyncTabsPlainTextInstreamEnabled ?? false;
-        if (_windowSettingsService.TryGetValidCloudHours(bootstrap.CloudSyncTabsPlainTextInstreamHours, out var instreamHours))
-            _cloudSyncTabsPlainTextInstreamHours = instreamHours;
-        if (_windowSettingsService.TryGetValidCloudMinutes(bootstrap.CloudSyncTabsPlainTextInstreamMinutes, out var instreamMinutes))
-            _cloudSyncTabsPlainTextInstreamMinutes = instreamMinutes;
+    }
+
+    private void ApplyPlainTabsSyncIntervalFromSettings(WindowSettings state)
+    {
+        if (_windowSettingsService.TryGetValidCloudHours(state.CloudSyncTabsPlainTextSyncHours, out var syncH))
+            _cloudSyncTabsPlainTextSyncHours = syncH;
+        else if (_windowSettingsService.TryGetValidCloudHours(state.CloudSyncTabsPlainTextInstreamHours, out syncH))
+            _cloudSyncTabsPlainTextSyncHours = syncH;
+        else if (_windowSettingsService.TryGetValidCloudHours(state.CloudSyncTabsPlainTextOutstreamHours, out syncH))
+            _cloudSyncTabsPlainTextSyncHours = syncH;
+
+        if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextSyncMinutes, out var syncM))
+            _cloudSyncTabsPlainTextSyncMinutes = syncM;
+        else if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextInstreamMinutes, out syncM))
+            _cloudSyncTabsPlainTextSyncMinutes = syncM;
+        else if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextOutstreamMinutes, out syncM))
+            _cloudSyncTabsPlainTextSyncMinutes = syncM;
     }
 
     private void ApplyEffectiveWindowSettings(WindowSettings state)
@@ -1078,16 +1129,33 @@ public partial class MainWindow
         else
             _cloudSyncTabsPlainTextFolder = string.Empty;
 
+        // Older settings tied plain-text export to cloud save only; preserve that when the new flag is absent.
+        _cloudSyncTabsPlainTextAlsoDuringCloudSave = state.CloudSyncTabsPlainTextAlsoDuringCloudSave
+            ?? (state.CloudSyncTabsPlainTextEnabled == true);
+        ApplyPlainTabsSyncIntervalFromSettings(state);
+
+        if (!string.IsNullOrWhiteSpace(state.CloudSyncTabsPlainTextInFolder))
+        {
+            try
+            {
+                _cloudSyncTabsPlainTextInFolder = Path.GetFullPath(state.CloudSyncTabsPlainTextInFolder.Trim());
+            }
+            catch
+            {
+                _cloudSyncTabsPlainTextInFolder = state.CloudSyncTabsPlainTextInFolder.Trim();
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
+            _cloudSyncTabsPlainTextInFolder = _cloudSyncTabsPlainTextFolder;
+        else
+            _cloudSyncTabsPlainTextInFolder = string.Empty;
+
         if (_windowSettingsService.TryGetValidCloudHours(state.CloudSaveHours, out var cloudHours))
             _cloudSaveIntervalHours = cloudHours;
         if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSaveMinutes, out var cloudMinutes))
             _cloudSaveIntervalMinutes = cloudMinutes;
 
         _cloudSyncTabsPlainTextInstreamEnabled = state.CloudSyncTabsPlainTextInstreamEnabled ?? false;
-        if (_windowSettingsService.TryGetValidCloudHours(state.CloudSyncTabsPlainTextInstreamHours, out var instreamHours))
-            _cloudSyncTabsPlainTextInstreamHours = instreamHours;
-        if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextInstreamMinutes, out var instreamMinutes))
-            _cloudSyncTabsPlainTextInstreamMinutes = instreamMinutes;
         if (_windowSettingsService.TryGetValidUptimeHeartbeatSeconds(state.UptimeHeartbeatSeconds, out var uptimeHeartbeatSeconds))
             _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
         _writeUptimeHeartbeatInNoted = state.WriteUptimeHeartbeatInNoted;

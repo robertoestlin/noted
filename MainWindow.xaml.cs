@@ -139,13 +139,19 @@ public partial class MainWindow : Window
     private string _cloudBackupFolder = DefaultCloudBackupFolder();
     private bool _cloudSyncTabsPlainTextEnabled;
     private string _cloudSyncTabsPlainTextFolder = string.Empty;
+    private bool _cloudSyncTabsPlainTextAlsoDuringCloudSave;
+    private int _cloudSyncTabsPlainTextSyncHours;
+    private int _cloudSyncTabsPlainTextSyncMinutes = 5;
+    private DateTime _lastPlainTabsFolderSyncPassUtc = DateTime.MinValue;
+    /// <summary>Last completed plain-text folder sync (any path); persisted in session-state.json for Settings display.</summary>
+    private DateTime _lastPlainTabsFolderSyncDisplayUtc = DateTime.MinValue;
+    /// <summary>When Settings → Sync is open, refreshed after each timed plain-text sync pass.</summary>
+    private TextBlock? _settingsPlainTabsFolderSyncLabel;
     private int _cloudSaveIntervalHours = 1;
     private int _cloudSaveIntervalMinutes = 0;
     private DateTime _lastCloudSaveUtc = DateTime.MinValue;
     private bool _cloudSyncTabsPlainTextInstreamEnabled;
-    private int _cloudSyncTabsPlainTextInstreamHours;
-    private int _cloudSyncTabsPlainTextInstreamMinutes = 5;
-    private DateTime _lastInstreamPlainTabsSyncUtc = DateTime.MinValue;
+    private string _cloudSyncTabsPlainTextInFolder = string.Empty;
     private bool _backupAdditionalIncludeSettingsFile = true;
     private bool _backupAdditionalIncludeAppLog = true;
     private bool _backupAdditionalIncludeHeartbeatLogs = true;
@@ -1274,7 +1280,7 @@ public partial class MainWindow : Window
         // Auto-save timer
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };
         _autoSaveTimer.Tick += (_, _) => SaveSession();
-        _autoSaveTimer.Tick += (_, _) => TickInstreamPlainTextTabSync();
+        _autoSaveTimer.Tick += (_, _) => TickCoordinatedPlainTextTabSync();
         _autoSaveTimer.Start();
         _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
@@ -3296,7 +3302,6 @@ public partial class MainWindow : Window
 
     private List<TabSyncItem> SyncCloudPlainTextTabFiles(string folderPath)
     {
-        var headerUtc = DateTime.UtcNow;
         var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var results = new List<TabSyncItem>();
         foreach (var item in MainTabControl.Items)
@@ -3307,13 +3312,50 @@ public partial class MainWindow : Window
             var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
             try
             {
-                var plain = BuildCloudPlainTextTabExport(doc.CachedText, headerUtc);
+                var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, DateTime.UtcNow);
+                var (desiredBody, _) = ParseCloudPlainTextTabFile(probeExport);
+
+                if (File.Exists(destPath))
+                {
+                    string rawExisting;
+                    try
+                    {
+                        rawExisting = File.ReadAllText(destPath, Encoding.UTF8);
+                    }
+                    catch (Exception exRead)
+                    {
+                        results.Add(new TabSyncItem
+                        {
+                            TabHeader = doc.Header,
+                            FilePath = destPath,
+                            Status = TabSyncItemStatus.Failed,
+                            Detail = exRead.Message
+                        });
+                        continue;
+                    }
+
+                    var (existingBody, existingHeaderUtc) = ParseCloudPlainTextTabFile(rawExisting);
+                    if (NormalizeForCompare(existingBody) == NormalizeForCompare(desiredBody))
+                    {
+                        results.Add(new TabSyncItem
+                        {
+                            TabHeader = doc.Header,
+                            FilePath = destPath,
+                            LastUpdatedUtc = existingHeaderUtc,
+                            Status = TabSyncItemStatus.NoChange
+                        });
+                        continue;
+                    }
+                }
+
+                var writeUtc = DateTime.UtcNow;
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText, writeUtc);
                 File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 results.Add(new TabSyncItem
                 {
                     TabHeader = doc.Header,
                     FilePath = destPath,
-                    LastUpdatedUtc = headerUtc,
+                    LastUpdatedUtc = writeUtc,
                     Status = TabSyncItemStatus.Wrote
                 });
             }
@@ -3329,6 +3371,24 @@ public partial class MainWindow : Window
             }
         }
         return results;
+    }
+
+    /// <summary>Writes changed tabs as plain text files and records history.</summary>
+    private bool TrySyncPlainTextTabsOutstreamCore(string plainFolderRaw)
+    {
+        try
+        {
+            var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
+            Directory.CreateDirectory(plainFolder);
+            var items = SyncCloudPlainTextTabFiles(plainFolder);
+            RecordTabSyncHistory(TabSyncDirection.Outstream, items);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendAppLog($"Plain-text tab outstream sync failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static bool IsLineSelected(TextEditor editor, int lineNumber)
@@ -6721,6 +6781,23 @@ public partial class MainWindow : Window
             ? "Never"
             : utcTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
+    private void RefreshSettingsPlainTabsFolderSyncLabelIfOpen()
+    {
+        if (_settingsPlainTabsFolderSyncLabel == null)
+            return;
+
+        void Apply()
+        {
+            _settingsPlainTabsFolderSyncLabel.Text =
+                $"Last plain text folder sync: {FormatCloudCopyTimestamp(_lastPlainTabsFolderSyncDisplayUtc)}";
+        }
+
+        if (Dispatcher.CheckAccess())
+            Apply();
+        else
+            Dispatcher.Invoke(Apply);
+    }
+
     private bool ShouldSaveCloudBackup()
     {
         if (string.IsNullOrWhiteSpace(_cloudBackupFolder)) return false;
@@ -6777,22 +6854,23 @@ public partial class MainWindow : Window
         AppendAppLog(
             $"Cloud copy completed successfully in {cloudCopyStopwatch.ElapsedMilliseconds} ms. size={FormatSizeForLog(sourceSizeBytes)}, throughput={FormatThroughputForLog(sourceSizeBytes, cloudCopyStopwatch.Elapsed)}. source='{justSavedBackupPath}', target='{cloudFolder}'");
 
-        var plainEnabled = cloudPlainTabsEnabledOverride ?? _cloudSyncTabsPlainTextEnabled;
+        var plainEnabled = cloudPlainTabsEnabledOverride
+            ?? (_cloudSyncTabsPlainTextAlsoDuringCloudSave && _cloudSyncTabsPlainTextEnabled);
         var plainFolderRaw = cloudPlainTabsFolderOverride ?? _cloudSyncTabsPlainTextFolder;
         if (!plainEnabled || string.IsNullOrWhiteSpace(plainFolderRaw))
             return;
 
-        try
+        if (TrySyncPlainTextTabsOutstreamCore(plainFolderRaw))
         {
-            var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
-            Directory.CreateDirectory(plainFolder);
-            var items = SyncCloudPlainTextTabFiles(plainFolder);
-            RecordTabSyncHistory(TabSyncDirection.Outstream, items);
-            AppendAppLog($"Cloud plain-text tab sync completed. target='{plainFolder}'");
-        }
-        catch (Exception ex)
-        {
-            AppendAppLog($"Cloud plain-text tab sync failed: {ex.Message}");
+            try
+            {
+                var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
+                AppendAppLog($"Cloud plain-text tab sync completed. target='{plainFolder}'");
+            }
+            catch
+            {
+                AppendAppLog("Cloud plain-text tab sync completed.");
+            }
         }
     }
 

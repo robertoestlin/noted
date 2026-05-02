@@ -182,23 +182,39 @@ public partial class MainWindow
 
         // Plain text tab sync controls live on the Sync tab (added below); they are declared here
         // because the Backup tab's "Save now" button references them when triggering a manual cloud save.
-        var chkCloudPlainTabs = new CheckBox
+        var chkPlainTabsOut = new CheckBox
         {
-            Content = "During cloud save, also sync each tab as a plain text file",
+            Content = "Sync each tab as a plain text file",
             IsChecked = _cloudSyncTabsPlainTextEnabled,
             Margin = new Thickness(0, 2, 0, 4)
         };
-        var txtCloudPlainTabs = new TextBox
+        var chkPlainTabsAlsoCloudSave = new CheckBox
+        {
+            Content = "Also sync plain text files during cloud save",
+            IsChecked = _cloudSyncTabsPlainTextAlsoDuringCloudSave,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        var txtPlainTabsTo = new TextBox
         {
             Text = _cloudSyncTabsPlainTextFolder,
             Margin = new Thickness(0, 0, 8, 0),
             IsEnabled = _cloudSyncTabsPlainTextEnabled
         };
-        var btnBrowseCloudPlainTabs = new Button
+        var btnBrowsePlainTabsTo = new Button
         {
             Content = "Browse...",
             Padding = new Thickness(10, 2, 10, 2),
             IsEnabled = _cloudSyncTabsPlainTextEnabled
+        };
+        var txtPlainTabsFrom = new TextBox
+        {
+            Text = _cloudSyncTabsPlainTextInFolder,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+        var btnBrowsePlainTabsFrom = new Button
+        {
+            Content = "Browse...",
+            Padding = new Thickness(10, 2, 10, 2)
         };
 
         backupPanel.Children.Add(new TextBlock { Text = "Cloud save interval:" });
@@ -241,22 +257,26 @@ public partial class MainWindow
                 return;
             }
 
-            var plainEnabled = chkCloudPlainTabs.IsChecked == true;
-            var plainFolder = (txtCloudPlainTabs.Text ?? string.Empty).Trim();
-            if (plainEnabled && string.IsNullOrWhiteSpace(plainFolder))
+            var alsoPlainOnCloudSave = chkPlainTabsAlsoCloudSave.IsChecked == true;
+            var plainOutEnabled = chkPlainTabsOut.IsChecked == true;
+            var plainFolder = (txtPlainTabsTo.Text ?? string.Empty).Trim();
+            if (alsoPlainOnCloudSave && (!plainOutEnabled || string.IsNullOrWhiteSpace(plainFolder)))
             {
-                MessageBox.Show("Set a plain text tabs folder or turn off plain text tab sync.", "Cloud save",
+                MessageBox.Show(
+                    "Enable \"Sync each tab as a plain text file\", set a sync-to folder, and keep \"Also sync plain text files during cloud save\" checked — or turn off plain text during cloud save.",
+                    "Cloud save",
                     MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
+            var plainThisSave = alsoPlainOnCloudSave && plainOutEnabled && !string.IsNullOrWhiteSpace(plainFolder);
             SaveSession(
                 updateStatus: true,
                 forceCloudBackup: true,
                 cloudBackupFolderOverride: cloudBackupPath,
                 persistCloudMetadata: false,
-                cloudPlainTabsEnabledOverride: plainEnabled,
-                cloudPlainTabsFolderOverride: plainFolder);
+                cloudPlainTabsEnabledOverride: plainThisSave,
+                cloudPlainTabsFolderOverride: plainThisSave ? plainFolder : null);
             txtLastCloudCopy.Text = $"Last cloud copy: {FormatCloudCopyTimestamp(_lastCloudSaveUtc)}";
             RefreshGlobalDirtyStatus();
         };
@@ -320,113 +340,142 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 12)
         });
 
-        syncPanel.Children.Add(chkCloudPlainTabs);
-        syncPanel.Children.Add(new TextBlock { Text = "Plain text tabs folder:" });
-        var plainTabsRow = new Grid { Margin = new Thickness(0, 4, 0, 10) };
-        plainTabsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        plainTabsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(txtCloudPlainTabs, 0);
-        Grid.SetColumn(btnBrowseCloudPlainTabs, 1);
-        plainTabsRow.Children.Add(txtCloudPlainTabs);
-        plainTabsRow.Children.Add(btnBrowseCloudPlainTabs);
-        syncPanel.Children.Add(plainTabsRow);
+        syncPanel.Children.Add(chkPlainTabsOut);
+        syncPanel.Children.Add(chkPlainTabsAlsoCloudSave);
+        syncPanel.Children.Add(new TextBlock { Text = "Sync to plain text tabs folder:" });
+        var plainTabsToRow = new Grid { Margin = new Thickness(0, 4, 0, 6) };
+        plainTabsToRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        plainTabsToRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(txtPlainTabsTo, 0);
+        Grid.SetColumn(btnBrowsePlainTabsTo, 1);
+        plainTabsToRow.Children.Add(txtPlainTabsTo);
+        plainTabsToRow.Children.Add(btnBrowsePlainTabsTo);
+        syncPanel.Children.Add(plainTabsToRow);
 
         var chkInstream = new CheckBox
         {
             Content = "Sync from plain text tabs folder (pull external edits back into Noted)",
             IsChecked = _cloudSyncTabsPlainTextInstreamEnabled,
-            Margin = new Thickness(0, 8, 0, 4)
+            Margin = new Thickness(0, 4, 0, 4)
         };
         syncPanel.Children.Add(chkInstream);
 
-        syncPanel.Children.Add(new TextBlock { Text = "Plain text tabs folder instream sync interval:" });
-        var instreamIntervalRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
-        var cmbInstreamHours = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
-        for (int h = 0; h <= 50; h++) cmbInstreamHours.Items.Add(h);
-        cmbInstreamHours.SelectedItem = _cloudSyncTabsPlainTextInstreamHours;
-        if (cmbInstreamHours.SelectedItem == null) cmbInstreamHours.SelectedItem = 0;
-        var cmbInstreamMinutes = new ComboBox { Width = 80, Margin = new Thickness(8, 0, 8, 0) };
-        foreach (var m in CloudMinuteOptions) cmbInstreamMinutes.Items.Add(m);
-        cmbInstreamMinutes.SelectedItem = _cloudSyncTabsPlainTextInstreamMinutes;
-        if (cmbInstreamMinutes.SelectedItem == null) cmbInstreamMinutes.SelectedItem = 5;
-        instreamIntervalRow.Children.Add(cmbInstreamHours);
-        instreamIntervalRow.Children.Add(new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center });
-        instreamIntervalRow.Children.Add(cmbInstreamMinutes);
-        instreamIntervalRow.Children.Add(new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center });
-        syncPanel.Children.Add(instreamIntervalRow);
+        syncPanel.Children.Add(new TextBlock { Text = "Sync from plain text tabs folder:" });
+        var plainTabsFromRow = new Grid { Margin = new Thickness(0, 4, 0, 6) };
+        plainTabsFromRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        plainTabsFromRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(txtPlainTabsFrom, 0);
+        Grid.SetColumn(btnBrowsePlainTabsFrom, 1);
+        plainTabsFromRow.Children.Add(txtPlainTabsFrom);
+        plainTabsFromRow.Children.Add(btnBrowsePlainTabsFrom);
+        syncPanel.Children.Add(plainTabsFromRow);
 
-        var txtLastInstream = new TextBlock
+        syncPanel.Children.Add(new TextBlock
         {
-            Text = $"Last instream sync: {FormatCloudCopyTimestamp(_lastInstreamPlainTabsSyncUtc)}",
+            Text = "Plain text tabs sync interval (when due: pull from folder first, then push — only for directions that are enabled above):",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0)
+        });
+        var plainTabsSyncIntervalRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        var cmbPlainTabsSyncHours = new ComboBox { Width = 80, Margin = new Thickness(0, 0, 8, 0) };
+        for (int h = 0; h <= 50; h++) cmbPlainTabsSyncHours.Items.Add(h);
+        cmbPlainTabsSyncHours.SelectedItem = _cloudSyncTabsPlainTextSyncHours;
+        if (cmbPlainTabsSyncHours.SelectedItem == null) cmbPlainTabsSyncHours.SelectedItem = 0;
+        var cmbPlainTabsSyncMinutes = new ComboBox { Width = 80, Margin = new Thickness(8, 0, 8, 0) };
+        foreach (var m in CloudMinuteOptions) cmbPlainTabsSyncMinutes.Items.Add(m);
+        cmbPlainTabsSyncMinutes.SelectedItem = _cloudSyncTabsPlainTextSyncMinutes;
+        if (cmbPlainTabsSyncMinutes.SelectedItem == null) cmbPlainTabsSyncMinutes.SelectedItem = 0;
+        plainTabsSyncIntervalRow.Children.Add(cmbPlainTabsSyncHours);
+        plainTabsSyncIntervalRow.Children.Add(new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center });
+        plainTabsSyncIntervalRow.Children.Add(cmbPlainTabsSyncMinutes);
+        plainTabsSyncIntervalRow.Children.Add(new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center });
+        syncPanel.Children.Add(plainTabsSyncIntervalRow);
+
+        var txtLastPlainTabsFolderSync = new TextBlock
+        {
+            Text = $"Last plain text folder sync: {FormatCloudCopyTimestamp(_lastPlainTabsFolderSyncDisplayUtc)}",
             Foreground = Brushes.DimGray,
             Margin = new Thickness(0, 0, 0, 6)
         };
-        syncPanel.Children.Add(txtLastInstream);
+        _settingsPlainTabsFolderSyncLabel = txtLastPlainTabsFolderSync;
+        syncPanel.Children.Add(txtLastPlainTabsFolderSync);
 
-        var btnInstreamSyncNow = new Button
+        var btnPlainTabsSyncNow = new Button
         {
             Content = "Sync now",
             Padding = new Thickness(10, 2, 10, 2),
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 0, 0, 10)
         };
-        syncPanel.Children.Add(btnInstreamSyncNow);
+        syncPanel.Children.Add(btnPlainTabsSyncNow);
 
-        void RefreshCloudPlainTabsEditorsEnabled()
+        void RefreshPlainTextTabSyncEditorsEnabled()
         {
-            var outOn = chkCloudPlainTabs.IsChecked == true;
-            txtCloudPlainTabs.IsEnabled = outOn;
-            btnBrowseCloudPlainTabs.IsEnabled = outOn;
+            var outOn = chkPlainTabsOut.IsChecked == true;
+            chkPlainTabsAlsoCloudSave.IsEnabled = outOn;
+            if (!outOn)
+                chkPlainTabsAlsoCloudSave.IsChecked = false;
 
-            var folderSet = !string.IsNullOrWhiteSpace(txtCloudPlainTabs.Text);
-            var instreamAvailable = outOn && folderSet;
-            chkInstream.IsEnabled = instreamAvailable;
-            if (!instreamAvailable) chkInstream.IsChecked = false;
+            txtPlainTabsTo.IsEnabled = outOn;
+            btnBrowsePlainTabsTo.IsEnabled = outOn;
 
-            var instreamOn = instreamAvailable && chkInstream.IsChecked == true;
-            cmbInstreamHours.IsEnabled = instreamOn;
-            cmbInstreamMinutes.IsEnabled = instreamOn;
-            btnInstreamSyncNow.IsEnabled = instreamOn;
+            var toFolderSet = !string.IsNullOrWhiteSpace(txtPlainTabsTo.Text);
+            var fromFolderSet = !string.IsNullOrWhiteSpace(txtPlainTabsFrom.Text);
+            txtPlainTabsFrom.IsEnabled = chkInstream.IsChecked == true;
+            btnBrowsePlainTabsFrom.IsEnabled = chkInstream.IsChecked == true;
+
+            var instreamOn = chkInstream.IsChecked == true && fromFolderSet;
+            var pushOn = outOn && toFolderSet;
+            var syncPassConfigured = instreamOn || pushOn;
+            cmbPlainTabsSyncHours.IsEnabled = syncPassConfigured;
+            cmbPlainTabsSyncMinutes.IsEnabled = syncPassConfigured;
+            btnPlainTabsSyncNow.IsEnabled = syncPassConfigured;
         }
 
-        chkCloudPlainTabs.Checked += (_, _) => RefreshCloudPlainTabsEditorsEnabled();
-        chkCloudPlainTabs.Unchecked += (_, _) => RefreshCloudPlainTabsEditorsEnabled();
-        chkInstream.Checked += (_, _) => RefreshCloudPlainTabsEditorsEnabled();
-        chkInstream.Unchecked += (_, _) => RefreshCloudPlainTabsEditorsEnabled();
-        txtCloudPlainTabs.TextChanged += (_, _) => RefreshCloudPlainTabsEditorsEnabled();
-        RefreshCloudPlainTabsEditorsEnabled();
+        chkPlainTabsOut.Checked += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        chkPlainTabsOut.Unchecked += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        chkInstream.Checked += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        chkInstream.Unchecked += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        txtPlainTabsTo.TextChanged += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        txtPlainTabsFrom.TextChanged += (_, _) => RefreshPlainTextTabSyncEditorsEnabled();
+        RefreshPlainTextTabSyncEditorsEnabled();
 
-        btnInstreamSyncNow.Click += (_, _) =>
+        btnPlainTabsSyncNow.Click += (_, _) =>
         {
-            // Apply the in-dialog values for this manual run so the user does not have to click OK first.
-            var folderText = (txtCloudPlainTabs.Text ?? string.Empty).Trim();
-            if (chkCloudPlainTabs.IsChecked != true || string.IsNullOrWhiteSpace(folderText))
+            var toFolder = (txtPlainTabsTo.Text ?? string.Empty).Trim();
+            var fromFolder = (txtPlainTabsFrom.Text ?? string.Empty).Trim();
+            var pushOn = chkPlainTabsOut.IsChecked == true && !string.IsNullOrWhiteSpace(toFolder);
+            var pullOn = chkInstream.IsChecked == true && !string.IsNullOrWhiteSpace(fromFolder);
+            if (!pushOn && !pullOn)
             {
-                MessageBox.Show("Enable plain text tab sync and set a folder first.", "Tab Sync",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(
+                    "Enable at least one direction and set its folder: sync to (push), sync from (pull), or both.",
+                    "Tab Sync", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
             var prevOutEnabled = _cloudSyncTabsPlainTextEnabled;
+            var prevToFolder = _cloudSyncTabsPlainTextFolder;
             var prevInEnabled = _cloudSyncTabsPlainTextInstreamEnabled;
-            var prevFolder = _cloudSyncTabsPlainTextFolder;
-            var prevLastInstream = _lastInstreamPlainTabsSyncUtc;
+            var prevFromFolder = _cloudSyncTabsPlainTextInFolder;
+            var prevLastPass = _lastPlainTabsFolderSyncPassUtc;
             try
             {
-                _cloudSyncTabsPlainTextEnabled = true;
-                _cloudSyncTabsPlainTextInstreamEnabled = true;
-                _cloudSyncTabsPlainTextFolder = folderText;
-                _lastInstreamPlainTabsSyncUtc = DateTime.MinValue;
-                TickInstreamPlainTextTabSync();
-                txtLastInstream.Text = $"Last instream sync: {FormatCloudCopyTimestamp(_lastInstreamPlainTabsSyncUtc)}";
+                _cloudSyncTabsPlainTextEnabled = chkPlainTabsOut.IsChecked == true;
+                _cloudSyncTabsPlainTextFolder = toFolder;
+                _cloudSyncTabsPlainTextInstreamEnabled = chkInstream.IsChecked == true;
+                _cloudSyncTabsPlainTextInFolder = fromFolder;
+                RunPlainTextTabFolderSyncPass(advanceSchedulerThrottle: false);
+                txtLastPlainTabsFolderSync.Text =
+                    $"Last plain text folder sync: {FormatCloudCopyTimestamp(_lastPlainTabsFolderSyncDisplayUtc)}";
             }
             finally
             {
                 _cloudSyncTabsPlainTextEnabled = prevOutEnabled;
+                _cloudSyncTabsPlainTextFolder = prevToFolder;
                 _cloudSyncTabsPlainTextInstreamEnabled = prevInEnabled;
-                _cloudSyncTabsPlainTextFolder = prevFolder;
-                if (_lastInstreamPlainTabsSyncUtc == DateTime.MinValue)
-                    _lastInstreamPlainTabsSyncUtc = prevLastInstream;
+                _cloudSyncTabsPlainTextInFolder = prevFromFolder;
+                _lastPlainTabsFolderSyncPassUtc = prevLastPass;
             }
         };
 
@@ -1707,14 +1756,14 @@ public partial class MainWindow
                 txtCloudBackup.Text = fbd.SelectedPath;
         };
 
-        btnBrowseCloudPlainTabs.Click += (_, _) =>
+        btnBrowsePlainTabsTo.Click += (_, _) =>
         {
             var fbd = new VistaFolderBrowserDialog
             {
-                Description = "Choose folder for plain text copies of each tab",
+                Description = "Choose folder to sync plain text copies of each tab into",
                 UseDescriptionForTitle = true
             };
-            var cur = txtCloudPlainTabs.Text.Trim();
+            var cur = txtPlainTabsTo.Text.Trim();
             try
             {
                 if (!string.IsNullOrEmpty(cur))
@@ -1736,7 +1785,39 @@ public partial class MainWindow
             }
 
             if (fbd.ShowDialog(dlg) == true)
-                txtCloudPlainTabs.Text = fbd.SelectedPath;
+                txtPlainTabsTo.Text = fbd.SelectedPath;
+        };
+
+        btnBrowsePlainTabsFrom.Click += (_, _) =>
+        {
+            var fbd = new VistaFolderBrowserDialog
+            {
+                Description = "Choose folder to sync plain text tab files from",
+                UseDescriptionForTitle = true
+            };
+            var cur = txtPlainTabsFrom.Text.Trim();
+            try
+            {
+                if (!string.IsNullOrEmpty(cur))
+                {
+                    var full = Path.GetFullPath(cur);
+                    if (Directory.Exists(full))
+                        fbd.SelectedPath = full;
+                    else
+                    {
+                        var parent = Path.GetDirectoryName(full);
+                        if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+                            fbd.SelectedPath = parent;
+                    }
+                }
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            if (fbd.ShowDialog(dlg) == true)
+                txtPlainTabsFrom.Text = fbd.SelectedPath;
         };
 
         btnOk.Click += (_, _) =>
@@ -1779,25 +1860,59 @@ public partial class MainWindow
                 return;
             }
 
-            string cloudPlainTabsFolderValue = string.Empty;
-            if (!string.IsNullOrWhiteSpace(txtCloudPlainTabs.Text))
+            string cloudPlainTabsToFolderValue = string.Empty;
+            if (!string.IsNullOrWhiteSpace(txtPlainTabsTo.Text))
             {
                 try
                 {
-                    cloudPlainTabsFolderValue = Path.GetFullPath(txtCloudPlainTabs.Text.Trim());
+                    cloudPlainTabsToFolderValue = Path.GetFullPath(txtPlainTabsTo.Text.Trim());
                 }
                 catch
                 {
-                    MessageBox.Show("Plain text tabs folder path is not valid.", "Invalid settings", MessageBoxButton.OK,
+                    MessageBox.Show("Sync-to plain text tabs folder path is not valid.", "Invalid settings",
+                        MessageBoxButton.OK,
                         MessageBoxImage.Warning);
                     return;
                 }
             }
 
-            if (chkCloudPlainTabs.IsChecked == true && string.IsNullOrWhiteSpace(cloudPlainTabsFolderValue))
+            string cloudPlainTabsFromFolderValue = string.Empty;
+            if (!string.IsNullOrWhiteSpace(txtPlainTabsFrom.Text))
+            {
+                try
+                {
+                    cloudPlainTabsFromFolderValue = Path.GetFullPath(txtPlainTabsFrom.Text.Trim());
+                }
+                catch
+                {
+                    MessageBox.Show("Sync-from plain text tabs folder path is not valid.", "Invalid settings",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+            }
+
+            if (chkPlainTabsOut.IsChecked == true && string.IsNullOrWhiteSpace(cloudPlainTabsToFolderValue))
             {
                 MessageBox.Show(
-                    "Plain text tabs folder cannot be empty when plain text tab sync is enabled.",
+                    "Sync-to plain text tabs folder cannot be empty when syncing each tab as a plain text file.",
+                    "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (chkInstream.IsChecked == true && string.IsNullOrWhiteSpace(cloudPlainTabsFromFolderValue))
+            {
+                MessageBox.Show(
+                    "Sync-from plain text tabs folder cannot be empty when pulling edits back into Noted.",
+                    "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (chkPlainTabsAlsoCloudSave.IsChecked == true
+                && (!chkPlainTabsOut.IsChecked == true || string.IsNullOrWhiteSpace(cloudPlainTabsToFolderValue)))
+            {
+                MessageBox.Show(
+                    "Turn off \"Also sync plain text files during cloud save\", or enable sync to a plain text folder and set its path.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -1968,18 +2083,19 @@ public partial class MainWindow
                 EnsureBackupImagesFolderExists();
                 _inlineImageCache.Clear();
                 _cloudBackupFolder = cloudBackupPath;
-                _cloudSyncTabsPlainTextEnabled = chkCloudPlainTabs.IsChecked == true;
-                _cloudSyncTabsPlainTextFolder = cloudPlainTabsFolderValue;
+                _cloudSyncTabsPlainTextEnabled = chkPlainTabsOut.IsChecked == true;
+                _cloudSyncTabsPlainTextFolder = cloudPlainTabsToFolderValue;
+                _cloudSyncTabsPlainTextAlsoDuringCloudSave = chkPlainTabsAlsoCloudSave.IsChecked == true;
                 _cloudSaveIntervalHours = cloudHours;
                 _cloudSaveIntervalMinutes = cloudMinutes;
-                _cloudSyncTabsPlainTextInstreamEnabled = _cloudSyncTabsPlainTextEnabled
-                    && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder)
-                    && chkInstream.IsChecked == true;
-                if (cmbInstreamHours.SelectedItem is int instreamHoursValue && instreamHoursValue >= 0 && instreamHoursValue <= 50)
-                    _cloudSyncTabsPlainTextInstreamHours = instreamHoursValue;
-                if (cmbInstreamMinutes.SelectedItem is int instreamMinutesValue
-                    && instreamMinutesValue >= 0 && instreamMinutesValue <= 55 && instreamMinutesValue % 5 == 0)
-                    _cloudSyncTabsPlainTextInstreamMinutes = instreamMinutesValue;
+                if (cmbPlainTabsSyncHours.SelectedItem is int plainSyncHoursValue && plainSyncHoursValue >= 0 && plainSyncHoursValue <= 50)
+                    _cloudSyncTabsPlainTextSyncHours = plainSyncHoursValue;
+                if (cmbPlainTabsSyncMinutes.SelectedItem is int plainSyncMinutesValue
+                    && plainSyncMinutesValue >= 0 && plainSyncMinutesValue <= 55 && plainSyncMinutesValue % 5 == 0)
+                    _cloudSyncTabsPlainTextSyncMinutes = plainSyncMinutesValue;
+                _cloudSyncTabsPlainTextInFolder = cloudPlainTabsFromFolderValue;
+                _cloudSyncTabsPlainTextInstreamEnabled = chkInstream.IsChecked == true
+                    && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder);
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
                 _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
@@ -2069,6 +2185,7 @@ public partial class MainWindow
             }
         };
 
+        dlg.Closed += (_, _) => _settingsPlainTabsFolderSyncLabel = null;
         dlg.ShowDialog();
         if (!viewPreviewCommitted)
         {
