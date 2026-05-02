@@ -1330,9 +1330,10 @@ public partial class MainWindow : Window
             if (!used.Contains(i)) return i;
     }
 
-    private TabDocument CreateTab(string? header = null, string? content = null)
+    private TabDocument CreateTab(string? header = null, string? content = null, string? stableTabId = null)
     {
         var name = header ?? $"new {NextFileNumber()}";
+        var resolvedId = NormalizeStableTabId(stableTabId);
 
         var editor = CreateEditor();
         if (content != null)
@@ -1343,6 +1344,7 @@ public partial class MainWindow : Window
         var doc = new TabDocument
         {
             Header = name,
+            StableTabId = resolvedId.Length > 0 ? resolvedId : Guid.NewGuid().ToString("D"),
             Editor = editor,
             CachedText = editor.Text,
             IsDirty = false,
@@ -3197,19 +3199,80 @@ public partial class MainWindow : Window
         return true;
     }
 
-    internal const string PlainTabHeaderPrefix = "# lastupdated: ";
+    internal const string PlainTabLegacyLastUpdatedPrefix = "# lastupdated: ";
+
+    /// <summary>Current plain-tab first line: local clock, then <c>id</c> and UTC <c>lastUpdated</c> after <c> -- </c>.</summary>
+    internal const string PlainTabLastUpdatedHeaderPrefix = "# Last updated: ";
+
+    /// <summary>Obsolete header; still parsed for older synced files.</summary>
+    internal const string PlainTabLegacyNoteedTabPrefix = "# noteed-tab: ";
+
+    private const string PlainTabLastUpdatedHeaderSep = " -- ";
+
+    internal sealed class PlainTabFileParseResult
+    {
+        public string Body { get; init; } = string.Empty;
+        public DateTime? LastUpdatedUtc { get; init; }
+        public string? TabId { get; init; }
+        public bool IsLegacyLastUpdatedOnly { get; init; }
+    }
+
+    internal static string NormalizeStableTabId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+        return Guid.TryParse(value.Trim(), out var g) ? g.ToString("D") : string.Empty;
+    }
 
     private static string FormatPlainTabHeaderTimestamp(DateTime utc)
-        => utc.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
+        => utc.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+
+    /// <summary>Parses <c>id=…</c> and <c>lastUpdated=…</c> / <c>lastupdated=…</c> from a semicolon-separated tail.</summary>
+    private static void ParsePlainTabIdAndLastUpdatedTail(string payload, out string? tabId, out DateTime? lastUpdatedUtc)
+    {
+        tabId = null;
+        lastUpdatedUtc = null;
+        foreach (var part in payload.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = part.IndexOf('=');
+            if (eq <= 0)
+                continue;
+            var key = part[..eq].Trim();
+            var val = part[(eq + 1)..].Trim();
+            if (key.Equals("id", StringComparison.OrdinalIgnoreCase))
+            {
+                var n = NormalizeStableTabId(val);
+                if (n.Length > 0)
+                    tabId = n;
+            }
+            else if (key.Equals("lastUpdated", StringComparison.OrdinalIgnoreCase)
+                     || key.Equals("lastupdated", StringComparison.OrdinalIgnoreCase))
+            {
+                if (DateTime.TryParse(val, CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out var parsed))
+                    lastUpdatedUtc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+            }
+        }
+    }
 
     /// <summary>
-    /// Builds the plain-text export with a leading <c># lastupdated: &lt;ISO-8601 UTC&gt;</c> header line.
-    /// The header is needed so instream sync can detect external edits.
+    /// Builds the plain-text export with a leading <c># Last updated: … -- id=…;lastUpdated=…Z</c> line.
+    /// Older <c># noteed-tab:</c> and <c># lastupdated:</c> forms are still parsed on read.
     /// </summary>
-    private static string BuildCloudPlainTextTabExport(string text, DateTime headerUtc)
+    private static string BuildCloudPlainTextTabExport(string text, DateTime headerUtc, string stableTabId, DateTime localClock)
     {
+        var idNorm = NormalizeStableTabId(stableTabId);
+        if (idNorm.Length == 0)
+            idNorm = Guid.NewGuid().ToString("D");
+
         var builder = new StringBuilder();
-        builder.Append(PlainTabHeaderPrefix);
+        builder.Append(PlainTabLastUpdatedHeaderPrefix);
+        builder.Append(localClock.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+        builder.Append(PlainTabLastUpdatedHeaderSep);
+        builder.Append("id=");
+        builder.Append(idNorm);
+        builder.Append(";lastUpdated=");
         builder.Append(FormatPlainTabHeaderTimestamp(headerUtc));
         builder.Append('\n');
 
@@ -3227,32 +3290,134 @@ public partial class MainWindow : Window
         return builder.ToString();
     }
 
-    /// <summary>
-    /// Strips the optional <c># lastupdated: …</c> header. Returns parsed timestamp (UTC) when found.
-    /// </summary>
-    internal static (string Body, DateTime? HeaderUtc) ParseCloudPlainTextTabFile(string raw)
+    /// <summary>Parses first-line plain-tab metadata and returns body + sync fields.</summary>
+    internal static PlainTabFileParseResult ParsePlainTabFile(string raw)
     {
         if (string.IsNullOrEmpty(raw))
-            return (string.Empty, null);
+            return new PlainTabFileParseResult { Body = string.Empty };
 
         var newline = raw.IndexOf('\n');
         var firstLine = newline < 0 ? raw : raw[..newline];
         if (firstLine.EndsWith('\r'))
             firstLine = firstLine[..^1];
 
-        if (!firstLine.StartsWith(PlainTabHeaderPrefix, StringComparison.Ordinal))
-            return (raw, null);
-
-        var ts = firstLine[PlainTabHeaderPrefix.Length..].Trim();
         var rest = newline < 0 ? string.Empty : raw[(newline + 1)..];
-        if (DateTime.TryParse(ts, System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                out var parsed))
+
+        if (firstLine.StartsWith(PlainTabLastUpdatedHeaderPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            return (rest, DateTime.SpecifyKind(parsed, DateTimeKind.Utc));
+            var afterPrefix = firstLine[PlainTabLastUpdatedHeaderPrefix.Length..].Trim();
+            string tail;
+            var sepIdx = afterPrefix.IndexOf(PlainTabLastUpdatedHeaderSep, StringComparison.Ordinal);
+            if (sepIdx >= 0)
+                tail = afterPrefix[(sepIdx + PlainTabLastUpdatedHeaderSep.Length)..].Trim();
+            else
+                tail = afterPrefix;
+
+            ParsePlainTabIdAndLastUpdatedTail(tail, out var tabId, out var lastUpdated);
+            return new PlainTabFileParseResult
+            {
+                Body = rest,
+                TabId = tabId,
+                LastUpdatedUtc = lastUpdated,
+                IsLegacyLastUpdatedOnly = false
+            };
         }
 
-        return (rest, null);
+        if (firstLine.StartsWith(PlainTabLegacyNoteedTabPrefix, StringComparison.Ordinal))
+        {
+            var payload = firstLine[PlainTabLegacyNoteedTabPrefix.Length..].Trim();
+            ParsePlainTabIdAndLastUpdatedTail(payload, out var tabId, out var lastUpdated);
+            return new PlainTabFileParseResult
+            {
+                Body = rest,
+                TabId = tabId,
+                LastUpdatedUtc = lastUpdated,
+                IsLegacyLastUpdatedOnly = false
+            };
+        }
+
+        if (firstLine.StartsWith(PlainTabLegacyLastUpdatedPrefix, StringComparison.Ordinal))
+        {
+            var ts = firstLine[PlainTabLegacyLastUpdatedPrefix.Length..].Trim();
+            DateTime? headerUtc = null;
+            if (DateTime.TryParse(ts, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsed))
+                headerUtc = DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+
+            return new PlainTabFileParseResult
+            {
+                Body = rest,
+                LastUpdatedUtc = headerUtc,
+                IsLegacyLastUpdatedOnly = true
+            };
+        }
+
+        return new PlainTabFileParseResult { Body = raw };
+    }
+
+    /// <summary>Reads only the first line to map on-disk files to tab ids (full folder scan).</summary>
+    internal static bool TryParsePlainTabIdFromFile(string path, out string? tabId)
+    {
+        tabId = null;
+        try
+        {
+            using var reader = new StreamReader(path, Encoding.UTF8);
+            var firstLine = reader.ReadLine();
+            if (firstLine == null)
+                return false;
+            if (firstLine.EndsWith('\r'))
+                firstLine = firstLine[..^1];
+
+            if (firstLine.StartsWith(PlainTabLastUpdatedHeaderPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var afterPrefix = firstLine[PlainTabLastUpdatedHeaderPrefix.Length..].Trim();
+                var sepIdx = afterPrefix.IndexOf(PlainTabLastUpdatedHeaderSep, StringComparison.Ordinal);
+                var tail = sepIdx >= 0
+                    ? afterPrefix[(sepIdx + PlainTabLastUpdatedHeaderSep.Length)..].Trim()
+                    : afterPrefix;
+                ParsePlainTabIdAndLastUpdatedTail(tail, out var id, out _);
+                if (!string.IsNullOrEmpty(id))
+                {
+                    tabId = id;
+                    return true;
+                }
+
+                return false;
+            }
+
+            if (firstLine.StartsWith(PlainTabLegacyNoteedTabPrefix, StringComparison.Ordinal))
+            {
+                var payload = firstLine[PlainTabLegacyNoteedTabPrefix.Length..].Trim();
+                ParsePlainTabIdAndLastUpdatedTail(payload, out var id, out _);
+                if (!string.IsNullOrEmpty(id))
+                {
+                    tabId = id;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        return false;
+    }
+
+    private static string AllocatePlainTabFilePath(string folderPath, string header, HashSet<string> usedPaths)
+    {
+        var baseName = SanitizeTabHeaderForPlainTabFile(header);
+        var candidate = Path.Combine(folderPath, baseName + ".txt");
+        var n = 1;
+        while (usedPaths.Contains(candidate))
+        {
+            candidate = Path.Combine(folderPath, $"{baseName} ({n}).txt");
+            n++;
+        }
+
+        usedPaths.Add(candidate);
+        return candidate;
     }
 
     private static string TransformLineForCloudPlainExport(string lineText)
@@ -3285,21 +3450,6 @@ public partial class MainWindow : Window
         return name;
     }
 
-    private static string AllocatePlainTabFilePath(string folderPath, string header, HashSet<string> usedPaths)
-    {
-        var baseName = SanitizeTabHeaderForPlainTabFile(header);
-        var candidate = Path.Combine(folderPath, baseName + ".txt");
-        var n = 2;
-        while (usedPaths.Contains(candidate))
-        {
-            candidate = Path.Combine(folderPath, $"{baseName} ({n}).txt");
-            n++;
-        }
-
-        usedPaths.Add(candidate);
-        return candidate;
-    }
-
     private List<TabSyncItem> SyncCloudPlainTextTabFiles(string folderPath)
     {
         var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3312,8 +3462,9 @@ public partial class MainWindow : Window
             var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
             try
             {
-                var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, DateTime.UtcNow);
-                var (desiredBody, _) = ParseCloudPlainTextTabFile(probeExport);
+                var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, DateTime.UtcNow, doc.StableTabId, DateTime.Now);
+                var desiredParsed = ParsePlainTabFile(probeExport);
+                var desiredBody = desiredParsed.Body;
 
                 if (File.Exists(destPath))
                 {
@@ -3326,6 +3477,7 @@ public partial class MainWindow : Window
                     {
                         results.Add(new TabSyncItem
                         {
+                            TabId = doc.StableTabId,
                             TabHeader = doc.Header,
                             FilePath = destPath,
                             Status = TabSyncItemStatus.Failed,
@@ -3334,14 +3486,15 @@ public partial class MainWindow : Window
                         continue;
                     }
 
-                    var (existingBody, existingHeaderUtc) = ParseCloudPlainTextTabFile(rawExisting);
-                    if (NormalizeForCompare(existingBody) == NormalizeForCompare(desiredBody))
+                    var existingParsed = ParsePlainTabFile(rawExisting);
+                    if (NormalizeForCompare(existingParsed.Body) == NormalizeForCompare(desiredBody))
                     {
                         results.Add(new TabSyncItem
                         {
+                            TabId = doc.StableTabId,
                             TabHeader = doc.Header,
                             FilePath = destPath,
-                            LastUpdatedUtc = existingHeaderUtc,
+                            LastUpdatedUtc = existingParsed.LastUpdatedUtc,
                             Status = TabSyncItemStatus.NoChange
                         });
                         continue;
@@ -3349,10 +3502,11 @@ public partial class MainWindow : Window
                 }
 
                 var writeUtc = DateTime.UtcNow;
-                var plain = BuildCloudPlainTextTabExport(doc.CachedText, writeUtc);
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText, writeUtc, doc.StableTabId, DateTime.Now);
                 File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 results.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = destPath,
                     LastUpdatedUtc = writeUtc,
@@ -3363,6 +3517,7 @@ public partial class MainWindow : Window
             {
                 results.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = destPath,
                     Status = TabSyncItemStatus.Failed,
@@ -6177,7 +6332,7 @@ public partial class MainWindow : Window
 
     private void RestoreClosedTabEntry(ClosedTabEntry entry)
     {
-        var doc = CreateTab(entry.Header, entry.Content);
+        var doc = CreateTab(entry.Header, entry.Content, entry.Metadata?.TabId);
         var highlightedLines = entry.Metadata?.HighlightLines ?? [];
         if (highlightedLines.Count == 0 && entry.Metadata?.HighlightLine is int legacyHighlightLine && legacyHighlightLine > 0)
             highlightedLines = [legacyHighlightLine];
@@ -6564,7 +6719,8 @@ public partial class MainWindow : Window
             Bullets = bullets.Count > 0 ? bullets : null,
             LastSavedUtc = doc.LastSavedUtc,
             LastChangedUtc = doc.LastChangedUtc,
-            CaretOffset = doc.Editor.CaretOffset
+            CaretOffset = doc.Editor.CaretOffset,
+            TabId = doc.StableTabId
         };
     }
 
@@ -7071,7 +7227,7 @@ public partial class MainWindow : Window
                     }
                 }
 
-                var doc = CreateTab(section.Header, section.Content);
+                var doc = CreateTab(section.Header, section.Content, metadata.TabId);
                 var highlightedLines = metadata.HighlightLines ?? [];
                 if (highlightedLines.Count == 0 && metadata.HighlightLine.HasValue && metadata.HighlightLine.Value > 0)
                     highlightedLines = [metadata.HighlightLine.Value];

@@ -57,7 +57,7 @@ public sealed class TabSyncHistoryService
         }
     }
 
-    public bool TryMarkResolved(string backupFolder, DateTime entryTimestampUtc, string tabHeader)
+    public bool TryMarkResolved(string backupFolder, DateTime entryTimestampUtc, string tabId, string tabHeader, string conflictResolution)
     {
         lock (_gate)
         {
@@ -65,24 +65,43 @@ public sealed class TabSyncHistoryService
             if (entry == null)
                 return false;
             var item = entry.Items.FirstOrDefault(i =>
-                string.Equals(i.TabHeader, tabHeader, StringComparison.Ordinal)
-                && i.Status == TabSyncItemStatus.Conflict
-                && !i.Resolved);
+                i.Status == TabSyncItemStatus.Conflict
+                && !i.Resolved
+                && MatchesConflictItem(i, tabId, tabHeader));
             if (item == null)
                 return false;
             item.Resolved = true;
+            item.ConflictResolution = conflictResolution;
             Persist(backupFolder);
             return true;
         }
     }
 
-    public IReadOnlyList<(TabSyncHistoryEntry Entry, TabSyncItem Item)> GetUnresolvedConflicts()
+    private static bool MatchesConflictItem(TabSyncItem item, string tabId, string tabHeader)
+    {
+        if (!string.IsNullOrEmpty(tabId)
+            && !string.IsNullOrEmpty(item.TabId)
+            && string.Equals(item.TabId, tabId, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (!string.IsNullOrEmpty(tabId) && string.IsNullOrEmpty(item.TabId))
+            return string.Equals(item.TabHeader, tabHeader, StringComparison.Ordinal);
+
+        if (string.IsNullOrEmpty(tabId))
+            return string.Equals(item.TabHeader, tabHeader, StringComparison.Ordinal);
+
+        return false;
+    }
+
+    /// <summary>All instream conflict rows (including resolved), newest entry first.</summary>
+    public IReadOnlyList<(TabSyncHistoryEntry Entry, TabSyncItem Item)> GetConflictListEntries()
     {
         lock (_gate)
         {
             return _entries
+                .OrderByDescending(e => e.TimestampUtc)
                 .SelectMany(e => e.Items
-                    .Where(i => i.Status == TabSyncItemStatus.Conflict && !i.Resolved)
+                    .Where(i => i.Status == TabSyncItemStatus.Conflict)
                     .Select(i => (Entry: e, Item: i)))
                 .ToList();
         }

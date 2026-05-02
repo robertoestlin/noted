@@ -19,6 +19,9 @@ public enum TabSyncItemStatus
 
 public sealed class TabSyncItem
 {
+    /// <summary>Stable tab identity when known (plain-text sync); legacy rows may be empty.</summary>
+    public string TabId { get; set; } = string.Empty;
+
     public string TabHeader { get; set; } = string.Empty;
     public string FilePath { get; set; } = string.Empty;
     public DateTime? LastUpdatedUtc { get; set; }
@@ -28,6 +31,9 @@ public sealed class TabSyncItem
     public string? IncomingText { get; set; }
     public string? CurrentText { get; set; }
     public bool Resolved { get; set; }
+
+    /// <summary>When <see cref="Resolved"/> is true: <c>Appended</c> or <c>Resolved</c> (dismissed without append).</summary>
+    public string? ConflictResolution { get; set; }
 }
 
 public sealed class TabSyncHistoryEntry

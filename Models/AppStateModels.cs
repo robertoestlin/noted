@@ -25,6 +25,9 @@ public sealed class FileMetadata
 
     /// <summary>0-based caret offset in the tab text.</summary>
     public int? CaretOffset { get; set; }
+
+    /// <summary>Stable tab identity (GUID string) for plain-text sync and reopen-from-history.</summary>
+    public string? TabId { get; set; }
 }
 
 public sealed class FileLineAssignee

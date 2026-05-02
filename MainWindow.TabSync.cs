@@ -90,14 +90,13 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Polls the plain text tabs folder. Auto-applies an incoming file when:
-    ///   1. the file's <c># lastupdated:</c> is <b>strictly newer</b> than the most recent outstream we recorded for this tab
-    ///      (so an external editor that changes the body but reuses an old header cannot overwrite Noted — avoids losing
-    ///      local-only edits that have not been outstreamed yet)
-    ///   2. the matching tab has no unsaved changes
-    ///   3. content actually differs.
-    /// If we have no outstream baseline for the tab, or the header is missing / not newer, a content mismatch is a Conflict.
-    /// External tools should advance or rewrite the <c># lastupdated:</c> line when they save meaningful edits.
+    /// Polls the plain text tabs folder. Matching uses each tab's stable <see cref="TabDocument.StableTabId"/> (in the
+    /// file's first line (<c># Last updated:</c> with <c>id=</c>) and a header-based filename. Legacy
+    /// <c># noteed-tab:</c> / <c># lastupdated:</c> files and
+    /// <c>{header}.txt</c> names are still read when no canonical file exists.
+    /// Auto-applies when the tab is clean, content differs, and either (1) <c>lastUpdated</c> in line 1 is strictly newer than
+    /// the last outstream we recorded, or (2) line 1 still shows that timestamp but the file's last-write time is after that export
+    /// (typical when an external editor adds lines without editing the header).
     /// </summary>
     private void RunInstreamPlainTextTabSyncOnce()
     {
@@ -120,21 +119,26 @@ public partial class MainWindow
         if (!Directory.Exists(folder))
             return;
 
-        var lastOutstreamByHeader = LookupLastOutstreamPerTab();
+        var lastOutstreamByTab = LookupLastOutstreamPerTab();
         var items = new List<TabSyncItem>();
         var anyChange = false;
 
-        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pathByTabId = BuildPlainTabPathIndexById(folder);
+        var allocatedPaths = BuildPlainTabAllocatedPaths(folder);
         foreach (var tabItem in MainTabControl.Items)
         {
             if (tabItem is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
                 continue;
 
-            var path = AllocatePlainTabFilePath(folder, doc.Header, usedPaths);
+            if (!allocatedPaths.TryGetValue(doc, out var expectedPath))
+                expectedPath = Path.Combine(folder, SanitizeTabHeaderForPlainTabFile(doc.Header) + ".txt");
+
+            var path = ResolvePlainTabInstreamReadPath(folder, doc, pathByTabId, expectedPath);
             if (!File.Exists(path))
             {
                 items.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
                     Status = TabSyncItemStatus.NoFile
@@ -151,6 +155,7 @@ public partial class MainWindow
             {
                 items.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
                     Status = TabSyncItemStatus.Failed,
@@ -159,12 +164,15 @@ public partial class MainWindow
                 continue;
             }
 
-            var (incomingBody, headerUtc) = ParseCloudPlainTextTabFile(raw);
+            var incomingParsed = ParsePlainTabFile(raw);
+            var incomingBody = incomingParsed.Body;
+            var headerUtc = incomingParsed.LastUpdatedUtc;
             var currentText = doc.CachedText ?? string.Empty;
             if (NormalizeForCompare(incomingBody) == NormalizeForCompare(currentText))
             {
                 items.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
                     LastUpdatedUtc = headerUtc,
@@ -173,16 +181,34 @@ public partial class MainWindow
                 continue;
             }
 
-            lastOutstreamByHeader.TryGetValue(doc.Header, out var lastOutUtc);
+            lastOutstreamByTab.TryGetValue(doc.StableTabId, out var lastOutUtc);
             var headerStrictlyNewerThanLastExport = headerUtc.HasValue
                 && lastOutUtc.HasValue
                 && headerUtc.Value > lastOutUtc.Value;
 
-            if (headerStrictlyNewerThanLastExport && !doc.IsDirty)
+            var fileWrittenAfterLastExport = false;
+            if (lastOutUtc.HasValue)
+            {
+                try
+                {
+                    var lw = File.GetLastWriteTimeUtc(path);
+                    fileWrittenAfterLastExport = lw > lastOutUtc.Value;
+                }
+                catch
+                {
+                    /* ignore */
+                }
+            }
+
+            var incomingLooksNewerThanLastExport = headerStrictlyNewerThanLastExport
+                || (headerUtc.HasValue && lastOutUtc.HasValue && fileWrittenAfterLastExport);
+
+            if (incomingLooksNewerThanLastExport && !doc.IsDirty)
             {
                 ApplyIncomingTextToTab(doc, incomingBody, headerUtc ?? DateTime.UtcNow);
                 items.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
                     LastUpdatedUtc = headerUtc,
@@ -198,9 +224,10 @@ public partial class MainWindow
                         ? "tab has unsaved changes"
                         : !lastOutUtc.HasValue
                             ? "no prior Noted export recorded for this tab (resolve in Tab Sync)"
-                            : "file header is not newer than last Noted export (external edit may have reused a stale # lastupdated line)";
+                            : "file not treated as newer than last Noted export (update lastUpdated on line 1, or save the file after editing so its modification time advances)";
                 items.Add(new TabSyncItem
                 {
+                    TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
                     LastUpdatedUtc = headerUtc,
@@ -224,19 +251,77 @@ public partial class MainWindow
 
     private Dictionary<string, DateTime?> LookupLastOutstreamPerTab()
     {
-        var result = new Dictionary<string, DateTime?>(StringComparer.Ordinal);
+        var result = new Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in _tabSyncHistoryService.GetEntries())
         {
             if (entry.Direction != TabSyncDirection.Outstream) continue;
             foreach (var item in entry.Items)
             {
                 if (item.Status != TabSyncItemStatus.Wrote) continue;
-                if (string.IsNullOrEmpty(item.TabHeader)) continue;
-                if (!result.ContainsKey(item.TabHeader))
-                    result[item.TabHeader] = item.LastUpdatedUtc;
+                var key = !string.IsNullOrEmpty(item.TabId) ? item.TabId : item.TabHeader;
+                if (string.IsNullOrEmpty(key)) continue;
+                if (!result.ContainsKey(key))
+                    result[key] = item.LastUpdatedUtc;
             }
         }
         return result;
+    }
+
+    private static Dictionary<string, string> BuildPlainTabPathIndexById(string folder)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(folder, "*.txt", SearchOption.TopDirectoryOnly))
+            {
+                if (TryParsePlainTabIdFromFile(path, out var tid) && tid != null)
+                    map[tid] = path;
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        return map;
+    }
+
+    /// <summary>Same header-based paths as outstream: <c>Name.txt</c>, <c>Name (1).txt</c>, … for duplicate titles.</summary>
+    private Dictionary<TabDocument, string> BuildPlainTabAllocatedPaths(string folderPath)
+    {
+        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var map = new Dictionary<TabDocument, string>();
+        foreach (var item in MainTabControl.Items)
+        {
+            if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
+                continue;
+            map[doc] = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
+        }
+
+        return map;
+    }
+
+    /// <summary>Prefer a file whose header line matches our tab id (e.g. renamed); otherwise the slot from header allocation.</summary>
+    private static string ResolvePlainTabInstreamReadPath(
+        string folder,
+        TabDocument doc,
+        IReadOnlyDictionary<string, string> pathByTabId,
+        string expectedAllocatedPath)
+    {
+        if (pathByTabId.TryGetValue(doc.StableTabId, out var byId))
+        {
+            try
+            {
+                if (File.Exists(byId))
+                    return byId;
+            }
+            catch
+            {
+                /* ignore */
+            }
+        }
+
+        return expectedAllocatedPath;
     }
 
     private void ApplyIncomingTextToTab(TabDocument doc, string newText, DateTime appliedUtc)
@@ -287,33 +372,56 @@ public partial class MainWindow
 
     private void MenuTabSync_Click(object sender, RoutedEventArgs e) => ShowTabSyncDialog();
 
-    private bool AppendLinesToTabByHeader(string tabHeader, IReadOnlyList<string> linesToAppend)
+    private bool AppendLinesToTabById(string? tabId, string tabHeader, IReadOnlyList<string> linesToAppend)
     {
         if (linesToAppend.Count == 0) return false;
-        foreach (var item in MainTabControl.Items)
-        {
-            if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
-                continue;
-            if (!string.Equals(doc.Header, tabHeader, StringComparison.Ordinal))
-                continue;
 
-            var current = doc.CachedText ?? string.Empty;
-            var newline = current.Contains("\r\n") ? "\r\n" : "\n";
-            var sb = new StringBuilder(current);
-            if (sb.Length > 0 && !current.EndsWith('\n'))
-                sb.Append(newline);
-            for (int i = 0; i < linesToAppend.Count; i++)
+        TabDocument? doc = null;
+        var idNorm = NormalizeStableTabId(tabId);
+        if (idNorm.Length > 0)
+        {
+            foreach (var item in MainTabControl.Items)
             {
-                sb.Append(linesToAppend[i]);
-                sb.Append(newline);
+                if (item is not TabItem tab || !_docs.TryGetValue(tab, out var d))
+                    continue;
+                if (string.Equals(d.StableTabId, idNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    doc = d;
+                    break;
+                }
             }
-            var combined = sb.ToString();
-            doc.Editor.Text = combined;
-            doc.CachedText = combined;
-            MarkDirty(doc);
-            return true;
         }
-        return false;
+        else
+        {
+            foreach (var item in MainTabControl.Items)
+            {
+                if (item is not TabItem tab || !_docs.TryGetValue(tab, out var d))
+                    continue;
+                if (string.Equals(d.Header, tabHeader, StringComparison.Ordinal))
+                {
+                    doc = d;
+                    break;
+                }
+            }
+        }
+
+        if (doc == null) return false;
+
+        var current = doc.CachedText ?? string.Empty;
+        var newline = current.Contains("\r\n") ? "\r\n" : "\n";
+        var sb = new StringBuilder(current);
+        if (sb.Length > 0 && !current.EndsWith('\n'))
+            sb.Append(newline);
+        for (int i = 0; i < linesToAppend.Count; i++)
+        {
+            sb.Append(linesToAppend[i]);
+            sb.Append(newline);
+        }
+        var combined = sb.ToString();
+        doc.Editor.Text = combined;
+        doc.CachedText = combined;
+        MarkDirty(doc);
+        return true;
     }
 
     // ---------- LCS line diff -----------------------------------------------------------
@@ -440,7 +548,7 @@ public partial class MainWindow
             if (_historyList.Items.Count > 0)
                 _historyList.SelectedIndex = prevHistory >= 0 && prevHistory < _historyList.Items.Count ? prevHistory : 0;
 
-            var conflicts = _owner._tabSyncHistoryService.GetUnresolvedConflicts();
+            var conflicts = _owner._tabSyncHistoryService.GetConflictListEntries();
             var prevConflict = _conflictList.SelectedIndex;
             _conflictList.Items.Clear();
             foreach (var (entry, item) in conflicts)
@@ -491,9 +599,16 @@ public partial class MainWindow
                     Inlines =
                     {
                         new Run($"{item.TabHeader}  ") { FontWeight = FontWeights.SemiBold },
-                        BuildStatusBadge(item.Status, item.Resolved)
+                        BuildStatusBadge(item.Status, item.Resolved, item.ConflictResolution)
                     }
                 });
+                if (!string.IsNullOrEmpty(item.TabId))
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = $"Tab id: {item.TabId}",
+                        Foreground = Brushes.DimGray,
+                        FontSize = 11
+                    });
                 if (!string.IsNullOrEmpty(item.FilePath))
                     row.Children.Add(new TextBlock { Text = item.FilePath, Foreground = Brushes.DimGray, FontSize = 11 });
                 if (!string.IsNullOrEmpty(item.Detail))
@@ -517,13 +632,17 @@ public partial class MainWindow
             }
         }
 
-        private static Run BuildStatusBadge(TabSyncItemStatus status, bool resolved)
+        private static Run BuildStatusBadge(TabSyncItemStatus status, bool resolved, string? conflictResolution = null)
         {
             var (label, color) = status switch
             {
                 TabSyncItemStatus.Wrote => ("WROTE", "#2E7D32"),
                 TabSyncItemStatus.AutoApplied => ("AUTO-APPLIED", "#1565C0"),
-                TabSyncItemStatus.Conflict => (resolved ? "CONFLICT (RESOLVED)" : "CONFLICT", resolved ? "#6A1B9A" : "#C62828"),
+                TabSyncItemStatus.Conflict => resolved
+                    ? (string.Equals(conflictResolution, "Appended", StringComparison.Ordinal)
+                        ? ("CONFLICT (APPENDED)", "#2E7D32")
+                        : ("CONFLICT (RESOLVED)", "#6A1B9A"))
+                    : ("CONFLICT", "#C62828"),
                 TabSyncItemStatus.NoChange => ("NO CHANGE", "#757575"),
                 TabSyncItemStatus.NoFile => ("NO FILE", "#9E9E9E"),
                 TabSyncItemStatus.Skipped => ("SKIPPED", "#9E9E9E"),
@@ -540,9 +659,17 @@ public partial class MainWindow
         private static ListBoxItem BuildConflictRow(TabSyncHistoryEntry entry, TabSyncItem item)
         {
             var local = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            var suffix = item.Resolved
+                ? string.Equals(item.ConflictResolution, "Appended", StringComparison.Ordinal)
+                    ? "\n   Appended"
+                    : "\n   Resolved"
+                : string.Empty;
+            var idLine = string.IsNullOrEmpty(item.TabId)
+                ? string.Empty
+                : $"\n   id {item.TabId}";
             return new ListBoxItem
             {
-                Content = $"{item.TabHeader}\n   {local}",
+                Content = $"{item.TabHeader}{idLine}\n   {local}{suffix}",
                 Tag = (entry, item),
                 Padding = new Thickness(6, 4, 6, 4)
             };
@@ -574,7 +701,7 @@ public partial class MainWindow
             {
                 _conflictDetail.Children.Add(new TextBlock
                 {
-                    Text = "(no conflicts)",
+                    Text = "(no conflict entries)",
                     Foreground = Brushes.DimGray,
                     Margin = new Thickness(8)
                 });
@@ -588,23 +715,38 @@ public partial class MainWindow
 
             var header = new TextBlock
             {
-                Text = $"{item.TabHeader} — conflict @ {entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
+                Text = item.Resolved
+                    ? $"{item.TabHeader} — {item.ConflictResolution ?? "Resolved"} @ {entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+                    : $"{item.TabHeader} — conflict @ {entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
                 FontWeight = FontWeights.Bold,
                 Margin = new Thickness(0, 0, 0, 6)
             };
-            DockPanel.SetDock(header, Dock.Top);
-            _conflictDetail.Children.Add(header);
+            var topBlock = new StackPanel { Orientation = Orientation.Vertical };
+            topBlock.Children.Add(header);
+            if (item.Resolved)
+            {
+                topBlock.Children.Add(new TextBlock
+                {
+                    Text = string.Equals(item.ConflictResolution, "Appended", StringComparison.Ordinal)
+                        ? "Lines from the file were appended to the tab."
+                        : "Marked resolved without appending.",
+                    Foreground = Brushes.DimGray,
+                    Margin = new Thickness(0, 0, 0, 8),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
 
-            // Bottom button bar
+            DockPanel.SetDock(topBlock, Dock.Top);
+            _conflictDetail.Children.Add(topBlock);
+
             var buttonRow = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Margin = new Thickness(0, 8, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Right
             };
-            DockPanel.SetDock(buttonRow, Dock.Bottom);
 
-            // Body: diff on left, candidates on right
+            // Body: diff on left, candidates on right (unresolved only)
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -641,77 +783,88 @@ public partial class MainWindow
             grid.Children.Add(diffScroll);
 
             var addedLines = ops.Where(o => o.Op == DiffOp.Added).Select(o => o.Text).ToList();
-            var candidatePanel = new StackPanel { Margin = new Thickness(4) };
-            candidatePanel.Children.Add(new TextBlock
-            {
-                Text = $"Lines present in file but not in tab ({addedLines.Count}):",
-                FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 4)
-            });
 
-            var checkboxes = new List<CheckBox>();
-            foreach (var line in addedLines)
+            if (!item.Resolved)
             {
-                var cb = new CheckBox
+                var candidatePanel = new StackPanel { Margin = new Thickness(4) };
+                candidatePanel.Children.Add(new TextBlock
                 {
-                    Content = line.Length == 0 ? "(empty line)" : line,
-                    IsChecked = true,
-                    Margin = new Thickness(0, 1, 0, 1),
-                    Tag = line
+                    Text = $"Lines present in file but not in tab ({addedLines.Count}):",
+                    FontWeight = FontWeights.SemiBold,
+                    Margin = new Thickness(0, 0, 0, 4)
+                });
+
+                var checkboxes = new List<CheckBox>();
+                foreach (var line in addedLines)
+                {
+                    var cb = new CheckBox
+                    {
+                        Content = line.Length == 0 ? "(empty line)" : line,
+                        IsChecked = true,
+                        Margin = new Thickness(0, 1, 0, 1),
+                        Tag = line
+                    };
+                    checkboxes.Add(cb);
+                    candidatePanel.Children.Add(cb);
+                }
+                var candScroll = new ScrollViewer
+                {
+                    Content = candidatePanel,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
                 };
-                checkboxes.Add(cb);
-                candidatePanel.Children.Add(cb);
+                Grid.SetColumn(candScroll, 1);
+                grid.Children.Add(candScroll);
+
+                var btnApply = new Button
+                {
+                    Content = "Append selected to end of tab",
+                    Padding = new Thickness(10, 3, 10, 3),
+                    Margin = new Thickness(0, 0, 8, 0),
+                    IsEnabled = addedLines.Count > 0
+                };
+                btnApply.Click += (_, _) =>
+                {
+                    var picks = checkboxes.Where(c => c.IsChecked == true).Select(c => (string)c.Tag!).ToList();
+                    if (picks.Count == 0)
+                    {
+                        MessageBox.Show("Select at least one line.", "Tab Sync", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return;
+                    }
+                    if (!_owner.AppendLinesToTabById(item.TabId, item.TabHeader, picks))
+                    {
+                        MessageBox.Show(
+                            $"Could not find this tab to append to (id/header no longer match an open tab).",
+                            "Tab Sync",
+                            MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
+                    _owner._tabSyncHistoryService.TryMarkResolved(_owner._backupFolder, entry.TimestampUtc, item.TabId,
+                        item.TabHeader,
+                        "Appended");
+                    Refresh();
+                };
+
+                var btnDismiss = new Button
+                {
+                    Content = "Mark resolved (no append)",
+                    Padding = new Thickness(10, 3, 10, 3)
+                };
+                btnDismiss.Click += (_, _) =>
+                {
+                    _owner._tabSyncHistoryService.TryMarkResolved(_owner._backupFolder, entry.TimestampUtc, item.TabId,
+                        item.TabHeader,
+                        "Resolved");
+                    Refresh();
+                };
+
+                buttonRow.Children.Add(btnApply);
+                buttonRow.Children.Add(btnDismiss);
+                DockPanel.SetDock(buttonRow, Dock.Bottom);
+                _conflictDetail.Children.Add(buttonRow);
             }
-            var candScroll = new ScrollViewer
-            {
-                Content = candidatePanel,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-            };
-            Grid.SetColumn(candScroll, 1);
-            grid.Children.Add(candScroll);
 
-            _conflictDetail.Children.Add(buttonRow);
             _conflictDetail.Children.Add(grid);
-
-            var btnApply = new Button
-            {
-                Content = "Append selected to end of tab",
-                Padding = new Thickness(10, 3, 10, 3),
-                Margin = new Thickness(0, 0, 8, 0),
-                IsEnabled = addedLines.Count > 0
-            };
-            btnApply.Click += (_, _) =>
-            {
-                var picks = checkboxes.Where(c => c.IsChecked == true).Select(c => (string)c.Tag!).ToList();
-                if (picks.Count == 0)
-                {
-                    MessageBox.Show("Select at least one line.", "Tab Sync", MessageBoxButton.OK, MessageBoxImage.Information);
-                    return;
-                }
-                if (!_owner.AppendLinesToTabByHeader(item.TabHeader, picks))
-                {
-                    MessageBox.Show($"Could not find a tab named '{item.TabHeader}' to append to.", "Tab Sync",
-                        MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
-                _owner._tabSyncHistoryService.TryMarkResolved(_owner._backupFolder, entry.TimestampUtc, item.TabHeader);
-                Refresh();
-            };
-
-            var btnDismiss = new Button
-            {
-                Content = "Mark resolved (no append)",
-                Padding = new Thickness(10, 3, 10, 3)
-            };
-            btnDismiss.Click += (_, _) =>
-            {
-                _owner._tabSyncHistoryService.TryMarkResolved(_owner._backupFolder, entry.TimestampUtc, item.TabHeader);
-                Refresh();
-            };
-
-            buttonRow.Children.Add(btnApply);
-            buttonRow.Children.Add(btnDismiss);
         }
     }
 }

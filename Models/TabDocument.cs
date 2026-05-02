@@ -40,6 +40,9 @@ public class TabDocument
     /// <summary>Display name shown on the tab header (e.g. "file1").</summary>
     public string Header { get; set; } = string.Empty;
 
+    /// <summary>Stable identity for plain-text sync (GUID <c>D</c> format). Persists in session metadata.</summary>
+    public string StableTabId { get; set; } = string.Empty;
+
     /// <summary>Optional bound file path (reserved; export does not set this).</summary>
     public string? FilePath { get; set; }
 

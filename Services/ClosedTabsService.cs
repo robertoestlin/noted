@@ -96,7 +96,8 @@ public sealed class ClosedTabsService
                             : null,
                         Assignees = assignees != null && assignees.Count > 0 ? assignees : null,
                         LastSavedUtc = entry.Metadata.LastSavedUtc,
-                        LastChangedUtc = entry.Metadata.LastChangedUtc
+                        LastChangedUtc = entry.Metadata.LastChangedUtc,
+                        TabId = entry.Metadata.TabId
                     }
             });
         }

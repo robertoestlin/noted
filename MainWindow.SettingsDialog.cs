@@ -334,7 +334,7 @@ public partial class MainWindow
         var syncPanel = new StackPanel { Margin = new Thickness(12) };
         syncPanel.Children.Add(new TextBlock
         {
-            Text = "Plain text tab sync — keep each open tab in sync with a UTF-8 .txt file. The first line of every file written from Noted is a # lastupdated: <UTC> header used to detect external edits.",
+            Text = "Plain text tab sync — each open tab maps to a UTF-8 .txt file; matching uses the stable id in the first line, not the filename. Files are named from the tab title (sanitized): duplicate titles become \"Name.txt\", \"Name (1).txt\", \"Name (2).txt\", … in tab order. The first line looks like: \"# Last updated: 2026-05-02 14:14:05 -- id=<guid>;lastUpdated=<UTC>Z\". Older \"# noteed-tab:\" and \"# lastupdated:\" lines still parse.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = Brushes.DimGray,
             Margin = new Thickness(0, 0, 0, 12)
