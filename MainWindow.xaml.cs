@@ -1348,7 +1348,8 @@ public partial class MainWindow : Window
             if (!used.Contains(i)) return i;
     }
 
-    private TabDocument CreateTab(string? header = null, string? content = null, string? stableTabId = null)
+    private TabDocument CreateTab(string? header = null, string? content = null, string? stableTabId = null,
+        bool selectAndFocus = true)
     {
         var name = header ?? $"new {NextFileNumber()}";
         var resolvedId = NormalizeStableTabId(stableTabId);
@@ -1452,9 +1453,12 @@ public partial class MainWindow : Window
 
         _docs[tab] = doc;
         MainTabControl.Items.Add(tab);
-        MainTabControl.SelectedItem = tab;
+        if (selectAndFocus)
+        {
+            MainTabControl.SelectedItem = tab;
+            editor.Focus();
+        }
 
-        editor.Focus();
         return doc;
     }
 

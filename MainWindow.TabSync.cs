@@ -144,6 +144,7 @@ public partial class MainWindow
 
         var pathByTabId = BuildPlainTabPathIndexById(folder);
         var allocatedPaths = BuildPlainTabAllocatedPaths(folder);
+        var consumedPlainPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var tabItem in MainTabControl.Items)
         {
             if (tabItem is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
@@ -153,6 +154,14 @@ public partial class MainWindow
                 expectedPath = Path.Combine(folder, SanitizeTabHeaderForPlainTabFile(doc.Header) + ".txt");
 
             var path = ResolvePlainTabInstreamReadPath(folder, doc, pathByTabId, expectedPath);
+            try
+            {
+                consumedPlainPaths.Add(Path.GetFullPath(path));
+            }
+            catch
+            {
+                /* ignore invalid path */
+            }
             if (!File.Exists(path))
             {
                 items.Add(new TabSyncItem
@@ -248,6 +257,145 @@ public partial class MainWindow
                 FilePath = path,
                 LastUpdatedUtc = appliedUtc,
                 Status = TabSyncItemStatus.AutoApplied
+            });
+            anyChange = true;
+        }
+
+        // Orphan .txt files (no open tab maps to that path): open a new tab to the right, then rewrite the file with the # header line.
+        var orphanPaths = new List<string>();
+        try
+        {
+            foreach (var diskPath in Directory.EnumerateFiles(folder, "*.txt", SearchOption.TopDirectoryOnly))
+            {
+                string full;
+                try
+                {
+                    full = Path.GetFullPath(diskPath);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (consumedPlainPaths.Contains(full))
+                    continue;
+                orphanPaths.Add(full);
+            }
+        }
+        catch
+        {
+            /* ignore */
+        }
+
+        orphanPaths.Sort(StringComparer.OrdinalIgnoreCase);
+
+        var openTabIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in _docs.Values)
+            openTabIds.Add(d.StableTabId);
+
+        foreach (var path in orphanPaths)
+        {
+            string raw;
+            try
+            {
+                raw = File.ReadAllText(path, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                items.Add(new TabSyncItem
+                {
+                    TabId = string.Empty,
+                    TabHeader = Path.GetFileNameWithoutExtension(path),
+                    FilePath = path,
+                    Status = TabSyncItemStatus.Failed,
+                    Detail = ex.Message
+                });
+                continue;
+            }
+
+            var parsed = ParsePlainTabFile(raw);
+            var idNorm = NormalizeStableTabId(parsed.TabId);
+            if (idNorm.Length > 0 && openTabIds.Contains(idNorm))
+            {
+                items.Add(new TabSyncItem
+                {
+                    TabId = idNorm,
+                    TabHeader = Path.GetFileNameWithoutExtension(path),
+                    FilePath = path,
+                    Status = TabSyncItemStatus.Skipped,
+                    Detail = "file tab id matches an existing open tab; not imported as a second tab"
+                });
+                continue;
+            }
+
+            var headerFromFile = Path.GetFileNameWithoutExtension(path);
+            if (string.IsNullOrWhiteSpace(headerFromFile))
+                headerFromFile = null;
+
+            DateTime? fileWriteUtc = null;
+            try
+            {
+                fileWriteUtc = File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            DateTime appliedUtc;
+            var tFileUtc = parsed.LastUpdatedUtc?.ToUniversalTime();
+            if (tFileUtc.HasValue && fileWriteUtc.HasValue)
+                appliedUtc = tFileUtc.Value >= fileWriteUtc.Value ? tFileUtc.Value : fileWriteUtc.Value;
+            else if (tFileUtc.HasValue)
+                appliedUtc = tFileUtc.Value;
+            else if (fileWriteUtc.HasValue)
+                appliedUtc = fileWriteUtc.Value;
+            else
+                appliedUtc = DateTime.UtcNow;
+
+            var stableForNew = idNorm.Length > 0 ? idNorm : null;
+            var doc = CreateTab(headerFromFile, parsed.Body, stableForNew, selectAndFocus: false);
+            openTabIds.Add(doc.StableTabId);
+            try
+            {
+                consumedPlainPaths.Add(Path.GetFullPath(path));
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            doc.LastSavedUtc = appliedUtc;
+            doc.IsDirty = false;
+
+            try
+            {
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText ?? string.Empty, appliedUtc, doc.StableTabId,
+                    DateTime.Now);
+                File.WriteAllText(path, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+            catch (Exception ex)
+            {
+                items.Add(new TabSyncItem
+                {
+                    TabId = doc.StableTabId,
+                    TabHeader = doc.Header,
+                    FilePath = path,
+                    Status = TabSyncItemStatus.Failed,
+                    Detail = ex.Message
+                });
+                continue;
+            }
+
+            pulledTabIds.Add(doc.StableTabId);
+            items.Add(new TabSyncItem
+            {
+                TabId = doc.StableTabId,
+                TabHeader = doc.Header,
+                FilePath = path,
+                LastUpdatedUtc = appliedUtc,
+                Status = TabSyncItemStatus.AutoApplied,
+                Detail = "Opened new tab from file in sync-from folder; wrote sync header to file"
             });
             anyChange = true;
         }
