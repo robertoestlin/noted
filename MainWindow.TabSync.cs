@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -326,13 +327,70 @@ public partial class MainWindow
 
     private void ApplyIncomingTextToTab(TabDocument doc, string newText, DateTime appliedUtc)
     {
+        ReplaceTabEditorTextPreservingLineMetadata(doc, newText);
+        doc.IsDirty = false;
+        doc.LastSavedUtc = appliedUtc;
+        RefreshTabHeader(doc);
+    }
+
+    /// <summary>
+    /// Replaces editor text while moving highlights, assignees, and bullets using an LCS line diff so unchanged lines
+    /// keep their metadata when inserts/removes shift line numbers; metadata on removed lines is dropped.
+    /// </summary>
+    private void ReplaceTabEditorTextPreservingLineMetadata(TabDocument doc, string newText)
+    {
+        var oldText = doc.CachedText ?? doc.Editor.Text ?? string.Empty;
+        var lineMap = MapOldLineNumbersToNewByLineDiff(oldText, newText);
+
+        var normalHl = GetHighlightedLineNumbers(doc)
+            .Where(lineMap.ContainsKey)
+            .Select(l => lineMap[l])
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+        var criticalHl = GetCriticalHighlightedLineNumbers(doc)
+            .Where(lineMap.ContainsKey)
+            .Select(l => lineMap[l])
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+        var assigneeList = GetLineAssigneeDetails(doc)
+            .Where(kv => lineMap.ContainsKey(kv.Key))
+            .Select(kv => new FileLineAssignee
+            {
+                Line = lineMap[kv.Key],
+                Person = kv.Value.Person,
+                CreatedUtc = kv.Value.CreatedUtc
+            })
+            .GroupBy(a => a.Line)
+            .Select(g => g.Last())
+            .OrderBy(a => a.Line)
+            .ToList();
+
+        var bulletList = GetLineBulletDetails(doc)
+            .Where(kv => lineMap.ContainsKey(kv.Key))
+            .Select(kv => new FileLineBullet
+            {
+                Line = lineMap[kv.Key],
+                Marker = kv.Value.Marker.ToString(),
+                CreatedUtc = kv.Value.CreatedUtc
+            })
+            .GroupBy(b => b.Line)
+            .Select(g => g.Last())
+            .OrderBy(b => b.Line)
+            .ToList();
+
         var caret = Math.Min(doc.Editor.CaretOffset, newText.Length);
         doc.Editor.Text = newText;
         doc.Editor.CaretOffset = caret;
         doc.CachedText = newText;
-        doc.IsDirty = false;
-        doc.LastSavedUtc = appliedUtc;
-        RefreshTabHeader(doc);
+
+        SetHighlightedLines(doc, normalHl.Count > 0 ? normalHl : null, markDirty: false);
+        SetCriticalHighlightedLines(doc, criticalHl.Count > 0 ? criticalHl : null, markDirty: false);
+        SetLineAssignments(doc, assigneeList.Count > 0 ? assigneeList : null, markDirty: false);
+        SetLineBullets(doc, bulletList.Count > 0 ? bulletList : null, markDirty: false);
     }
 
     private static string NormalizeForCompare(string text)
@@ -418,8 +476,7 @@ public partial class MainWindow
             sb.Append(newline);
         }
         var combined = sb.ToString();
-        doc.Editor.Text = combined;
-        doc.CachedText = combined;
+        ReplaceTabEditorTextPreservingLineMetadata(doc, combined);
         MarkDirty(doc);
         return true;
     }
@@ -470,6 +527,34 @@ public partial class MainWindow
         while (x < n) { ops.Add(new DiffLine { Op = DiffOp.Removed, Text = oldLines[x++] }); }
         while (y < m) { ops.Add(new DiffLine { Op = DiffOp.Added, Text = newLines[y++] }); }
         return ops;
+    }
+
+    /// <summary>1-based old line → 1-based new line for lines matched as equal in <see cref="ComputeLineDiff"/>.</summary>
+    internal static Dictionary<int, int> MapOldLineNumbersToNewByLineDiff(string oldText, string newText)
+    {
+        var ops = ComputeLineDiff(oldText, newText);
+        var map = new Dictionary<int, int>();
+        var oldLine = 1;
+        var newLine = 1;
+        foreach (var op in ops)
+        {
+            switch (op.Op)
+            {
+                case DiffOp.Equal:
+                    map[oldLine] = newLine;
+                    oldLine++;
+                    newLine++;
+                    break;
+                case DiffOp.Removed:
+                    oldLine++;
+                    break;
+                case DiffOp.Added:
+                    newLine++;
+                    break;
+            }
+        }
+
+        return map;
     }
 
     private static string[] SplitLines(string text)
