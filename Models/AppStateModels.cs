@@ -370,6 +370,15 @@ public sealed class WindowSettings
     /// <summary>Destination folder for per-tab plain text files when <see cref="CloudSyncTabsPlainTextEnabled"/> is true.</summary>
     public string? CloudSyncTabsPlainTextFolder { get; set; }
 
+    /// <summary>Pull edits from the plain text tabs folder back into Noted (default off; only valid when outstream is also on).</summary>
+    public bool? CloudSyncTabsPlainTextInstreamEnabled { get; set; }
+
+    /// <summary>Hours component of the instream sync interval (mirrors <see cref="CloudSaveHours"/> range).</summary>
+    public int? CloudSyncTabsPlainTextInstreamHours { get; set; }
+
+    /// <summary>Minutes component (5-minute steps) of the instream sync interval.</summary>
+    public int? CloudSyncTabsPlainTextInstreamMinutes { get; set; }
+
     /// <summary>When backing up or syncing to cloud, include <c>settings.json</c> (default true).</summary>
     public bool? BackupAdditionalSettingsFile { get; set; }
 

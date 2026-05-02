@@ -161,6 +161,7 @@
                     <MenuItem Header="_Tags" Click="MenuTags_Click"/>
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
                     <MenuItem Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
+                    <MenuItem Header="Tab S_ync" Click="MenuTabSync_Click"/>
                     <MenuItem Header="_Recover Tabs" Click="MenuRecoverTabs_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Plugins">

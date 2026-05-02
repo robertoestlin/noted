@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private readonly SettingsService _settingsService = new();
     private readonly BackupService _backupService = new();
     private readonly ClosedTabsService _closedTabsService = new();
+    private readonly TabSyncHistoryService _tabSyncHistoryService = new();
     private readonly WindowSettingsStore _windowSettingsStore = new();
     private readonly WindowSettingsService _windowSettingsService = new();
     private readonly BackupBundleService _backupBundleService = new();
@@ -141,6 +142,10 @@ public partial class MainWindow : Window
     private int _cloudSaveIntervalHours = 1;
     private int _cloudSaveIntervalMinutes = 0;
     private DateTime _lastCloudSaveUtc = DateTime.MinValue;
+    private bool _cloudSyncTabsPlainTextInstreamEnabled;
+    private int _cloudSyncTabsPlainTextInstreamHours;
+    private int _cloudSyncTabsPlainTextInstreamMinutes = 5;
+    private DateTime _lastInstreamPlainTabsSyncUtc = DateTime.MinValue;
     private bool _backupAdditionalIncludeSettingsFile = true;
     private bool _backupAdditionalIncludeAppLog = true;
     private bool _backupAdditionalIncludeHeartbeatLogs = true;
@@ -1269,6 +1274,7 @@ public partial class MainWindow : Window
         // Auto-save timer
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };
         _autoSaveTimer.Tick += (_, _) => SaveSession();
+        _autoSaveTimer.Tick += (_, _) => TickInstreamPlainTextTabSync();
         _autoSaveTimer.Start();
         _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
@@ -1288,6 +1294,7 @@ public partial class MainWindow : Window
         EnsureSettingsFileExists();
         EnsureBackupImagesFolderExists();
         LoadClosedTabHistory();
+        _tabSyncHistoryService.Load(_backupFolder);
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
 
         // Restore previous session; if nothing to restore, open a blank tab
@@ -3184,13 +3191,26 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private static string BuildCloudPlainTextTabExport(string text)
+    internal const string PlainTabHeaderPrefix = "# lastupdated: ";
+
+    private static string FormatPlainTabHeaderTimestamp(DateTime utc)
+        => utc.ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Builds the plain-text export with a leading <c># lastupdated: &lt;ISO-8601 UTC&gt;</c> header line.
+    /// The header is needed so instream sync can detect external edits.
+    /// </summary>
+    private static string BuildCloudPlainTextTabExport(string text, DateTime headerUtc)
     {
+        var builder = new StringBuilder();
+        builder.Append(PlainTabHeaderPrefix);
+        builder.Append(FormatPlainTabHeaderTimestamp(headerUtc));
+        builder.Append('\n');
+
         if (string.IsNullOrEmpty(text))
-            return string.Empty;
+            return builder.ToString();
 
         var parts = Regex.Split(text, @"(\r\n|\n)");
-        var builder = new StringBuilder(text.Length);
         for (int i = 0; i < parts.Length; i += 2)
         {
             builder.Append(TransformLineForCloudPlainExport(parts[i]));
@@ -3199,6 +3219,34 @@ public partial class MainWindow : Window
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Strips the optional <c># lastupdated: …</c> header. Returns parsed timestamp (UTC) when found.
+    /// </summary>
+    internal static (string Body, DateTime? HeaderUtc) ParseCloudPlainTextTabFile(string raw)
+    {
+        if (string.IsNullOrEmpty(raw))
+            return (string.Empty, null);
+
+        var newline = raw.IndexOf('\n');
+        var firstLine = newline < 0 ? raw : raw[..newline];
+        if (firstLine.EndsWith('\r'))
+            firstLine = firstLine[..^1];
+
+        if (!firstLine.StartsWith(PlainTabHeaderPrefix, StringComparison.Ordinal))
+            return (raw, null);
+
+        var ts = firstLine[PlainTabHeaderPrefix.Length..].Trim();
+        var rest = newline < 0 ? string.Empty : raw[(newline + 1)..];
+        if (DateTime.TryParse(ts, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return (rest, DateTime.SpecifyKind(parsed, DateTimeKind.Utc));
+        }
+
+        return (rest, null);
     }
 
     private static string TransformLineForCloudPlainExport(string lineText)
@@ -3246,18 +3294,41 @@ public partial class MainWindow : Window
         return candidate;
     }
 
-    private void SyncCloudPlainTextTabFiles(string folderPath)
+    private List<TabSyncItem> SyncCloudPlainTextTabFiles(string folderPath)
     {
+        var headerUtc = DateTime.UtcNow;
         var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<TabSyncItem>();
         foreach (var item in MainTabControl.Items)
         {
             if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
                 continue;
 
-            var plain = BuildCloudPlainTextTabExport(doc.CachedText);
             var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
-            File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            try
+            {
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText, headerUtc);
+                File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                results.Add(new TabSyncItem
+                {
+                    TabHeader = doc.Header,
+                    FilePath = destPath,
+                    LastUpdatedUtc = headerUtc,
+                    Status = TabSyncItemStatus.Wrote
+                });
+            }
+            catch (Exception ex)
+            {
+                results.Add(new TabSyncItem
+                {
+                    TabHeader = doc.Header,
+                    FilePath = destPath,
+                    Status = TabSyncItemStatus.Failed,
+                    Detail = ex.Message
+                });
+            }
         }
+        return results;
     }
 
     private static bool IsLineSelected(TextEditor editor, int lineNumber)
@@ -6715,7 +6786,8 @@ public partial class MainWindow : Window
         {
             var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
             Directory.CreateDirectory(plainFolder);
-            SyncCloudPlainTextTabFiles(plainFolder);
+            var items = SyncCloudPlainTextTabFiles(plainFolder);
+            RecordTabSyncHistory(TabSyncDirection.Outstream, items);
             AppendAppLog($"Cloud plain-text tab sync completed. target='{plainFolder}'");
         }
         catch (Exception ex)
