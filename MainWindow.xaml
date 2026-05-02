@@ -404,7 +404,7 @@
                             <TextBlock Grid.Row="8"  Grid.Column="0" Text="."           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="8"  Grid.Column="1" Text="Add one minute to countdown"                                             Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="9"  Grid.Column="0" Text="-"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
-                            <TextBlock Grid.Row="9"  Grid.Column="1" Text="Toggle countdown off / on (on restarts from start time). If you opened without countdown, '-' starts it using the overlay dialog time (1 min if 0:0)." Foreground="#C1CFEA" Margin="0,1,0,1" TextWrapping="Wrap"/>
+                            <TextBlock Grid.Row="9"  Grid.Column="1" Text="Toggle countdown"                                                       Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="10" Grid.Column="0" Text="M"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="10" Grid.Column="1" Text="Pause / play music"                                                       Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="11" Grid.Column="0" Text="N"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
