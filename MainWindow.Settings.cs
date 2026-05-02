@@ -1089,11 +1089,12 @@ public partial class MainWindow
         else if (_windowSettingsService.TryGetValidCloudHours(state.CloudSyncTabsPlainTextOutstreamHours, out syncH))
             _cloudSyncTabsPlainTextSyncHours = syncH;
 
-        if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextSyncMinutes, out var syncM))
+        var plainHours = _cloudSyncTabsPlainTextSyncHours;
+        if (_windowSettingsService.TryGetValidPlainTextTabSyncMinutes(state.CloudSyncTabsPlainTextSyncMinutes, plainHours, out var syncM))
             _cloudSyncTabsPlainTextSyncMinutes = syncM;
-        else if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextInstreamMinutes, out syncM))
+        else if (_windowSettingsService.TryGetValidPlainTextTabSyncMinutes(state.CloudSyncTabsPlainTextInstreamMinutes, plainHours, out syncM))
             _cloudSyncTabsPlainTextSyncMinutes = syncM;
-        else if (_windowSettingsService.TryGetValidCloudMinutes(state.CloudSyncTabsPlainTextOutstreamMinutes, out syncM))
+        else if (_windowSettingsService.TryGetValidPlainTextTabSyncMinutes(state.CloudSyncTabsPlainTextOutstreamMinutes, plainHours, out syncM))
             _cloudSyncTabsPlainTextSyncMinutes = syncM;
     }
 

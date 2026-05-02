@@ -138,6 +138,41 @@ public sealed class WindowSettingsService
         return false;
     }
 
+    /// <summary>
+    /// Plain-text folder sync interval minutes: 1–20 (every minute), then 25…55 in steps of 5;
+    /// 0 is allowed only when <paramref name="syncHours"/> &gt; 0 (on-the-hour within a multi-hour interval).
+    /// </summary>
+    public bool TryGetValidPlainTextTabSyncMinutes(int? minutes, int syncHours, out int value)
+    {
+        if (minutes is not (>= 0 and <= 55))
+        {
+            value = default;
+            return false;
+        }
+
+        var m = minutes.Value;
+        if (m == 0)
+        {
+            if (syncHours <= 0)
+            {
+                value = default;
+                return false;
+            }
+
+            value = 0;
+            return true;
+        }
+
+        if ((m >= 1 && m <= 20) || (m >= 25 && m <= 55 && m % 5 == 0))
+        {
+            value = m;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
     public bool TryGetValidUptimeHeartbeatSeconds(int? uptimeHeartbeatSeconds, out int value)
     {
         if (uptimeHeartbeatSeconds is >= 60 and <= 3600

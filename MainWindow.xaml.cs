@@ -238,6 +238,24 @@ public partial class MainWindow : Window
     private static readonly Regex SmileyTokenRegex =
         new(@":\)|;\)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly int[] CloudMinuteOptions = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+    /// <summary>Sync tab plain-text interval: 0, 1–20 every minute, then 25…55 by 5.</summary>
+    private static readonly int[] PlainTextTabSyncMinuteOptions =
+    [
+        0,
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        25, 30, 35, 40, 45, 50, 55,
+    ];
+
+    /// <summary>0 minutes is omitted when <paramref name="hours"/> is 0 (interval must be &gt; 0).</summary>
+    private static IEnumerable<int> PlainTextTabSyncMinuteOptionsForHours(int hours)
+    {
+        foreach (var m in PlainTextTabSyncMinuteOptions)
+        {
+            if (m == 0 && hours == 0)
+                continue;
+            yield return m;
+        }
+    }
     private int _initialLines = DefaultInitialLines;
     private int _uptimeHeartbeatSeconds = DefaultUptimeHeartbeatSeconds;
     private bool _writeUptimeHeartbeatInNoted = true;
@@ -3462,7 +3480,8 @@ public partial class MainWindow : Window
             var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
             try
             {
-                var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, DateTime.UtcNow, doc.StableTabId, DateTime.Now);
+                var stampUtc = doc.LastSavedUtc?.ToUniversalTime() ?? DateTime.UtcNow;
+                var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, stampUtc, doc.StableTabId, DateTime.Now);
                 var desiredParsed = ParsePlainTabFile(probeExport);
                 var desiredBody = desiredParsed.Body;
 
@@ -3494,22 +3513,21 @@ public partial class MainWindow : Window
                             TabId = doc.StableTabId,
                             TabHeader = doc.Header,
                             FilePath = destPath,
-                            LastUpdatedUtc = existingParsed.LastUpdatedUtc,
+                            LastUpdatedUtc = stampUtc,
                             Status = TabSyncItemStatus.NoChange
                         });
                         continue;
                     }
                 }
 
-                var writeUtc = DateTime.UtcNow;
-                var plain = BuildCloudPlainTextTabExport(doc.CachedText, writeUtc, doc.StableTabId, DateTime.Now);
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText, stampUtc, doc.StableTabId, DateTime.Now);
                 File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 results.Add(new TabSyncItem
                 {
                     TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = destPath,
-                    LastUpdatedUtc = writeUtc,
+                    LastUpdatedUtc = stampUtc,
                     Status = TabSyncItemStatus.Wrote
                 });
             }

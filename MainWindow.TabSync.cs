@@ -67,6 +67,15 @@ public partial class MainWindow
         if (!wantInstream && !wantOutstream)
             return;
 
+        try
+        {
+            SaveSession(updateStatus: false);
+        }
+        catch
+        {
+            /* non-critical */
+        }
+
         if (wantInstream)
             RunInstreamPlainTextTabSyncOnce();
 
@@ -91,13 +100,9 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Polls the plain text tabs folder. Matching uses each tab's stable <see cref="TabDocument.StableTabId"/> (in the
-    /// file's first line (<c># Last updated:</c> with <c>id=</c>) and a header-based filename. Legacy
-    /// <c># noteed-tab:</c> / <c># lastupdated:</c> files and
-    /// <c>{header}.txt</c> names are still read when no canonical file exists.
-    /// Auto-applies when the tab is clean, content differs, and either (1) <c>lastUpdated</c> in line 1 is strictly newer than
-    /// the last outstream we recorded, or (2) line 1 still shows that timestamp but the file's last-write time is after that export
-    /// (typical when an external editor adds lines without editing the header).
+    /// Polls the plain text tabs folder. When bodies differ, a pull runs when either line-1 <c>lastUpdated=</c> or the file's
+    /// last-write time (UTC) is strictly newer than <see cref="TabDocument.LastSavedUtc"/> (fallback
+    /// <see cref="TabDocument.LastChangedUtc"/>), so edits that omit updating the header still sync in.
     /// </summary>
     private void RunInstreamPlainTextTabSyncOnce()
     {
@@ -120,7 +125,6 @@ public partial class MainWindow
         if (!Directory.Exists(folder))
             return;
 
-        var lastOutstreamByTab = LookupLastOutstreamPerTab();
         var items = new List<TabSyncItem>();
         var anyChange = false;
 
@@ -167,8 +171,10 @@ public partial class MainWindow
 
             var incomingParsed = ParsePlainTabFile(raw);
             var incomingBody = incomingParsed.Body;
-            var headerUtc = incomingParsed.LastUpdatedUtc;
+            var tFile = incomingParsed.LastUpdatedUtc;
             var currentText = doc.CachedText ?? string.Empty;
+            var tabStamp = (doc.LastSavedUtc ?? doc.LastChangedUtc).ToUniversalTime();
+
             if (NormalizeForCompare(incomingBody) == NormalizeForCompare(currentText))
             {
                 items.Add(new TabSyncItem
@@ -176,68 +182,59 @@ public partial class MainWindow
                     TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
-                    LastUpdatedUtc = headerUtc,
+                    LastUpdatedUtc = tFile,
                     Status = TabSyncItemStatus.NoChange
                 });
                 continue;
             }
 
-            lastOutstreamByTab.TryGetValue(doc.StableTabId, out var lastOutUtc);
-            var headerStrictlyNewerThanLastExport = headerUtc.HasValue
-                && lastOutUtc.HasValue
-                && headerUtc.Value > lastOutUtc.Value;
-
-            var fileWrittenAfterLastExport = false;
-            if (lastOutUtc.HasValue)
+            DateTime? fileWriteUtc = null;
+            try
             {
-                try
-                {
-                    var lw = File.GetLastWriteTimeUtc(path);
-                    fileWrittenAfterLastExport = lw > lastOutUtc.Value;
-                }
-                catch
-                {
-                    /* ignore */
-                }
+                fileWriteUtc = File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                /* ignore */
             }
 
-            var incomingLooksNewerThanLastExport = headerStrictlyNewerThanLastExport
-                || (headerUtc.HasValue && lastOutUtc.HasValue && fileWrittenAfterLastExport);
+            DateTime? tFileUtc = tFile?.ToUniversalTime();
+            var headerNewer = tFileUtc.HasValue && tFileUtc.Value > tabStamp;
+            var fileSystemNewer = fileWriteUtc.HasValue && fileWriteUtc.Value > tabStamp;
 
-            if (incomingLooksNewerThanLastExport && !doc.IsDirty)
+            if (!headerNewer && !fileSystemNewer)
             {
-                ApplyIncomingTextToTab(doc, incomingBody, headerUtc ?? DateTime.UtcNow);
                 items.Add(new TabSyncItem
                 {
                     TabId = doc.StableTabId,
                     TabHeader = doc.Header,
                     FilePath = path,
-                    LastUpdatedUtc = headerUtc,
-                    Status = TabSyncItemStatus.AutoApplied
+                    LastUpdatedUtc = tFileUtc ?? fileWriteUtc,
+                    Status = TabSyncItemStatus.Skipped,
+                    Detail =
+                        "tab is newer than file (line 1 lastUpdated and file modification time are not newer than tab Last Updated)"
                 });
-                anyChange = true;
+                continue;
             }
+
+            DateTime appliedUtc;
+            if (headerNewer && fileSystemNewer)
+                appliedUtc = tFileUtc!.Value >= fileWriteUtc!.Value ? tFileUtc.Value : fileWriteUtc.Value;
+            else if (headerNewer)
+                appliedUtc = tFileUtc!.Value;
             else
+                appliedUtc = fileWriteUtc!.Value;
+
+            ApplyIncomingTextToTab(doc, incomingBody, appliedUtc);
+            items.Add(new TabSyncItem
             {
-                var detail = !headerUtc.HasValue
-                    ? "no header timestamp in file"
-                    : doc.IsDirty
-                        ? "tab has unsaved changes"
-                        : !lastOutUtc.HasValue
-                            ? "no prior Noted export recorded for this tab (resolve in Tab Sync)"
-                            : "file not treated as newer than last Noted export (update lastUpdated on line 1, or save the file after editing so its modification time advances)";
-                items.Add(new TabSyncItem
-                {
-                    TabId = doc.StableTabId,
-                    TabHeader = doc.Header,
-                    FilePath = path,
-                    LastUpdatedUtc = headerUtc,
-                    Status = TabSyncItemStatus.Conflict,
-                    Detail = detail,
-                    IncomingText = incomingBody,
-                    CurrentText = currentText
-                });
-            }
+                TabId = doc.StableTabId,
+                TabHeader = doc.Header,
+                FilePath = path,
+                LastUpdatedUtc = appliedUtc,
+                Status = TabSyncItemStatus.AutoApplied
+            });
+            anyChange = true;
         }
 
         if (items.Count > 0)
@@ -248,24 +245,6 @@ public partial class MainWindow
             try { SaveSession(updateStatus: false); }
             catch { /* non-critical */ }
         }
-    }
-
-    private Dictionary<string, DateTime?> LookupLastOutstreamPerTab()
-    {
-        var result = new Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var entry in _tabSyncHistoryService.GetEntries())
-        {
-            if (entry.Direction != TabSyncDirection.Outstream) continue;
-            foreach (var item in entry.Items)
-            {
-                if (item.Status != TabSyncItemStatus.Wrote) continue;
-                var key = !string.IsNullOrEmpty(item.TabId) ? item.TabId : item.TabHeader;
-                if (string.IsNullOrEmpty(key)) continue;
-                if (!result.ContainsKey(key))
-                    result[key] = item.LastUpdatedUtc;
-            }
-        }
-        return result;
     }
 
     private static Dictionary<string, string> BuildPlainTabPathIndexById(string folder)

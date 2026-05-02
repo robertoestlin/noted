@@ -334,7 +334,7 @@ public partial class MainWindow
         var syncPanel = new StackPanel { Margin = new Thickness(12) };
         syncPanel.Children.Add(new TextBlock
         {
-            Text = "Plain text tab sync — each open tab maps to a UTF-8 .txt file; matching uses the stable id in the first line, not the filename. Files are named from the tab title (sanitized): duplicate titles become \"Name.txt\", \"Name (1).txt\", \"Name (2).txt\", … in tab order. The first line looks like: \"# Last updated: 2026-05-02 14:14:05 -- id=<guid>;lastUpdated=<UTC>Z\". Older \"# noteed-tab:\" and \"# lastupdated:\" lines still parse.",
+            Text = "Keep your tabs in sync with a folder you pick—Dropbox, OneDrive, a network drive, or any path that your system syncs. Noted writes each tab as a .txt file and can bring changes from that folder back into the app when you enable pull below.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = Brushes.DimGray,
             Margin = new Thickness(0, 0, 0, 12)
@@ -382,9 +382,21 @@ public partial class MainWindow
         cmbPlainTabsSyncHours.SelectedItem = _cloudSyncTabsPlainTextSyncHours;
         if (cmbPlainTabsSyncHours.SelectedItem == null) cmbPlainTabsSyncHours.SelectedItem = 0;
         var cmbPlainTabsSyncMinutes = new ComboBox { Width = 80, Margin = new Thickness(8, 0, 8, 0) };
-        foreach (var m in CloudMinuteOptions) cmbPlainTabsSyncMinutes.Items.Add(m);
-        cmbPlainTabsSyncMinutes.SelectedItem = _cloudSyncTabsPlainTextSyncMinutes;
-        if (cmbPlainTabsSyncMinutes.SelectedItem == null) cmbPlainTabsSyncMinutes.SelectedItem = 0;
+        void RefreshPlainTabsSyncMinuteChoices()
+        {
+            var h = cmbPlainTabsSyncHours.SelectedItem is int hh ? hh : 0;
+            var preferred = cmbPlainTabsSyncMinutes.SelectedItem is int pm ? pm : _cloudSyncTabsPlainTextSyncMinutes;
+            cmbPlainTabsSyncMinutes.Items.Clear();
+            foreach (var m in PlainTextTabSyncMinuteOptionsForHours(h))
+                cmbPlainTabsSyncMinutes.Items.Add(m);
+            if (cmbPlainTabsSyncMinutes.Items.Cast<int>().Contains(preferred))
+                cmbPlainTabsSyncMinutes.SelectedItem = preferred;
+            else
+                cmbPlainTabsSyncMinutes.SelectedItem = cmbPlainTabsSyncMinutes.Items.Cast<int>().First();
+        }
+
+        cmbPlainTabsSyncHours.SelectionChanged += (_, _) => RefreshPlainTabsSyncMinuteChoices();
+        RefreshPlainTabsSyncMinuteChoices();
         plainTabsSyncIntervalRow.Children.Add(cmbPlainTabsSyncHours);
         plainTabsSyncIntervalRow.Children.Add(new TextBlock { Text = "hours", VerticalAlignment = VerticalAlignment.Center });
         plainTabsSyncIntervalRow.Children.Add(cmbPlainTabsSyncMinutes);
@@ -2091,8 +2103,9 @@ public partial class MainWindow
                 if (cmbPlainTabsSyncHours.SelectedItem is int plainSyncHoursValue && plainSyncHoursValue >= 0 && plainSyncHoursValue <= 50)
                     _cloudSyncTabsPlainTextSyncHours = plainSyncHoursValue;
                 if (cmbPlainTabsSyncMinutes.SelectedItem is int plainSyncMinutesValue
-                    && plainSyncMinutesValue >= 0 && plainSyncMinutesValue <= 55 && plainSyncMinutesValue % 5 == 0)
-                    _cloudSyncTabsPlainTextSyncMinutes = plainSyncMinutesValue;
+                    && _windowSettingsService.TryGetValidPlainTextTabSyncMinutes(
+                        plainSyncMinutesValue, _cloudSyncTabsPlainTextSyncHours, out var plainSyncM))
+                    _cloudSyncTabsPlainTextSyncMinutes = plainSyncM;
                 _cloudSyncTabsPlainTextInFolder = cloudPlainTabsFromFolderValue;
                 _cloudSyncTabsPlainTextInstreamEnabled = chkInstream.IsChecked == true
                     && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder);
