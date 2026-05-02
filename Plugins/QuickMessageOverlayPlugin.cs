@@ -55,6 +55,7 @@ public partial class MainWindow
     private DispatcherTimer? _messageOverlayCountdownTimer;
     private DateTime _messageOverlayCountdownEndUtc;
     private int _messageOverlayCountdownInitialSeconds;
+    private bool _messageOverlayCountdownTurnedOff;
     private bool _messageOverlayShowNowPlaying;
     private bool _messageOverlayEffectEnabled;
     private string _messageOverlayEffect = DefaultMessageOverlayEffect;
@@ -1041,6 +1042,7 @@ public partial class MainWindow
         SetMessageOverlayBlinking(false);
         StopMessageOverlayCountdown();
         StopMessageOverlayCountdownExpiredBlink();
+        _messageOverlayCountdownTurnedOff = false;
         StopMessageOverlayEffect();
         StopMessageOverlayGnomeTimer();
         MessageOverlayTextEffectCanvas?.Children.Clear();
@@ -1415,22 +1417,51 @@ public partial class MainWindow
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Visible;
     }
 
-    private void StartMessageOverlayCountdown(int totalSeconds, Brush foreground)
+    private void SyncMessageOverlayCountdownContainerVisibility()
+    {
+        if (_messageOverlayCountdownInitialSeconds <= 0)
+            return;
+        MessageOverlayCountdownContainer.Visibility = _messageOverlayCountdownTurnedOff
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void StartMessageOverlayCountdown(int totalSeconds, Brush foreground, bool updateResetBaseline = true)
     {
         StopMessageOverlayCountdown();
         StopMessageOverlayCountdownExpiredBlink();
+
+        if (updateResetBaseline)
+        {
+            if (totalSeconds <= 0)
+                _messageOverlayCountdownInitialSeconds = 0;
+            else
+                _messageOverlayCountdownInitialSeconds = totalSeconds;
+        }
+
+        if (updateResetBaseline && totalSeconds > 0)
+            _messageOverlayCountdownTurnedOff = false;
+
         if (totalSeconds <= 0)
         {
-            _messageOverlayCountdownInitialSeconds = 0;
-            MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
+            if (_messageOverlayCountdownInitialSeconds <= 0)
+            {
+                MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            MessageOverlayCountdown.Foreground = foreground;
+            MessageOverlayCountdown.Text = "00:00";
+            SyncMessageOverlayCountdownContainerVisibility();
+            if (!_messageOverlayCountdownTurnedOff)
+                StartMessageOverlayCountdownExpiredBlink();
             return;
         }
 
-        _messageOverlayCountdownInitialSeconds = totalSeconds;
         MessageOverlayCountdown.Foreground = foreground;
-        MessageOverlayCountdownContainer.Visibility = Visibility.Visible;
         _messageOverlayCountdownEndUtc = DateTime.UtcNow.AddSeconds(totalSeconds);
         UpdateMessageOverlayCountdownText();
+        SyncMessageOverlayCountdownContainerVisibility();
         _messageOverlayCountdownTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(250)
@@ -1439,11 +1470,75 @@ public partial class MainWindow
         _messageOverlayCountdownTimer.Start();
     }
 
+    private static int MessageOverlayCountdownMaxTotalSeconds()
+        => MaxMessageOverlayCountdownMinutes * 60 + MaxMessageOverlayCountdownSeconds;
+
+    private int GetMessageOverlayCountdownRemainingSeconds()
+    {
+        if (_messageOverlayCountdownTimer != null)
+            return Math.Max(0, (int)Math.Ceiling((_messageOverlayCountdownEndUtc - DateTime.UtcNow).TotalSeconds));
+        return 0;
+    }
+
+    private bool MessageOverlayCountdownHasExpired()
+    {
+        return _messageOverlayCountdownInitialSeconds > 0
+            && _messageOverlayCountdownTimer == null
+            && DateTime.UtcNow >= _messageOverlayCountdownEndUtc;
+    }
+
+    private void AdjustMessageOverlayCountdownByMinutes(int deltaMinutes)
+    {
+        if (_messageOverlayCountdownInitialSeconds <= 0 || _messageOverlayCountdownTurnedOff)
+            return;
+
+        var maxSec = MessageOverlayCountdownMaxTotalSeconds();
+        var rem = GetMessageOverlayCountdownRemainingSeconds();
+        if (_messageOverlayCountdownTimer == null && MessageOverlayCountdownHasExpired())
+            rem = 0;
+        var newRem = Math.Clamp(rem + deltaMinutes * 60, 0, maxSec);
+
+        StartMessageOverlayCountdown(newRem, MessageOverlayText.Foreground, updateResetBaseline: false);
+    }
+
+    private int MessageOverlayCountdownDurationFromSettings()
+    {
+        var minutes = ClampMessageOverlayCountdown(_messageOverlayCountdownMinutes, MaxMessageOverlayCountdownMinutes);
+        var seconds = ClampMessageOverlayCountdown(_messageOverlayCountdownSeconds, MaxMessageOverlayCountdownSeconds);
+        var total = minutes * 60 + seconds;
+        return total <= 0 ? 60 : total;
+    }
+
+    private void ToggleMessageOverlayCountdownOnOff()
+    {
+        if (_messageOverlayCountdownInitialSeconds > 0)
+        {
+            if (!_messageOverlayCountdownTurnedOff)
+            {
+                _messageOverlayCountdownTurnedOff = true;
+                StopMessageOverlayCountdown();
+                StopMessageOverlayCountdownExpiredBlink();
+                MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            _messageOverlayCountdownTurnedOff = false;
+            StartMessageOverlayCountdown(_messageOverlayCountdownInitialSeconds, MessageOverlayText.Foreground, updateResetBaseline: false);
+            return;
+        }
+
+        StartMessageOverlayCountdown(
+            MessageOverlayCountdownDurationFromSettings(),
+            MessageOverlayText.Foreground,
+            updateResetBaseline: true);
+    }
+
     private void ResetMessageOverlayCountdown()
     {
         if (_messageOverlayCountdownInitialSeconds <= 0)
             return;
-        StartMessageOverlayCountdown(_messageOverlayCountdownInitialSeconds, MessageOverlayText.Foreground);
+        _messageOverlayCountdownTurnedOff = false;
+        StartMessageOverlayCountdown(_messageOverlayCountdownInitialSeconds, MessageOverlayText.Foreground, updateResetBaseline: false);
     }
 
     private void StartMessageOverlayCountdownExpiredBlink()
@@ -1487,7 +1582,9 @@ public partial class MainWindow
         {
             MessageOverlayCountdown.Text = "00:00";
             StopMessageOverlayCountdown();
-            StartMessageOverlayCountdownExpiredBlink();
+            SyncMessageOverlayCountdownContainerVisibility();
+            if (!_messageOverlayCountdownTurnedOff)
+                StartMessageOverlayCountdownExpiredBlink();
             return;
         }
         var totalSec = (int)Math.Ceiling(remaining.TotalSeconds);
@@ -1727,6 +1824,27 @@ public partial class MainWindow
         if (key == Key.R && _messageOverlayCountdownInitialSeconds > 0)
         {
             ResetMessageOverlayCountdown();
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.OemComma)
+        {
+            AdjustMessageOverlayCountdownByMinutes(-1);
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.OemPeriod)
+        {
+            AdjustMessageOverlayCountdownByMinutes(1);
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.OemMinus || key == Key.Subtract)
+        {
+            ToggleMessageOverlayCountdownOnOff();
             e.Handled = true;
             return true;
         }
