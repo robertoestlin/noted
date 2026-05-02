@@ -3468,7 +3468,9 @@ public partial class MainWindow : Window
         return name;
     }
 
-    private List<TabSyncItem> SyncCloudPlainTextTabFiles(string folderPath)
+    private List<TabSyncItem> SyncCloudPlainTextTabFiles(
+        string folderPath,
+        HashSet<string>? forceRewriteAfterPullTabIds = null)
     {
         var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var results = new List<TabSyncItem>();
@@ -3480,12 +3482,16 @@ public partial class MainWindow : Window
             var destPath = AllocatePlainTabFilePath(folderPath, doc.Header, usedPaths);
             try
             {
-                var stampUtc = doc.LastSavedUtc?.ToUniversalTime() ?? DateTime.UtcNow;
+                var forceRewrite = forceRewriteAfterPullTabIds != null
+                                   && forceRewriteAfterPullTabIds.Contains(doc.StableTabId);
+                var stampUtc = forceRewrite
+                    ? DateTime.UtcNow
+                    : doc.LastSavedUtc?.ToUniversalTime() ?? DateTime.UtcNow;
                 var probeExport = BuildCloudPlainTextTabExport(doc.CachedText, stampUtc, doc.StableTabId, DateTime.Now);
                 var desiredParsed = ParsePlainTabFile(probeExport);
                 var desiredBody = desiredParsed.Body;
 
-                if (File.Exists(destPath))
+                if (File.Exists(destPath) && !forceRewrite)
                 {
                     string rawExisting;
                     try
@@ -3522,6 +3528,8 @@ public partial class MainWindow : Window
 
                 var plain = BuildCloudPlainTextTabExport(doc.CachedText, stampUtc, doc.StableTabId, DateTime.Now);
                 File.WriteAllText(destPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                if (forceRewrite)
+                    doc.LastSavedUtc = stampUtc;
                 results.Add(new TabSyncItem
                 {
                     TabId = doc.StableTabId,
@@ -3547,13 +3555,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Writes changed tabs as plain text files and records history.</summary>
-    private bool TrySyncPlainTextTabsOutstreamCore(string plainFolderRaw)
+    private bool TrySyncPlainTextTabsOutstreamCore(
+        string plainFolderRaw,
+        HashSet<string>? forceRewriteAfterPullTabIds = null)
     {
         try
         {
             var plainFolder = Path.GetFullPath(plainFolderRaw.Trim());
             Directory.CreateDirectory(plainFolder);
-            var items = SyncCloudPlainTextTabFiles(plainFolder);
+            var items = SyncCloudPlainTextTabFiles(plainFolder, forceRewriteAfterPullTabIds);
             RecordTabSyncHistory(TabSyncDirection.Outstream, items);
             return true;
         }

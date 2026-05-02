@@ -76,15 +76,27 @@ public partial class MainWindow
             /* non-critical */
         }
 
+        HashSet<string>? pulledTabIdsThisPass = null;
         if (wantInstream)
-            RunInstreamPlainTextTabSyncOnce();
+            pulledTabIdsThisPass = RunInstreamPlainTextTabSyncOnce();
 
         if (wantOutstream)
         {
             try
             {
                 _ = Path.GetFullPath(_cloudSyncTabsPlainTextFolder.Trim());
-                _ = TrySyncPlainTextTabsOutstreamCore(_cloudSyncTabsPlainTextFolder);
+                if (TrySyncPlainTextTabsOutstreamCore(_cloudSyncTabsPlainTextFolder, pulledTabIdsThisPass)
+                    && pulledTabIdsThisPass is { Count: > 0 })
+                {
+                    try
+                    {
+                        SaveSession(updateStatus: false);
+                    }
+                    catch
+                    {
+                        /* non-critical */
+                    }
+                }
             }
             catch
             {
@@ -104,13 +116,15 @@ public partial class MainWindow
     /// last-write time (UTC) is strictly newer than <see cref="TabDocument.LastSavedUtc"/> (fallback
     /// <see cref="TabDocument.LastChangedUtc"/>), so edits that omit updating the header still sync in.
     /// </summary>
-    private void RunInstreamPlainTextTabSyncOnce()
+    /// <summary>Returns stable tab ids for which external file content was applied (so outstream can refresh push copy + header + mtime).</summary>
+    private HashSet<string> RunInstreamPlainTextTabSyncOnce()
     {
+        var pulledTabIds = new HashSet<string>(StringComparer.Ordinal);
         if (!_cloudSyncTabsPlainTextInstreamEnabled)
-            return;
+            return pulledTabIds;
 
         if (string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder))
-            return;
+            return pulledTabIds;
 
         string folder;
         try
@@ -119,11 +133,11 @@ public partial class MainWindow
         }
         catch
         {
-            return;
+            return pulledTabIds;
         }
 
         if (!Directory.Exists(folder))
-            return;
+            return pulledTabIds;
 
         var items = new List<TabSyncItem>();
         var anyChange = false;
@@ -226,6 +240,7 @@ public partial class MainWindow
                 appliedUtc = fileWriteUtc!.Value;
 
             ApplyIncomingTextToTab(doc, incomingBody, appliedUtc);
+            pulledTabIds.Add(doc.StableTabId);
             items.Add(new TabSyncItem
             {
                 TabId = doc.StableTabId,
@@ -245,6 +260,8 @@ public partial class MainWindow
             try { SaveSession(updateStatus: false); }
             catch { /* non-critical */ }
         }
+
+        return pulledTabIds;
     }
 
     private static Dictionary<string, string> BuildPlainTabPathIndexById(string folder)
