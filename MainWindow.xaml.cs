@@ -3442,6 +3442,22 @@ public partial class MainWindow : Window
         return candidate;
     }
 
+    /// <summary>Plain-text export path for <paramref name="doc"/> using current tab order and headers (same rules as outstream sync).</summary>
+    private string GetPlainTabOutstreamPathForDoc(string folderPath, TabDocument doc)
+    {
+        var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in MainTabControl.Items)
+        {
+            if (item is not TabItem tab || !_docs.TryGetValue(tab, out var d))
+                continue;
+            var path = AllocatePlainTabFilePath(folderPath, d.Header, usedPaths);
+            if (ReferenceEquals(d, doc))
+                return path;
+        }
+
+        throw new InvalidOperationException("Tab is not present in the tab control.");
+    }
+
     private static string TransformLineForCloudPlainExport(string lineText)
     {
         if (TryStripInlineAssigneeSuffix(lineText, out var withoutAssignee))
@@ -6193,8 +6209,64 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrWhiteSpace(newName)) return;
 
-        doc.Header = newName.Trim();
+        var trimmed = newName.Trim();
+
+        string? oldPlainPath = null;
+        string? plainFolder = null;
+        if (_cloudSyncTabsPlainTextEnabled && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
+        {
+            try
+            {
+                plainFolder = Path.GetFullPath(_cloudSyncTabsPlainTextFolder.Trim());
+                oldPlainPath = GetPlainTabOutstreamPathForDoc(plainFolder, doc);
+            }
+            catch
+            {
+                oldPlainPath = null;
+                plainFolder = null;
+            }
+        }
+
+        doc.Header = trimmed;
         RefreshTabHeader(doc);
+
+        if (oldPlainPath != null && plainFolder != null)
+        {
+            try
+            {
+                Directory.CreateDirectory(plainFolder);
+                var newPlainPath = GetPlainTabOutstreamPathForDoc(plainFolder, doc);
+                var stampUtc = doc.LastSavedUtc?.ToUniversalTime() ?? DateTime.UtcNow;
+                var plain = BuildCloudPlainTextTabExport(doc.CachedText ?? string.Empty, stampUtc, doc.StableTabId,
+                    DateTime.Now);
+                File.WriteAllText(newPlainPath, plain, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                if (!string.Equals(oldPlainPath, newPlainPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        if (File.Exists(oldPlainPath))
+                            File.Delete(oldPlainPath);
+                    }
+                    catch (Exception exDel)
+                    {
+                        AppendAppLog($"Could not delete old plain tab file after rename ({oldPlainPath}): {exDel.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendAppLog($"Plain-text tab folder sync after rename failed: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            SaveSession(updateStatus: true);
+        }
+        catch
+        {
+            /* non-critical */
+        }
     }
 
     private string? ShowRenameDialog(string currentName)
@@ -6664,10 +6736,37 @@ public partial class MainWindow : Window
                 return false;
         }
 
+        string? plainPathToDelete = null;
+        if (_cloudSyncTabsPlainTextEnabled && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
+        {
+            try
+            {
+                var folder = Path.GetFullPath(_cloudSyncTabsPlainTextFolder.Trim());
+                plainPathToDelete = GetPlainTabOutstreamPathForDoc(folder, doc);
+            }
+            catch
+            {
+                plainPathToDelete = null;
+            }
+        }
+
         doc.CachedText = doc.Editor.Text;
         AddClosedTabToHistory(doc);
         _docs.Remove(tab);
         MainTabControl.Items.Remove(tab);
+
+        if (plainPathToDelete != null)
+        {
+            try
+            {
+                if (File.Exists(plainPathToDelete))
+                    File.Delete(plainPathToDelete);
+            }
+            catch (Exception ex)
+            {
+                AppendAppLog($"Could not delete plain tab file after tab close ({plainPathToDelete}): {ex.Message}");
+            }
+        }
 
         RefreshGlobalDirtyStatus();
 
