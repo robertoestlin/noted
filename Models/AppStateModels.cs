@@ -395,7 +395,7 @@ public sealed class WindowSettings
     /// <summary>Minutes component (5-minute steps) of the combined plain-text folder sync interval.</summary>
     public int? CloudSyncTabsPlainTextSyncMinutes { get; set; }
 
-    /// <summary>Pull edits from this folder back into Noted when instream is enabled. Falls back to <see cref="CloudSyncTabsPlainTextFolder"/> when unset for older settings files.</summary>
+    /// <summary>Pull edits from this folder back into Noted when instream is enabled.</summary>
     public string? CloudSyncTabsPlainTextInFolder { get; set; }
 
     /// <summary>Pull edits from the plain text tabs folder back into Noted (default off).</summary>

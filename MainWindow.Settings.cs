@@ -1069,9 +1069,10 @@ public partial class MainWindow
                 _cloudSyncTabsPlainTextFolder = bootstrap.CloudSyncTabsPlainTextFolder.Trim();
             }
         }
+        else
+            _cloudSyncTabsPlainTextFolder = string.Empty;
 
-        _cloudSyncTabsPlainTextAlsoDuringCloudSave = bootstrap.CloudSyncTabsPlainTextAlsoDuringCloudSave
-            ?? (bootstrap.CloudSyncTabsPlainTextEnabled == true);
+        _cloudSyncTabsPlainTextAlsoDuringCloudSave = bootstrap.CloudSyncTabsPlainTextAlsoDuringCloudSave ?? false;
         ApplyPlainTabsSyncIntervalFromSettings(bootstrap);
 
         if (!string.IsNullOrWhiteSpace(bootstrap.CloudSyncTabsPlainTextInFolder))
@@ -1085,8 +1086,8 @@ public partial class MainWindow
                 _cloudSyncTabsPlainTextInFolder = bootstrap.CloudSyncTabsPlainTextInFolder.Trim();
             }
         }
-        else if (!string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
-            _cloudSyncTabsPlainTextInFolder = _cloudSyncTabsPlainTextFolder;
+        else
+            _cloudSyncTabsPlainTextInFolder = string.Empty;
 
         if (_windowSettingsService.TryGetValidCloudHours(bootstrap.CloudSaveHours, out var cloudHours))
             _cloudSaveIntervalHours = cloudHours;
@@ -1146,9 +1147,7 @@ public partial class MainWindow
         else
             _cloudSyncTabsPlainTextFolder = string.Empty;
 
-        // Older settings tied plain-text export to cloud save only; preserve that when the new flag is absent.
-        _cloudSyncTabsPlainTextAlsoDuringCloudSave = state.CloudSyncTabsPlainTextAlsoDuringCloudSave
-            ?? (state.CloudSyncTabsPlainTextEnabled == true);
+        _cloudSyncTabsPlainTextAlsoDuringCloudSave = state.CloudSyncTabsPlainTextAlsoDuringCloudSave ?? false;
         ApplyPlainTabsSyncIntervalFromSettings(state);
 
         if (!string.IsNullOrWhiteSpace(state.CloudSyncTabsPlainTextInFolder))
@@ -1162,8 +1161,6 @@ public partial class MainWindow
                 _cloudSyncTabsPlainTextInFolder = state.CloudSyncTabsPlainTextInFolder.Trim();
             }
         }
-        else if (!string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextFolder))
-            _cloudSyncTabsPlainTextInFolder = _cloudSyncTabsPlainTextFolder;
         else
             _cloudSyncTabsPlainTextInFolder = string.Empty;
 
