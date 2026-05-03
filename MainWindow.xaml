@@ -384,6 +384,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0"  Grid.Column="0" Text="H"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="0"  Grid.Column="1" Text="Toggle this help panel"                                                   Foreground="#C1CFEA" Margin="0,1,0,1"/>
@@ -409,10 +410,12 @@
                             <TextBlock Grid.Row="10" Grid.Column="1" Text="Pause / play music"                                                       Foreground="#C1CFEA" Margin="0,1,0,1"/>
                             <TextBlock Grid.Row="11" Grid.Column="0" Text="N"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
                             <TextBlock Grid.Row="11" Grid.Column="1" Text="Next track"                                                               Foreground="#C1CFEA" Margin="0,1,0,1"/>
-                            <TextBlock Grid.Row="12" Grid.Column="0" Text="Esc"         FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
-                            <TextBlock Grid.Row="12" Grid.Column="1" Text="Close overlay"                                                            Foreground="#C1CFEA" Margin="0,1,0,1"/>
-                            <TextBlock Grid.Row="13" Grid.Column="0" Text="Other"       FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
-                            <TextBlock Grid.Row="13" Grid.Column="1" Text="Any other key closes the overlay"                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="12" Grid.Column="0" Text="D"           FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="12" Grid.Column="1" Text="Drop a random letter"                                                       Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="13" Grid.Column="0" Text="Esc"         FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="13" Grid.Column="1" Text="Close overlay"                                                            Foreground="#C1CFEA" Margin="0,1,0,1"/>
+                            <TextBlock Grid.Row="14" Grid.Column="0" Text="Other"       FontFamily="Consolas, Courier New" FontWeight="Bold" Foreground="White"     Margin="0,1,16,1"/>
+                            <TextBlock Grid.Row="14" Grid.Column="1" Text="Any other key closes the overlay"                                         Foreground="#C1CFEA" Margin="0,1,0,1"/>
                         </Grid>
                     </StackPanel>
                 </Border>

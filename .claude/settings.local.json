@@ -10,7 +10,10 @@
       "Bash(dotnet --list-sdks)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Noted.csproj -c Debug)",
       "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build Heartbeat/Heartbeat.csproj -c Debug)",
-      "Bash(dotnet.exe build *)"
+      "Bash(dotnet.exe build *)",
+      "Bash(command -v dotnet)",
+      "Bash(dotnet --version)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug -nologo)"
     ]
   }
 }

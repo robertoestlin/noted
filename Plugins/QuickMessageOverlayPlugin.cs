@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Noted.Models;
 
@@ -76,6 +77,10 @@ public partial class MainWindow
     private DispatcherTimer? _messageOverlayGnomeTimer;
     private static BitmapImage? _messageOverlayGnomeBitmap;
     private int _messageOverlayGnomeManualCycle;
+    private const int MessageOverlayDropShakeMs = 2100;
+    private const int MessageOverlayDropCrackAtMs = 1350;
+    private const int MessageOverlayDropFallMs = 1600;
+    private readonly HashSet<int> _messageOverlayDroppedCharIndices = [];
 
     private static readonly (string Name, string Hex)[] QuickMessageColorOptions =
     [
@@ -1127,6 +1132,7 @@ public partial class MainWindow
         _messageOverlayCountdownTurnedOff = false;
         StopMessageOverlayEffect();
         StopMessageOverlayGnomeTimer();
+        _messageOverlayDroppedCharIndices.Clear();
         MessageOverlayTextEffectCanvas?.Children.Clear();
         MessageOverlayCountdownContainer.Visibility = Visibility.Collapsed;
         MessageOverlayNowPlayingContainer.Visibility = Visibility.Collapsed;
@@ -1815,9 +1821,10 @@ public partial class MainWindow
                 continue;
             }
 
+            var visible = i < maxVisible && !_messageOverlayDroppedCharIndices.Contains(i);
             MessageOverlayText.Inlines.Add(new Run(ch.ToString())
             {
-                Foreground = i < maxVisible ? _messageOverlayCharacterForeground : transparentBrush
+                Foreground = visible ? _messageOverlayCharacterForeground : transparentBrush
             });
         }
     }
@@ -1829,6 +1836,350 @@ public partial class MainWindow
 
         _messageOverlayCharacterTimer.Stop();
         _messageOverlayCharacterTimer = null;
+    }
+
+    private void DropRandomMessageOverlayLetter()
+    {
+        if (MessageOverlay.Visibility != Visibility.Visible)
+            return;
+        if (MessageOverlayEffectCanvas == null)
+            return;
+
+        var sourceText = MessageOverlayText.Text ?? string.Empty;
+        if (sourceText.Length == 0)
+            return;
+
+        var candidates = new List<int>();
+        for (var i = 0; i < sourceText.Length; i++)
+        {
+            if (_messageOverlayDroppedCharIndices.Contains(i))
+                continue;
+            var c = sourceText[i];
+            if (char.IsWhiteSpace(c) || c == '\r' || c == '\n')
+                continue;
+            candidates.Add(i);
+        }
+        if (candidates.Count == 0)
+            return;
+
+        var index = candidates[Random.Shared.Next(candidates.Count)];
+
+        if (!TryGetMessageOverlayCharLocalMetrics(sourceText, index, out var localRect, out _, out _, out _))
+            return;
+        if (localRect.Width <= 0 || localRect.Height <= 0)
+            return;
+
+        GeneralTransform textToOuter;
+        try
+        {
+            textToOuter = MessageOverlayText.TransformToVisual(MessageOverlayEffectCanvas);
+        }
+        catch
+        {
+            return;
+        }
+
+        var outerTopLeft = textToOuter.Transform(new Point(localRect.X, localRect.Y));
+        var outerTopRight = textToOuter.Transform(new Point(localRect.X + localRect.Width, localRect.Y));
+        var outerBottomLeft = textToOuter.Transform(new Point(localRect.X, localRect.Y + localRect.Height));
+
+        var screenWidth = (outerTopRight - outerTopLeft).Length;
+        var screenHeight = (outerBottomLeft - outerTopLeft).Length;
+        if (screenWidth <= 0 || screenHeight <= 0)
+            return;
+
+        var ch = sourceText[index];
+        var foreground = MessageOverlayText.Foreground;
+
+        _messageOverlayDroppedCharIndices.Add(index);
+        ApplyMessageOverlayDroppedCharsToText(sourceText);
+
+        var screenFontSize = MessageOverlayText.FontSize * (screenHeight / localRect.Height);
+        var falling = new TextBlock
+        {
+            Text = ch.ToString(),
+            Foreground = foreground,
+            FontFamily = MessageOverlayText.FontFamily,
+            FontWeight = MessageOverlayText.FontWeight,
+            FontStyle = MessageOverlayText.FontStyle,
+            FontStretch = MessageOverlayText.FontStretch,
+            FontSize = screenFontSize,
+            TextAlignment = TextAlignment.Center,
+            IsHitTestVisible = false,
+            RenderTransformOrigin = new Point(0, 0)
+        };
+
+        var rotate = new RotateTransform(0, screenWidth / 2.0, screenHeight / 2.0);
+        var translate = new TranslateTransform(0, 0);
+        var transform = new TransformGroup();
+        transform.Children.Add(rotate);
+        transform.Children.Add(translate);
+        falling.RenderTransform = transform;
+
+        Canvas.SetLeft(falling, outerTopLeft.X);
+        Canvas.SetTop(falling, outerTopLeft.Y);
+        Panel.SetZIndex(falling, 5);
+        MessageOverlayEffectCanvas.Children.Add(falling);
+
+        var shakeRotate = BuildMessageOverlayShakeAngleAnimation();
+        var shakeJitterX = BuildMessageOverlayShakeJitterAnimation(screenWidth * 0.06);
+        rotate.BeginAnimation(RotateTransform.AngleProperty, shakeRotate);
+        translate.BeginAnimation(TranslateTransform.XProperty, shakeJitterX);
+
+        var maskBrush = CreateMessageOverlayCharInkBrush(ch);
+        Canvas? crackContainer = null;
+        var crackTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(MessageOverlayDropCrackAtMs) };
+        crackTimer.Tick += (_, _) =>
+        {
+            crackTimer.Stop();
+            if (MessageOverlay.Visibility != Visibility.Visible)
+                return;
+            crackContainer = CreateMessageOverlayCrackOverlay(screenWidth, screenHeight, foreground, maskBrush);
+            Canvas.SetLeft(crackContainer, outerTopLeft.X);
+            Canvas.SetTop(crackContainer, outerTopLeft.Y);
+            Panel.SetZIndex(crackContainer, 6);
+            crackContainer.RenderTransform = transform;
+            MessageOverlayEffectCanvas.Children.Add(crackContainer);
+        };
+        crackTimer.Start();
+
+        var fallTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(MessageOverlayDropShakeMs) };
+        fallTimer.Tick += (_, _) =>
+        {
+            fallTimer.Stop();
+            if (MessageOverlay.Visibility != Visibility.Visible)
+            {
+                _messageOverlayDroppedCharIndices.Remove(index);
+                return;
+            }
+
+            rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+            translate.BeginAnimation(TranslateTransform.XProperty, null);
+
+            var overlayHeight = MessageOverlay.ActualHeight;
+            var fallDistance = (overlayHeight - outerTopLeft.Y) + screenHeight * 2 + 80;
+
+            var fallY = new DoubleAnimation(0, fallDistance, TimeSpan.FromMilliseconds(MessageOverlayDropFallMs))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
+            };
+            translate.BeginAnimation(TranslateTransform.YProperty, fallY);
+
+            var spinDirection = Random.Shared.Next(2) == 0 ? -1 : 1;
+            var fallRotate = new DoubleAnimation(
+                rotate.Angle,
+                rotate.Angle + spinDirection * 140,
+                TimeSpan.FromMilliseconds(MessageOverlayDropFallMs))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn }
+            };
+            rotate.BeginAnimation(RotateTransform.AngleProperty, fallRotate);
+
+            var cleanupTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(MessageOverlayDropFallMs + 80)
+            };
+            cleanupTimer.Tick += (_, _) =>
+            {
+                cleanupTimer.Stop();
+                MessageOverlayEffectCanvas.Children.Remove(falling);
+                if (crackContainer != null)
+                    MessageOverlayEffectCanvas.Children.Remove(crackContainer);
+                _messageOverlayDroppedCharIndices.Remove(index);
+                if (MessageOverlay.Visibility == Visibility.Visible)
+                    ApplyMessageOverlayDroppedCharsToText(MessageOverlayText.Text ?? string.Empty);
+            };
+            cleanupTimer.Start();
+        };
+        fallTimer.Start();
+    }
+
+    private ImageBrush? CreateMessageOverlayCharInkBrush(char ch)
+    {
+        var typeface = new Typeface(
+            MessageOverlayText.FontFamily,
+            MessageOverlayText.FontStyle,
+            MessageOverlayText.FontWeight,
+            MessageOverlayText.FontStretch);
+        double dpi;
+        try
+        {
+            dpi = VisualTreeHelper.GetDpi(MessageOverlayText).PixelsPerDip;
+        }
+        catch
+        {
+            dpi = 1.0;
+        }
+        var fontSize = MessageOverlayText.FontSize;
+        if (fontSize <= 0)
+            return null;
+
+        var ft = new FormattedText(
+            ch.ToString(),
+            CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            fontSize,
+            Brushes.White,
+            dpi);
+
+        const int maskScale = 4;
+        var maskW = Math.Max(8, (int)Math.Ceiling(ft.WidthIncludingTrailingWhitespace * maskScale));
+        var maskH = Math.Max(8, (int)Math.Ceiling(ft.Height * maskScale));
+
+        var dv = new DrawingVisual();
+        using (var dc = dv.RenderOpen())
+        {
+            dc.PushTransform(new ScaleTransform(maskScale, maskScale));
+            dc.DrawText(ft, new Point(0, 0));
+            dc.Pop();
+        }
+
+        var rtb = new RenderTargetBitmap(maskW, maskH, 96, 96, PixelFormats.Pbgra32);
+        rtb.Render(dv);
+        rtb.Freeze();
+
+        return new ImageBrush(rtb)
+        {
+            Stretch = Stretch.Fill
+        };
+    }
+
+    private void ApplyMessageOverlayDroppedCharsToText(string sourceText)
+    {
+        if (_isMessageOverlayBlinking
+            && string.Equals(_messageOverlayActiveBlinkMode, BlinkModeCharacterSweep, StringComparison.Ordinal))
+        {
+            RenderCharacterSweepText(_messageOverlayCharacterVisibleChars);
+            return;
+        }
+
+        if (_messageOverlayDroppedCharIndices.Count == 0)
+        {
+            MessageOverlayText.Inlines.Clear();
+            MessageOverlayText.Text = sourceText;
+            return;
+        }
+
+        var foreground = MessageOverlayText.Foreground;
+        MessageOverlayText.Inlines.Clear();
+        for (var i = 0; i < sourceText.Length; i++)
+        {
+            var c = sourceText[i];
+            if (c == '\r')
+                continue;
+            if (c == '\n')
+            {
+                MessageOverlayText.Inlines.Add(new LineBreak());
+                continue;
+            }
+
+            MessageOverlayText.Inlines.Add(new Run(c.ToString())
+            {
+                Foreground = _messageOverlayDroppedCharIndices.Contains(i) ? Brushes.Transparent : foreground
+            });
+        }
+    }
+
+    private static DoubleAnimationUsingKeyFrames BuildMessageOverlayShakeAngleAnimation()
+    {
+        var anim = new DoubleAnimationUsingKeyFrames
+        {
+            Duration = TimeSpan.FromMilliseconds(MessageOverlayDropShakeMs)
+        };
+        const int steps = 14;
+        for (var s = 0; s <= steps; s++)
+        {
+            var t = (double)s / steps;
+            var amp = 9.0 * (0.35 + 0.65 * t);
+            var sign = s == 0 ? 0 : ((s % 2 == 0) ? 1 : -1);
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame(
+                amp * sign,
+                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(MessageOverlayDropShakeMs * t))));
+        }
+        return anim;
+    }
+
+    private static DoubleAnimationUsingKeyFrames BuildMessageOverlayShakeJitterAnimation(double maxAmplitude)
+    {
+        var anim = new DoubleAnimationUsingKeyFrames
+        {
+            Duration = TimeSpan.FromMilliseconds(MessageOverlayDropShakeMs)
+        };
+        const int steps = 14;
+        for (var s = 0; s <= steps; s++)
+        {
+            var t = (double)s / steps;
+            var amp = maxAmplitude * (0.35 + 0.65 * t);
+            var sign = s == 0 ? 0 : ((s % 2 == 0) ? -1 : 1);
+            anim.KeyFrames.Add(new LinearDoubleKeyFrame(
+                amp * sign,
+                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(MessageOverlayDropShakeMs * t))));
+        }
+        return anim;
+    }
+
+    private static Canvas CreateMessageOverlayCrackOverlay(double width, double height, Brush letterBrush, ImageBrush? inkMask)
+    {
+        var container = new Canvas
+        {
+            Width = width,
+            Height = height,
+            IsHitTestVisible = false,
+            ClipToBounds = false
+        };
+        if (inkMask != null)
+            container.OpacityMask = inkMask;
+
+        var stroke = letterBrush is SolidColorBrush scb
+            ? new SolidColorBrush(Color.FromArgb(255,
+                (byte)Math.Min(255, scb.Color.R + 80),
+                (byte)Math.Min(255, scb.Color.G + 80),
+                (byte)Math.Min(255, scb.Color.B + 80)))
+            : (Brush)Brushes.White;
+        var thickness = Math.Max(0.4, width * 0.045 / 4.0);
+
+        var geometry = new PathGeometry();
+
+        var f1 = new PathFigure { StartPoint = new Point(width * 0.10, height * 0.02) };
+        f1.Segments.Add(new LineSegment(new Point(width * 0.32, height * 0.28), true));
+        f1.Segments.Add(new LineSegment(new Point(width * 0.22, height * 0.50), true));
+        f1.Segments.Add(new LineSegment(new Point(width * 0.42, height * 0.72), true));
+        f1.Segments.Add(new LineSegment(new Point(width * 0.30, height * 1.00), true));
+        geometry.Figures.Add(f1);
+
+        var f2 = new PathFigure { StartPoint = new Point(width * 0.94, height * 0.08) };
+        f2.Segments.Add(new LineSegment(new Point(width * 0.74, height * 0.30), true));
+        f2.Segments.Add(new LineSegment(new Point(width * 0.86, height * 0.55), true));
+        f2.Segments.Add(new LineSegment(new Point(width * 0.66, height * 0.86), true));
+        f2.Segments.Add(new LineSegment(new Point(width * 0.78, height * 1.00), true));
+        geometry.Figures.Add(f2);
+
+        var f3 = new PathFigure { StartPoint = new Point(width * 0.32, height * 0.28) };
+        f3.Segments.Add(new LineSegment(new Point(width * 0.55, height * 0.40), true));
+        f3.Segments.Add(new LineSegment(new Point(width * 0.74, height * 0.30), true));
+        geometry.Figures.Add(f3);
+
+        var f4 = new PathFigure { StartPoint = new Point(width * 0.22, height * 0.50) };
+        f4.Segments.Add(new LineSegment(new Point(width * 0.50, height * 0.62), true));
+        f4.Segments.Add(new LineSegment(new Point(width * 0.86, height * 0.55), true));
+        geometry.Figures.Add(f4);
+
+        var f5 = new PathFigure { StartPoint = new Point(width * 0.05, height * 0.55) };
+        f5.Segments.Add(new LineSegment(new Point(width * 0.95, height * 0.50), true));
+        geometry.Figures.Add(f5);
+
+        container.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = geometry,
+            Stroke = stroke,
+            StrokeThickness = thickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false
+        });
+
+        return container;
     }
 
     private void MessageOverlay_DismissByMouseDown(object sender, MouseButtonEventArgs e)
@@ -1954,6 +2305,13 @@ public partial class MainWindow
         if (key == Key.G)
         {
             ShowMessageOverlayGnomePeek(manualTrigger: true);
+            e.Handled = true;
+            return true;
+        }
+
+        if (key == Key.D)
+        {
+            DropRandomMessageOverlayLetter();
             e.Handled = true;
             return true;
         }
