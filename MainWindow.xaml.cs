@@ -1299,6 +1299,8 @@ public partial class MainWindow : Window
         _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(DefaultAutoSaveSeconds) };
         _autoSaveTimer.Tick += (_, _) => SaveSession();
         _autoSaveTimer.Tick += (_, _) => TickCoordinatedPlainTextTabSync();
+        _autoSaveTimer.Tick += (_, _) => SaveDirtyLongTermNotebooks();
+        _autoSaveTimer.Tick += (_, _) => SaveDirtyDocPackages();
         _autoSaveTimer.Start();
         _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
@@ -1311,6 +1313,7 @@ public partial class MainWindow : Window
         MaybeStampLastNotedVersionAfterLoad();
         UpdateAlarmSnoozeStatus();
         InitializeTodoPanel();
+        InitializeModeComboBox();
         UpdateViewMenuChecks();
         _pluginAlarmTimer.Start();
         StartBackupHeartbeatTimer();
@@ -1370,6 +1373,51 @@ public partial class MainWindow : Window
             LastChangedUtc = DateTime.UtcNow
         };
 
+        BindDocumentToEditor(doc, editor);
+
+        // Build tab header
+        var headerLabel = new TextBlock
+        {
+            Text = doc.DisplayHeader,
+            Margin = new Thickness(2, 0, 2, 0)
+        };
+
+        var tab = new TabItem
+        {
+            Header = headerLabel,
+            Content = editor,
+            Tag = doc
+        };
+        headerLabel.Tag = tab;
+        headerLabel.PreviewMouseLeftButtonDown += TabHeader_PreviewMouseLeftButtonDown;
+        headerLabel.PreviewMouseMove += TabHeader_PreviewMouseMove;
+
+        var tabMenu = new ContextMenu();
+        var renameItem = new MenuItem { Header = "Rename..." };
+        renameItem.Click += (_, _) => RenameTab(tab);
+        tabMenu.Items.Add(renameItem);
+        tab.ContextMenu = tabMenu;
+
+        _docs[tab] = doc;
+        MainTabControl.Items.Add(tab);
+        if (selectAndFocus)
+        {
+            MainTabControl.SelectedItem = tab;
+            editor.Focus();
+        }
+
+        return doc;
+    }
+
+    /// <summary>
+    /// Wires a fully-configured editor to a <see cref="TabDocument"/> with the same handlers and
+    /// background renderer used by Short-Term Notes tabs. Reused by Long-Term Notes pages and
+    /// Documentation pages so all three modes share the same line-feature behavior
+    /// (highlights, assignees, bullets, smileys, tag styling, hover tooltips, image paste,
+    /// keyboard shortcuts).
+    /// </summary>
+    private void BindDocumentToEditor(TabDocument doc, TextEditor editor)
+    {
         var highlightRenderer = new HighlightLineRenderer(
             () => GetHighlightedLineNumbers(doc),
             () => GetCriticalHighlightedLineNumbers(doc),
@@ -1393,7 +1441,6 @@ public partial class MainWindow : Window
         doc.HighlightRenderer = highlightRenderer;
         editor.TextArea.TextView.BackgroundRenderers.Add(highlightRenderer);
 
-        // Wire events
         editor.TextChanged += (_, _) =>
         {
             doc.CachedText = editor.Text;
@@ -1428,39 +1475,6 @@ public partial class MainWindow : Window
         };
         editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
         editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
-
-        // Build tab header
-        var headerLabel = new TextBlock
-        {
-            Text = doc.DisplayHeader,
-            Margin = new Thickness(2, 0, 2, 0)
-        };
-
-        var tab = new TabItem
-        {
-            Header = headerLabel,
-            Content = editor,
-            Tag = doc
-        };
-        headerLabel.Tag = tab;
-        headerLabel.PreviewMouseLeftButtonDown += TabHeader_PreviewMouseLeftButtonDown;
-        headerLabel.PreviewMouseMove += TabHeader_PreviewMouseMove;
-
-        var tabMenu = new ContextMenu();
-        var renameItem = new MenuItem { Header = "Rename..." };
-        renameItem.Click += (_, _) => RenameTab(tab);
-        tabMenu.Items.Add(renameItem);
-        tab.ContextMenu = tabMenu;
-
-        _docs[tab] = doc;
-        MainTabControl.Items.Add(tab);
-        if (selectAndFocus)
-        {
-            MainTabControl.SelectedItem = tab;
-            editor.Focus();
-        }
-
-        return doc;
     }
 
     private TextEditor CreateEditor()
@@ -7702,6 +7716,8 @@ public partial class MainWindow : Window
         SaveStateConfigOnExit();
         if (!_sessionSaved)
             SaveSession(updateStatus: false);
+        SaveDirtyLongTermNotebooks();
+        SaveDirtyDocPackages();
     }
 
     private void Window_Closed(object sender, EventArgs e)

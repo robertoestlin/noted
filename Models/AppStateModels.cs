@@ -485,4 +485,104 @@ public sealed class WindowSettings
 
     /// <summary>Browser for http(s) links; <see cref="ExternalBrowserChoice.Default"/> uses the system default handler.</summary>
     public ExternalBrowserChoice ExternalBrowserForLinks { get; set; } = ExternalBrowserChoice.Default;
+
+    /// <summary>Include all <c>notebooks/*.json</c> files in cloud backup bundles (default true).</summary>
+    public bool? BackupAdditionalNotebooks { get; set; }
+
+    /// <summary>Include all <c>doc-packages/*.json</c> files in cloud backup bundles (default true).</summary>
+    public bool? BackupAdditionalDocPackages { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// Long-Term Notes (one file per notebook)
+// ---------------------------------------------------------------------------
+
+/// <summary>Persisted under <c>{BackupFolder}/notebooks/notebook-{Id}.json</c>.</summary>
+public sealed class Notebook
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Last-opened section id within this notebook (for restoring state when the notebook is reopened).</summary>
+    public string? CurrentSectionId { get; set; }
+
+    /// <summary>Last-opened page id within this notebook.</summary>
+    public string? CurrentPageId { get; set; }
+
+    public List<LtSection> Sections { get; set; } = new();
+}
+
+public sealed class LtSection
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    /// <summary>2-level cap: sub-sections do not contain further sub-sections.</summary>
+    public List<LtSection> SubSections { get; set; } = new();
+    public List<LtPage> Pages { get; set; } = new();
+}
+
+public sealed class LtPage
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public FileMetadata? Metadata { get; set; }
+    /// <summary>2-level cap: sub-pages do not contain further sub-pages.</summary>
+    public List<LtPage> SubPages { get; set; } = new();
+}
+
+/// <summary>Persisted at <c>{BackupFolder}/notebooks/_index.json</c>.</summary>
+public sealed class NotebooksIndex
+{
+    /// <summary>Notebook ids in user-chosen order.</summary>
+    public List<string> Order { get; set; } = new();
+
+    /// <summary>Last selected notebook id (for convenient restore on next launch).</summary>
+    public string? CurrentId { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// Documentation (one file per doc package)
+// ---------------------------------------------------------------------------
+
+public enum DocNodeKind
+{
+    Section = 0,
+    SubSection = 1,
+    Page = 2,
+    SubPage = 3
+}
+
+/// <summary>Persisted under <c>{BackupFolder}/doc-packages/doc-package-{Id}.json</c>.</summary>
+public sealed class DocPackage
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>Id of the last-selected node within this package.</summary>
+    public string? CurrentNodeId { get; set; }
+
+    public List<DocNode> Nodes { get; set; } = new();
+}
+
+/// <summary>Recursive tree node. Section→SubSection→Page→SubPage.</summary>
+public sealed class DocNode
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public DocNodeKind Kind { get; set; }
+
+    /// <summary>Null/empty for Section/SubSection nodes; set for Page/SubPage nodes.</summary>
+    public string? Content { get; set; }
+
+    public FileMetadata? Metadata { get; set; }
+
+    public List<DocNode> Children { get; set; } = new();
+}
+
+/// <summary>Persisted at <c>{BackupFolder}/doc-packages/_index.json</c>.</summary>
+public sealed class DocPackagesIndex
+{
+    public List<string> Order { get; set; } = new();
+    public string? CurrentId { get; set; }
 }

@@ -220,6 +220,9 @@ public partial class MainWindow
 
     private void ExecuteToggleTodoPanel()
     {
+        // The task panel is part of Short-Term Notes only; ignore the F3 / menu trigger in other modes.
+        if (!IsTabModeActive())
+            return;
         _todoPanelVisible = !_todoPanelVisible;
         UpdateTodoPanelVisibility();
         SaveWindowSettings();

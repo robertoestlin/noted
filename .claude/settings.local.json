@@ -13,7 +13,11 @@
       "Bash(dotnet.exe build *)",
       "Bash(command -v dotnet)",
       "Bash(dotnet --version)",
-      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug -nologo)"
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug -nologo)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug --no-incremental)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' clean Noted.csproj -c Debug)"
     ]
   }
 }

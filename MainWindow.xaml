@@ -14,71 +14,122 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="TodoPanelColumn" Width="0"/>
-            <ColumnDefinition Width="*"/>
-        </Grid.ColumnDefinitions>
 
-        <Border x:Name="TodoPanelBorder"
-                Grid.Row="1"
-                Grid.Column="0"
-                Visibility="Collapsed"
-                BorderBrush="#DDDDDD"
-                BorderThickness="0,0,1,0"
-                Background="#FAFAFA"
-                Focusable="True"
-                FocusVisualStyle="{x:Null}"
-                PreviewKeyDown="TodoPanelBorder_PreviewKeyDown"
-                MouseDown="TodoPanelBorder_MouseDown">
-            <DockPanel Margin="10">
-                <TextBlock x:Name="TodoPanelTitleText"
-                           DockPanel.Dock="Top"
-                           Text="Task Panel"
-                           FontSize="18"
-                           FontWeight="SemiBold"
-                           Margin="0,0,0,8"/>
+        <Grid x:Name="ShortTermView" Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TodoPanelColumn" Width="0"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-                <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="TodoAreaComboBox"
-                              Grid.Column="0"
-                              MinWidth="110"
-                              HorizontalAlignment="Left"
-                              VerticalAlignment="Center"
-                              ToolTip="Select area"
-                              SelectionChanged="TodoAreaComboBox_SelectionChanged"/>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal">
-                        <Button x:Name="TodoAddTodayButton"
-                                Content="+"
-                                Width="30"
-                                Height="30"
-                                Margin="0,0,6,0"
-                                FontWeight="SemiBold"
-                                ToolTip="Add task to first group"
-                                Click="TodoAddTodayButton_Click"/>
-                        <Button x:Name="TodoCompletedToggleButton"
-                                Content="✓"
-                                Width="30"
-                                Height="30"
-                                FontWeight="SemiBold"
-                                ToolTip="Recently Completed"
-                                Click="TodoCompletedToggleButton_Click"/>
-                    </StackPanel>
-                </Grid>
+            <Border x:Name="TodoPanelBorder"
+                    Grid.Column="0"
+                    Visibility="Collapsed"
+                    BorderBrush="#DDDDDD"
+                    BorderThickness="0,0,1,0"
+                    Background="#FAFAFA"
+                    Focusable="True"
+                    FocusVisualStyle="{x:Null}"
+                    PreviewKeyDown="TodoPanelBorder_PreviewKeyDown"
+                    MouseDown="TodoPanelBorder_MouseDown">
+                <DockPanel Margin="10">
+                    <TextBlock x:Name="TodoPanelTitleText"
+                               DockPanel.Dock="Top"
+                               Text="Task Panel"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Margin="0,0,0,8"/>
 
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel x:Name="TodoGroupsContainer"/>
-                </ScrollViewer>
+                    <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="TodoAreaComboBox"
+                                  Grid.Column="0"
+                                  MinWidth="110"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  ToolTip="Select area"
+                                  SelectionChanged="TodoAreaComboBox_SelectionChanged"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button x:Name="TodoAddTodayButton"
+                                    Content="+"
+                                    Width="30"
+                                    Height="30"
+                                    Margin="0,0,6,0"
+                                    FontWeight="SemiBold"
+                                    ToolTip="Add task to first group"
+                                    Click="TodoAddTodayButton_Click"/>
+                            <Button x:Name="TodoCompletedToggleButton"
+                                    Content="✓"
+                                    Width="30"
+                                    Height="30"
+                                    FontWeight="SemiBold"
+                                    ToolTip="Recently Completed"
+                                    Click="TodoCompletedToggleButton_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="TodoGroupsContainer"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <DockPanel Grid.Column="1">
+                <StatusBar DockPanel.Dock="Bottom" Background="#F0F0F0">
+                    <StatusBarItem>
+                        <TextBlock x:Name="StatusLine" Text="Ln 1" MinWidth="50"/>
+                    </StatusBarItem>
+                    <Separator/>
+                    <StatusBarItem>
+                        <TextBlock x:Name="StatusColumn" Text="Col 1" MinWidth="50"/>
+                    </StatusBarItem>
+                    <Separator/>
+                    <StatusBarItem>
+                        <TextBlock x:Name="StatusBullets" Text="B 0"/>
+                    </StatusBarItem>
+                    <Separator/>
+                    <StatusBarItem>
+                        <TextBlock x:Name="StatusUnsavedDot" Text=""/>
+                    </StatusBarItem>
+                    <Separator/>
+                    <StatusBarItem>
+                        <TextBlock x:Name="StatusAutoSave" Text="" Foreground="#555"/>
+                    </StatusBarItem>
+                    <Separator x:Name="StatusAlarmSnoozeSeparator"/>
+                    <StatusBarItem x:Name="StatusAlarmSnoozeItem">
+                        <TextBlock x:Name="StatusAlarmSnooze" Text="" Foreground="#555"/>
+                    </StatusBarItem>
+                </StatusBar>
+
+                <TabControl x:Name="MainTabControl"
+                            SelectionChanged="MainTabControl_SelectionChanged"
+                            Background="White"/>
             </DockPanel>
-        </Border>
+        </Grid>
 
-        <DockPanel Grid.Row="0" Grid.ColumnSpan="2">
+        <Grid x:Name="LongTermView"
+              Grid.Row="1"
+              Visibility="Collapsed"
+              Background="White"/>
+
+        <Grid x:Name="DocumentationView"
+              Grid.Row="1"
+              Visibility="Collapsed"
+              Background="White"/>
+
+        <DockPanel Grid.Row="0">
             <Border DockPanel.Dock="Left" Padding="6,2,4,2" VerticalAlignment="Center">
                 <Image Source="logo/logo.png" Width="24" Height="24" Stretch="Uniform"/>
             </Border>
+            <ComboBox x:Name="ModeComboBox"
+                      DockPanel.Dock="Right"
+                      MinWidth="170"
+                      Margin="6,2,8,2"
+                      VerticalAlignment="Center"
+                      ToolTip="Switch view"
+                      SelectionChanged="ModeComboBox_SelectionChanged"/>
             <Menu DockPanel.Dock="Top">
                 <MenuItem Header="_File">
                     <MenuItem x:Name="MenuItemNewTab" Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
@@ -93,7 +144,7 @@
                     <Separator/>
                     <MenuItem Header="Open Last Backup in Code" Click="MenuOpenLastBackup_Click"/>
                     <Separator/>
-                    <MenuItem Header="_Reopen Closed Tab" InputGestureText="Ctrl+Shift+T" Click="MenuReopenClosedTab_Click"/>
+                    <MenuItem x:Name="MenuItemReopenClosedTab" Header="_Reopen Closed Tab" InputGestureText="Ctrl+Shift+T" Click="MenuReopenClosedTab_Click"/>
                     <Separator/>
                     <MenuItem x:Name="MenuItemCloseTab" Header="_Close Tab" InputGestureText="Ctrl+W" Click="MenuCloseTab_Click"/>
                     <Separator/>
@@ -160,9 +211,9 @@
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>
                     <MenuItem Header="_Tags" Click="MenuTags_Click"/>
                     <MenuItem Header="_Users" Click="MenuUsers_Click"/>
-                    <MenuItem Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
-                    <MenuItem Header="Tab S_ync" Click="MenuTabSync_Click"/>
-                    <MenuItem Header="_Recover Tabs" Click="MenuRecoverTabs_Click"/>
+                    <MenuItem x:Name="MenuItemTabCleanup" Header="Tab _Cleanup" Click="MenuTabCleanup_Click"/>
+                    <MenuItem x:Name="MenuItemTabSync" Header="Tab S_ync" Click="MenuTabSync_Click"/>
+                    <MenuItem x:Name="MenuItemRecoverTabs" Header="_Recover Tabs" Click="MenuRecoverTabs_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Plugins">
                     <MenuItem Header="_Alarms" Click="MenuAlarms_Click"/>
@@ -188,7 +239,7 @@
                     <MenuItem Header="Safe _Paste Area" Click="MenuSafePasteArea_Click"/>
                     <MenuItem Header="_Seach Files" Click="MenuSearchFiles_Click"/>
                     <MenuItem Header="Stan_dup" Click="MenuStandup_Click"/>
-                    <MenuItem Header="Task _Panel" InputGestureText="F3" Click="MenuTodoList_Click"/>
+                    <MenuItem x:Name="MenuItemTaskPanel" Header="Task _Panel" InputGestureText="F3" Click="MenuTodoList_Click"/>
                     <MenuItem Header="Te_xt">
                         <MenuItem Header="Text _Splitter" Click="MenuTextSplitter_Click"/>
                     </MenuItem>
@@ -210,42 +261,7 @@
             </Menu>
         </DockPanel>
 
-        <DockPanel Grid.Row="1" Grid.Column="1">
-        <!-- Status bar -->
-            <StatusBar DockPanel.Dock="Bottom" Background="#F0F0F0">
-                <StatusBarItem>
-                    <TextBlock x:Name="StatusLine" Text="Ln 1" MinWidth="50"/>
-                </StatusBarItem>
-                <Separator/>
-                <StatusBarItem>
-                    <TextBlock x:Name="StatusColumn" Text="Col 1" MinWidth="50"/>
-                </StatusBarItem>
-                <Separator/>
-                <StatusBarItem>
-                    <TextBlock x:Name="StatusBullets" Text="B 0"/>
-                </StatusBarItem>
-                <Separator/>
-                <StatusBarItem>
-                    <TextBlock x:Name="StatusUnsavedDot" Text=""/>
-                </StatusBarItem>
-                <Separator/>
-                <StatusBarItem>
-                    <TextBlock x:Name="StatusAutoSave" Text="" Foreground="#555"/>
-                </StatusBarItem>
-                <Separator x:Name="StatusAlarmSnoozeSeparator"/>
-                <StatusBarItem x:Name="StatusAlarmSnoozeItem">
-                    <TextBlock x:Name="StatusAlarmSnooze" Text="" Foreground="#555"/>
-                </StatusBarItem>
-            </StatusBar>
-
-        <!-- Tab control -->
-            <TabControl x:Name="MainTabControl"
-                        SelectionChanged="MainTabControl_SelectionChanged"
-                        Background="White"/>
-        </DockPanel>
-
         <StackPanel Grid.Row="1"
-                    Grid.Column="1"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Bottom"
@@ -264,7 +280,6 @@
 
         <Border x:Name="MessageOverlay"
                 Grid.RowSpan="2"
-                Grid.ColumnSpan="2"
                 Visibility="Collapsed"
                 Panel.ZIndex="99"
                 Background="#D9111827"
