@@ -1407,6 +1407,7 @@ public partial class MainWindow : Window
             UpdateStatusBar(doc);
             RedrawHighlight(doc);
         };
+        editor.TextArea.SelectionChanged += (_, _) => UpdateStatusBar(doc);
         editor.TextArea.TextView.ScrollOffsetChanged += (_, _) => HideAssigneeHoverTooltip();
         editor.PreviewMouseWheel += Editor_PreviewMouseWheel;
         editor.PreviewKeyDown += (_, e) => HandleEditorPreviewKeyDown(doc, e);
@@ -7399,8 +7400,11 @@ public partial class MainWindow : Window
         if (CurrentDoc() != doc) return;
         var caret = doc.Editor.TextArea.Caret;
         int bulletCount = CountBulletsAtLineStart(doc.CachedText);
+        int selectionLength = doc.Editor.SelectionLength;
         StatusLine.Text = $"Ln {caret.Line}";
-        StatusColumn.Text = $"Col {caret.Column}";
+        StatusColumn.Text = selectionLength > 0
+            ? $"Col {caret.Column} ({selectionLength} selected)"
+            : $"Col {caret.Column}";
         StatusBullets.Text = $"B {bulletCount}";
     }
 
