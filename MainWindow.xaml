@@ -257,7 +257,7 @@
                        Foreground="#666"
                        FontSize="11"
                        Visibility="Collapsed"/>
-            <TextBlock Text="0.11.3"
+            <TextBlock Text="0.12.0"
                        Foreground="#666"
                        FontSize="11"/>
         </StackPanel>
