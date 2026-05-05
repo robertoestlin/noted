@@ -233,14 +233,16 @@ public partial class MainWindow
         if (TodoPanelColumn == null || TodoPanelBorder == null)
             return;
 
-        TodoPanelColumn.Width = _todoPanelVisible ? new GridLength(TodoPanelOpenWidth) : new GridLength(0);
-        TodoPanelBorder.Visibility = _todoPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-        if (_todoPanelVisible)
+        bool show = _todoPanelVisible && IsTabModeActive();
+
+        TodoPanelColumn.Width = show ? new GridLength(TodoPanelOpenWidth) : new GridLength(0);
+        TodoPanelBorder.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show)
         {
             TodoPanelBorder.Focus();
             Keyboard.Focus(TodoPanelBorder);
         }
-        else
+        else if (IsTabModeActive())
         {
             var currentDoc = CurrentDoc();
             if (currentDoc != null)

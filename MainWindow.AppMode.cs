@@ -48,13 +48,9 @@ public partial class MainWindow
         if (DocumentationView != null)
             DocumentationView.Visibility = mode == AppMode.Documentation ? Visibility.Visible : Visibility.Collapsed;
 
-        // Close the F3 task panel when leaving Short-Term so it doesn't visually
-        // bleed into other modes.
-        if (mode != AppMode.ShortTerm && _todoPanelVisible)
-        {
-            _todoPanelVisible = false;
-            UpdateTodoPanelVisibility();
-        }
+        // Collapse the task panel visually when not in Short-Term, but preserve the user's
+        // open/closed preference so it reapplies when they switch back.
+        UpdateTodoPanelVisibility();
 
         ApplyModeGating();
 
