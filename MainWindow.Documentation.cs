@@ -55,6 +55,8 @@ public partial class MainWindow
             _docCurrentPackage = _docPackages.FirstOrDefault(p => p.Id == currentId);
         if (_docCurrentPackage == null && _docPackages.Count > 0)
             _docCurrentPackage = _docPackages[0];
+
+        SyncDocCurrentNodeFromPackage();
     }
 
     private void BuildDocumentationView()
@@ -193,6 +195,8 @@ public partial class MainWindow
 
         if (_docPackageCombo.SelectedItem is ComboBoxItem chosen && chosen.Tag is DocPackage chosenPkg)
             _docCurrentPackage = chosenPkg;
+
+        SyncDocCurrentNodeFromPackage();
     }
 
     private void DocPackageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -205,7 +209,7 @@ public partial class MainWindow
         _docCurrentPackage = pkg;
         _docIndex.CurrentId = pkg.Id;
         MarkDocIndexDirty();
-        _docCurrentNode = FindDocNodeById(pkg.Nodes, pkg.CurrentNodeId) ?? FirstPageNode(pkg.Nodes);
+        SyncDocCurrentNodeFromPackage();
         RefreshDocTree();
         ShowActiveDocPageEditor();
     }
@@ -501,6 +505,19 @@ public partial class MainWindow
             if (inner != null) return inner;
         }
         return null;
+    }
+
+    /// <summary>Restores selection from <see cref="DocPackage.CurrentNodeId"/> (persisted with the package).</summary>
+    private void SyncDocCurrentNodeFromPackage()
+    {
+        if (_docCurrentPackage == null)
+        {
+            _docCurrentNode = null;
+            return;
+        }
+
+        var pkg = _docCurrentPackage;
+        _docCurrentNode = FindDocNodeById(pkg.Nodes, pkg.CurrentNodeId) ?? FirstPageNode(pkg.Nodes);
     }
 
     private static DocNode? FirstPageNode(List<DocNode> roots)

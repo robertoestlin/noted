@@ -62,6 +62,8 @@ public partial class MainWindow
             _ltCurrentNotebook = _ltNotebooks.FirstOrDefault(n => n.Id == currentId);
         if (_ltCurrentNotebook == null && _ltNotebooks.Count > 0)
             _ltCurrentNotebook = _ltNotebooks[0];
+
+        SyncLtSectionPageFromCurrentNotebook();
     }
 
     private void BuildLongTermView()
@@ -242,6 +244,8 @@ public partial class MainWindow
         // Sync current notebook in case the SelectedIndex change above implicitly chose one.
         if (_ltNotebookCombo.SelectedItem is ComboBoxItem chosen && chosen.Tag is Notebook chosenNb)
             _ltCurrentNotebook = chosenNb;
+
+        SyncLtSectionPageFromCurrentNotebook();
     }
 
     private void LtNotebookCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -256,11 +260,7 @@ public partial class MainWindow
         _ltIndex.CurrentId = nb.Id;
         MarkLongTermIndexDirty();
 
-        // Restore last-selected section/page within this notebook if possible, else first available.
-        _ltCurrentSection = FindLtSectionById(nb, nb.CurrentSectionId)
-                            ?? nb.Sections.FirstOrDefault();
-        _ltCurrentPage = FindLtPageInSection(_ltCurrentSection, nb.CurrentPageId)
-                         ?? FirstPageInSection(_ltCurrentSection);
+        SyncLtSectionPageFromCurrentNotebook();
 
         RefreshLtSectionsTree();
         RefreshLtPagesTree();
@@ -684,6 +684,22 @@ public partial class MainWindow
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /// <summary>Applies <see cref="Notebook.CurrentSectionId"/> / <see cref="Notebook.CurrentPageId"/> to the UI selection.</summary>
+    private void SyncLtSectionPageFromCurrentNotebook()
+    {
+        if (_ltCurrentNotebook == null)
+        {
+            _ltCurrentSection = null;
+            _ltCurrentPage = null;
+            return;
+        }
+
+        var nb = _ltCurrentNotebook;
+        _ltCurrentSection = FindLtSectionById(nb, nb.CurrentSectionId) ?? nb.Sections.FirstOrDefault();
+        _ltCurrentPage = FindLtPageInSection(_ltCurrentSection, nb.CurrentPageId)
+                         ?? FirstPageInSection(_ltCurrentSection);
+    }
 
     private static LtSection? FindLtSectionById(Notebook nb, string? id)
     {
