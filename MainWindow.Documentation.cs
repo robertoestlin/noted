@@ -215,7 +215,7 @@ public partial class MainWindow
         if (_docTree == null) return;
         _docTree.Items.Clear();
         if (_docCurrentPackage == null) return;
-        foreach (var node in _docCurrentPackage.Nodes)
+        foreach (var node in DocNodesSortedForTree(_docCurrentPackage.Nodes))
         {
             var tvi = BuildDocTreeItem(node);
             _docTree.Items.Add(tvi);
@@ -233,10 +233,13 @@ public partial class MainWindow
             IsExpanded = ContainsCurrent(node)
         };
         tvi.ContextMenu = BuildDocNodeContextMenu(node);
-        foreach (var child in node.Children)
+        foreach (var child in DocNodesSortedForTree(node.Children))
             tvi.Items.Add(BuildDocTreeItem(child));
         return tvi;
     }
+
+    private static IEnumerable<DocNode> DocNodesSortedForTree(IEnumerable<DocNode> nodes)
+        => nodes.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase).ThenBy(n => n.Id, StringComparer.Ordinal);
 
     private bool ContainsCurrent(DocNode node)
     {
