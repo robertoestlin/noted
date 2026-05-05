@@ -526,6 +526,28 @@ public partial class MainWindow
             }
             row.ContextMenu = rowContextMenu;
 
+            var createdLocalText = item.CreatedUtc != default
+                ? item.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
+                : "Unknown";
+            var tipLines = new List<string>(capacity: 3)
+            {
+                item.Text ?? string.Empty,
+                $"Created: {createdLocalText}"
+            };
+            if (isOverdue)
+                tipLines.Add("Overdue: not completed within the configured time for this group.");
+            row.ToolTip = new ToolTip
+            {
+                Content = new TextBlock
+                {
+                    Text = string.Join(Environment.NewLine, tipLines),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 420
+                }
+            };
+            ToolTipService.SetInitialShowDelay(row, 0);
+            ToolTipService.SetBetweenShowDelay(row, 0);
+
             var checkBox = new CheckBox
             {
                 VerticalAlignment = VerticalAlignment.Center,
@@ -541,7 +563,6 @@ public partial class MainWindow
             {
                 textBlock.Foreground = Brushes.IndianRed;
                 textBlock.FontWeight = FontWeights.SemiBold;
-                checkBox.ToolTip = "Overdue: not completed within the configured time for this group.";
             }
             checkBox.Content = textBlock;
             checkBox.Checked += (_, _) =>
