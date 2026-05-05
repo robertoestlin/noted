@@ -1391,6 +1391,7 @@ public partial class MainWindow : Window
         };
         headerLabel.Tag = tab;
         headerLabel.PreviewMouseLeftButtonDown += TabHeader_PreviewMouseLeftButtonDown;
+        headerLabel.PreviewMouseDown += TabHeader_PreviewMouseDown;
         headerLabel.PreviewMouseMove += TabHeader_PreviewMouseMove;
 
         var tabMenu = new ContextMenu();
@@ -6161,6 +6162,14 @@ public partial class MainWindow : Window
         _dragSourceTab = tab;
     }
 
+    private void TabHeader_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) return;
+        if (sender is not FrameworkElement element || element.Tag is not TabItem tab) return;
+        e.Handled = true;
+        CloseTab(tab);
+    }
+
     private void TabHeader_PreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (_dragSourceTab == null) return;
@@ -7571,6 +7580,24 @@ public partial class MainWindow : Window
 
     // --- Event handlers -------------------------------------------------------
 
+    private void MainTabControl_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (sender is not TabControl tabControl) return;
+        tabControl.ApplyTemplate();
+        if (tabControl.Template?.FindName("PART_TabScrollViewer", tabControl) is not ScrollViewer tabStrip) return;
+
+        var p = e.GetPosition(tabControl);
+        var topLeft = tabStrip.TranslatePoint(new Point(0, 0), tabControl);
+        var stripBounds = new Rect(topLeft.X, topLeft.Y, tabStrip.ActualWidth, tabStrip.ActualHeight);
+        if (!stripBounds.Contains(p) || tabStrip.ScrollableWidth <= 0) return;
+
+        const double pixelsPerNotch = 48;
+        var delta = e.Delta / 120.0 * pixelsPerNotch;
+        var next = Math.Clamp(tabStrip.HorizontalOffset - delta, 0, tabStrip.ScrollableWidth);
+        tabStrip.ScrollToHorizontalOffset(next);
+        e.Handled = true;
+    }
+
     private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ReferenceEquals(e.OriginalSource, MainTabControl))
@@ -7578,6 +7605,9 @@ public partial class MainWindow : Window
             var removedTab = e.RemovedItems.OfType<TabItem>().FirstOrDefault();
             if (removedTab != null && MainTabControl.Items.Contains(removedTab))
                 _previousSelectedTab = removedTab;
+
+            if (MainTabControl.SelectedItem is TabItem selectedTab)
+                Dispatcher.BeginInvoke(selectedTab.BringIntoView, DispatcherPriority.Loaded);
         }
 
         CloseTagCompletionIfAny();

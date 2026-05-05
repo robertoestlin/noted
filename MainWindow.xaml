@@ -9,6 +9,39 @@
         Closing="Window_Closing"
         Closed="Window_Closed">
 
+    <Window.Resources>
+        <!-- Default TabPanel wraps tabs onto extra rows; keep one row with horizontal scroll. -->
+        <Style x:Key="SingleLineTabControlStyle" TargetType="TabControl">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid KeyboardNavigation.TabNavigation="Local">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <ScrollViewer x:Name="PART_TabScrollViewer"
+                                          Grid.Row="0"
+                                          Background="#F0F0F0"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          Focusable="False"
+                                          Padding="0">
+                                <StackPanel IsItemsHost="True"
+                                            Orientation="Horizontal"
+                                            KeyboardNavigation.TabIndex="1"/>
+                            </ScrollViewer>
+                            <ContentPresenter x:Name="PART_SelectedContentHost"
+                                              Grid.Row="1"
+                                              Margin="{TemplateBinding Padding}"
+                                              ContentSource="SelectedContent"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -104,7 +137,9 @@
                 </StatusBar>
 
                 <TabControl x:Name="MainTabControl"
+                            Style="{StaticResource SingleLineTabControlStyle}"
                             SelectionChanged="MainTabControl_SelectionChanged"
+                            PreviewMouseWheel="MainTabControl_PreviewMouseWheel"
                             Background="White"/>
             </DockPanel>
         </Grid>
