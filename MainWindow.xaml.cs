@@ -226,6 +226,7 @@ public partial class MainWindow : Window
     private static readonly Color DefaultSelectedCriticalHighlightedLineColor = Color.FromRgb(255, 171, 177);
     private const string BundleDivider = "^---";
     private const string MetadataPrefix = "^meta^";
+    private const string OrderPrefix = "^order^";
     private const string BackupImagesFolderName = "images";
     private const string DeletedImagesFolderName = "deleted";
     private const int MaxDeletedInlineImages = 100;
@@ -7036,6 +7037,7 @@ public partial class MainWindow : Window
 
             var path = _backupBundleService.CreateBackupFilePath(_backupFolder, DateTime.Now);
             var sections = new List<BackupBundleService.BackupBundleSection>();
+            var tabIdOrder = new List<string>();
             foreach (var item in MainTabControl.Items)
             {
                 if (item is not TabItem tab || !_docs.TryGetValue(tab, out var doc))
@@ -7048,8 +7050,10 @@ public partial class MainWindow : Window
                 var metadata = CreateFileMetadata(doc);
                 var metadataPayload = metadata == null ? null : JsonSerializer.Serialize(metadata);
                 sections.Add(new BackupBundleService.BackupBundleSection(doc.Header, text, metadataPayload));
+                tabIdOrder.Add(doc.StableTabId);
             }
-            _backupBundleService.WriteBundle(path, sections, BundleDivider, MetadataPrefix);
+
+            _backupBundleService.WriteBundle(path, sections, BundleDivider, MetadataPrefix, OrderPrefix, tabIdOrder);
 
             PruneBackups();
             TrySaveCloudBackup(
@@ -7360,7 +7364,7 @@ public partial class MainWindow : Window
         try
         {
             var text = _backupBundleService.ReadBundleText(latest);
-            var sections = _backupBundleService.ParseBundle(text, MetadataPrefix);
+            var sections = _backupBundleService.ParseBundle(text, MetadataPrefix, OrderPrefix);
 
             foreach (var section in sections)
             {
