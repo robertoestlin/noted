@@ -357,10 +357,12 @@ public partial class MainWindow
         };
         BindDocumentToEditor(doc, editor);
 
-        // Markdown: collapse "#… " heading prefixes in the view (file text stays valid markdown).
-        editor.TextArea.TextView.ElementGenerators.Insert(0, new MarkdownHeadingPrefixGenerator());
+        // Markdown: hide ``` fence lines and "#… " heading markers in the view (buffer stays valid).
+        editor.TextArea.TextView.ElementGenerators.Insert(0, new MarkdownFenceLineHiddenGenerator());
+        editor.TextArea.TextView.ElementGenerators.Insert(1, new MarkdownHeadingPrefixGenerator());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownHeadingTransformer());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownFencedCodeBlockTransformer());
+        editor.TextArea.TextView.BackgroundRenderers.Add(new MarkdownFencedCodeBackgroundRenderer());
 
         editor.TextChanged += (_, _) =>
         {
@@ -543,6 +545,101 @@ public partial class MainWindow
         return t.StartsWith("```", StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Closing-style fence (only ticks + whitespace) hides the entire line body; opener with info hides
+    /// only the run of backticks (language text after <c>```</c> stays visible).
+    /// </summary>
+    private static bool TryGetMarkdownFenceHiddenSpan(string fullLine, out int hideStartRel, out int hideLength)
+    {
+        hideStartRel = 0;
+        hideLength = 0;
+
+        int ws = 0;
+        while (ws < fullLine.Length && (fullLine[ws] is ' ' or '\t'))
+            ws++;
+
+        int i = ws;
+        int ticks = 0;
+        while (i < fullLine.Length && fullLine[i] == '`')
+        {
+            ticks++;
+            i++;
+        }
+
+        if (ticks < 3)
+            return false;
+
+        bool remainderBlank = true;
+        for (int k = ws + ticks; k < fullLine.Length; k++)
+        {
+            if (!char.IsWhiteSpace(fullLine[k]))
+            {
+                remainderBlank = false;
+                break;
+            }
+        }
+
+        if (remainderBlank)
+        {
+            hideStartRel = 0;
+            hideLength = fullLine.Length;
+        }
+        else
+        {
+            hideStartRel = ws;
+            hideLength = ticks;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Hides <c>```</c> fence delimiter lines visually (opening/closing); see <see cref="MarkdownFenceLineHiddenGenerator"/>.
+    /// </summary>
+    private sealed class MarkdownFenceLineHiddenGenerator : VisualLineElementGenerator
+    {
+        public override int GetFirstInterestedOffset(int startOffset)
+        {
+            if (CurrentContext?.Document == null)
+                return -1;
+
+            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
+            var doc = CurrentContext.Document;
+            if (!IsMarkdownFenceLine(doc, docLine))
+                return -1;
+
+            var full = doc.GetText(docLine.Offset, docLine.Length);
+            if (!TryGetMarkdownFenceHiddenSpan(full, out int hideRel, out _))
+                return -1;
+
+            int abs = docLine.Offset + hideRel;
+            if (startOffset > abs)
+                return -1;
+
+            return abs;
+        }
+
+        public override VisualLineElement? ConstructElement(int offset)
+        {
+            if (CurrentContext?.Document == null)
+                return null;
+
+            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
+            var doc = CurrentContext.Document;
+            if (!IsMarkdownFenceLine(doc, docLine))
+                return null;
+
+            var full = doc.GetText(docLine.Offset, docLine.Length);
+            if (!TryGetMarkdownFenceHiddenSpan(full, out int hideRel, out int hideLen))
+                return null;
+
+            if (offset != docLine.Offset + hideRel || hideLen <= 0)
+                return null;
+
+            return new MarkdownHiddenDocumentSpanElement(hideLen);
+        }
+    }
+
     private static bool DocumentLineIsInsideFencedCodeBlock(TextDocument doc, DocumentLine line)
     {
         bool inside = false;
@@ -554,6 +651,21 @@ public partial class MainWindow
                 inside = !inside;
         }
         return inside;
+    }
+
+    /// <summary>Fence delimiter lines plus body lines strictly between matching fences.</summary>
+    private static bool DocumentLineShowsFencedCodeChrome(TextDocument doc, DocumentLine line)
+    {
+        bool inside = false;
+        foreach (var prior in doc.Lines)
+        {
+            if (prior.Offset >= line.Offset)
+                break;
+            if (IsMarkdownFenceLine(doc, prior))
+                inside = !inside;
+        }
+
+        return inside || IsMarkdownFenceLine(doc, line);
     }
 
     private static bool TryGetMarkdownHeadingPrefixLength(string lineText, out int prefixLength)
@@ -612,17 +724,16 @@ public partial class MainWindow
             if (!TryGetMarkdownHeadingPrefixLength(lineText, out int prefixLen))
                 return null;
 
-            return new MarkdownHeadingHiddenPrefixElement(prefixLen);
+            return new MarkdownHiddenDocumentSpanElement(prefixLen);
         }
     }
 
     /// <summary>
-    /// Like <see cref="FormattedTextElement"/> with empty text, but uses <see cref="TextHidden"/> so the
-    /// collapsed prefix takes no horizontal space (empty formatted text can still reserve width).
+    /// Uses <see cref="TextHidden"/> so the underlying document span occupies no horizontal width.
     /// </summary>
-    private sealed class MarkdownHeadingHiddenPrefixElement : VisualLineElement
+    private sealed class MarkdownHiddenDocumentSpanElement : VisualLineElement
     {
-        public MarkdownHeadingHiddenPrefixElement(int documentLength)
+        public MarkdownHiddenDocumentSpanElement(int documentLength)
             : base(1, documentLength)
         {
         }
@@ -677,42 +788,77 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Tints lines inside a fenced code block (between matching <c>```</c> markers) with a
-    /// monospace typeface and a subtle background. Determines fence state by scanning from
-    /// the document start each call — fine for typical doc page sizes.
+    /// Wiki-style full-width rectangular bands for fenced <c>```</c> regions (delimiter lines + interior),
+    /// drawn beneath text on the Background layer so short lines still span the viewport.
     /// </summary>
-    private sealed class MarkdownFencedCodeBlockTransformer : DocumentColorizingTransformer
+    private sealed class MarkdownFencedCodeBackgroundRenderer : IBackgroundRenderer
     {
-        private static readonly SolidColorBrush CodeBackground = MakeFrozen(Color.FromRgb(0xF3, 0xF4, 0xF6));
-        private static readonly FontFamily CodeFont = new("Consolas, Courier New");
+        private static readonly Brush Fill = CodeChromeBrush(Color.FromRgb(0xF3, 0xF4, 0xF6));
+        private static readonly Brush LeftAccent = CodeChromeBrush(Color.FromRgb(0xD9, 0xDF, 0xEA));
 
-        private static SolidColorBrush MakeFrozen(Color c)
+        private static SolidColorBrush CodeChromeBrush(Color c)
         {
             var b = new SolidColorBrush(c);
             b.Freeze();
             return b;
         }
 
+        public KnownLayer Layer => KnownLayer.Background;
+
+        public void Draw(TextView textView, DrawingContext drawingContext)
+        {
+            if (textView.Document == null || !textView.VisualLinesValid)
+                return;
+
+            double drawWidth = textView.ActualWidth;
+            if (textView is IScrollInfo si)
+                drawWidth = Math.Max(drawWidth, si.HorizontalOffset + si.ViewportWidth);
+
+            var doc = textView.Document;
+
+            foreach (var vl in textView.VisualLines)
+            {
+                if (vl.IsDisposed)
+                    continue;
+
+                var docLine = vl.FirstDocumentLine;
+                if (!DocumentLineShowsFencedCodeChrome(doc, docLine))
+                    continue;
+
+                var rowRects = BackgroundGeometryBuilder.GetRectsFromVisualSegment(
+                    textView, vl, 0, vl.VisualLength).ToList();
+                if (rowRects.Count == 0)
+                    continue;
+
+                double top = rowRects.Min(r => r.Top);
+                double bottom = rowRects.Max(r => r.Bottom);
+                var band = new Rect(0, top, drawWidth, bottom - top);
+
+                drawingContext.DrawRectangle(Fill, null, band);
+                const double accentW = 3.5;
+                drawingContext.DrawRectangle(LeftAccent, null, new Rect(0, top, accentW, bottom - top));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Monospace typography for fenced <c>```</c> regions; fill is painted by
+    /// <see cref="MarkdownFencedCodeBackgroundRenderer"/> so bands span the viewport width.
+    /// </summary>
+    private sealed class MarkdownFencedCodeBlockTransformer : DocumentColorizingTransformer
+    {
+        private static readonly FontFamily CodeFont = new("Consolas, Courier New");
+
         protected override void ColorizeLine(DocumentLine line)
         {
             if (CurrentContext?.Document == null) return;
             var doc = CurrentContext.Document;
 
-            bool insideFence = false;
-            foreach (var prior in doc.Lines)
-            {
-                if (prior.Offset >= line.Offset)
-                    break;
-                if (IsMarkdownFenceLine(doc, prior))
-                    insideFence = !insideFence;
-            }
-
-            bool thisLineIsFence = IsMarkdownFenceLine(doc, line);
-            if (!insideFence && !thisLineIsFence) return;
+            if (!DocumentLineShowsFencedCodeChrome(doc, line))
+                return;
 
             ChangeLinePart(line.Offset, line.EndOffset, ve =>
             {
-                ve.TextRunProperties.SetBackgroundBrush(CodeBackground);
                 var t = ve.TextRunProperties.Typeface;
                 ve.TextRunProperties.SetTypeface(new Typeface(CodeFont, t.Style, t.Weight, t.Stretch));
             });
