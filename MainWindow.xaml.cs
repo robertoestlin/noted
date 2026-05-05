@@ -7620,6 +7620,32 @@ public partial class MainWindow : Window
     private void MenuUsefulCrontabGuru_Click(object sender, RoutedEventArgs e)
         => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://crontab.guru/"));
 
+    private void MenuUsefulSpeedGuideNetPortDetails_Click(object sender, RoutedEventArgs e)
+    {
+        while (true)
+        {
+            var text = PromptForName("SpeedGuide.net - Port details", "Port number (1-65535):", "1024");
+            if (text == null)
+                return;
+
+            if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port)
+                || port < 1
+                || port > 65535)
+            {
+                MessageBox.Show(
+                    "Enter a whole number between 1 and 65535.",
+                    "SpeedGuide.net",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                continue;
+            }
+
+            SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri(
+                $"https://www.speedguide.net/port.php?port={port}"));
+            return;
+        }
+    }
+
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
     private void MenuCut_Click(object sender, RoutedEventArgs e)

@@ -255,6 +255,7 @@
                         <MenuItem Header="_RegExr" Click="MenuUsefulRegexr_Click"/>
                         <MenuItem Header="Regular Expressions _101" Click="MenuUsefulRegex101_Click"/>
                     </MenuItem>
+                    <MenuItem Header="_Speed guide.net - Port Details" Click="MenuUsefulSpeedGuideNetPortDetails_Click"/>
                 </MenuItem>
                 <MenuItem Header="_About">
                     <MenuItem Header="_Info" Click="MenuAboutInfo_Click"/>
