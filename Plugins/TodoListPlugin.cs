@@ -507,6 +507,23 @@ public partial class MainWindow
             var renameItem = new MenuItem { Header = "Rename..." };
             renameItem.Click += (_, _) => RenameTodoItem(item);
             rowContextMenu.Items.Add(renameItem);
+            if (isOverdue)
+            {
+                var resetRedItem = new MenuItem
+                {
+                    Header = "Reset red",
+                    ToolTip = "Set created time to now so the overdue highlight clears."
+                };
+                resetRedItem.Click += (_, _) =>
+                {
+                    item.CreatedUtc = DateTime.UtcNow;
+                    RenderTodoLists();
+                    SaveWindowSettings();
+                    TodoPanelBorder?.Focus();
+                    Keyboard.Focus(TodoPanelBorder);
+                };
+                rowContextMenu.Items.Add(resetRedItem);
+            }
             row.ContextMenu = rowContextMenu;
 
             var checkBox = new CheckBox
