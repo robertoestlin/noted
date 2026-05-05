@@ -158,13 +158,6 @@
             <Border DockPanel.Dock="Left" Padding="6,2,4,2" VerticalAlignment="Center">
                 <Image Source="logo/logo.png" Width="24" Height="24" Stretch="Uniform"/>
             </Border>
-            <ComboBox x:Name="ModeComboBox"
-                      DockPanel.Dock="Right"
-                      MinWidth="170"
-                      Margin="6,2,8,2"
-                      VerticalAlignment="Center"
-                      ToolTip="Switch view"
-                      SelectionChanged="ModeComboBox_SelectionChanged"/>
             <Menu DockPanel.Dock="Top">
                 <MenuItem Header="_File">
                     <MenuItem x:Name="MenuItemNewTab" Header="_New" InputGestureText="Ctrl+N / Ctrl+T" Click="MenuNew_Click"/>
@@ -213,6 +206,16 @@
                     </MenuItem>
                 </MenuItem>
                 <MenuItem Header="_View">
+                    <MenuItem Header="Short-_Term Notes"
+                              InputGestureText="Win+1"
+                              Click="MenuAppModeShortTerm_Click"/>
+                    <MenuItem Header="_Long-Term Notes"
+                              InputGestureText="Win+2"
+                              Click="MenuAppModeLongTerm_Click"/>
+                    <MenuItem Header="_Documentation"
+                              InputGestureText="Win+3"
+                              Click="MenuAppModeDocumentation_Click"/>
+                    <Separator/>
                     <MenuItem x:Name="MenuItemWrapLongLinesVisually"
                               Header="_Split Lines Visually"
                               IsCheckable="True"

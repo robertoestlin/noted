@@ -36,6 +36,12 @@ It is designed for short- to medium-term information such as tasks, ideas, meeti
 The app auto-saves all open tabs, so your working notes are preserved without manual save steps.
 
 Noted focuses on fast capture and retrieval of active notes, not long-term archival or heavy document management.
+
+While Noted is the foreground app, you can switch workspaces with:
+
+Win+1 — Short-Term Notes
+Win+2 — Long-Term Notes
+Win+3 — Documentation
                 </TextBlock>
             </ScrollViewer>
         </Border>

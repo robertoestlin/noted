@@ -2195,6 +2195,10 @@ public partial class MainWindow
 
     private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        TryHandleAppModeWinNumberKeys(e);
+        if (e.Handled)
+            return;
+
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && key == Key.O

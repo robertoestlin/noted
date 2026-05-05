@@ -1314,7 +1314,7 @@ public partial class MainWindow : Window
         MaybeStampLastNotedVersionAfterLoad();
         UpdateAlarmSnoozeStatus();
         InitializeTodoPanel();
-        InitializeModeComboBox();
+        InitializeAppMode();
         UpdateViewMenuChecks();
         _pluginAlarmTimer.Start();
         StartBackupHeartbeatTimer();
@@ -7870,6 +7870,7 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
     {
+        UninstallAppModeKeyboardHook();
         EndSelectionCursorClip();
         _autoSaveTimer.Stop();
         _pluginAlarmTimer.Stop();
