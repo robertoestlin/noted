@@ -70,6 +70,12 @@ public partial class MainWindow
     {
         if (LongTermView == null) return;
         LongTermView.Children.Clear();
+        LongTermView.RowDefinitions.Clear();
+        LongTermView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        LongTermView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var ltBody = new Grid();
+        Grid.SetRow(ltBody, 0);
 
         // Make sure data is loaded before we render.
         if (_ltIndex.Order.Count == 0 && _ltNotebooks.Count == 0)
@@ -106,7 +112,7 @@ public partial class MainWindow
         createBtn.Click += (_, _) => PromptCreateNotebook();
         emptyStack.Children.Add(createBtn);
         _ltEmptyState.Children.Add(emptyStack);
-        LongTermView.Children.Add(_ltEmptyState);
+        ltBody.Children.Add(_ltEmptyState);
 
         // ── Main grid (3 columns + 2 splitters) ──────────────────────────────
         _ltMainGrid = new Grid();
@@ -195,7 +201,12 @@ public partial class MainWindow
         Grid.SetColumn(_ltEditorHost, 4);
         _ltMainGrid.Children.Add(_ltEditorHost);
 
-        LongTermView.Children.Add(_ltMainGrid);
+        ltBody.Children.Add(_ltMainGrid);
+
+        var ltStatusBar = BuildGrayFooterStatusBar("Long-Term Notes");
+        Grid.SetRow(ltStatusBar, 1);
+        LongTermView.Children.Add(ltBody);
+        LongTermView.Children.Add(ltStatusBar);
 
         RefreshLongTermView();
     }
@@ -699,6 +710,24 @@ public partial class MainWindow
         _ltCurrentSection = FindLtSectionById(nb, nb.CurrentSectionId) ?? nb.Sections.FirstOrDefault();
         _ltCurrentPage = FindLtPageInSection(_ltCurrentSection, nb.CurrentPageId)
                          ?? FirstPageInSection(_ltCurrentSection);
+    }
+
+    /// <summary>Bottom chrome matching Short-Term Notes (<c>#F0F0F0</c> status strip).</summary>
+    private static StatusBar BuildGrayFooterStatusBar(string modeCaption)
+    {
+        var bar = new StatusBar
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xF0, 0xF0, 0xF0))
+        };
+        bar.Items.Add(new StatusBarItem
+        {
+            Content = new TextBlock
+            {
+                Text = modeCaption,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55))
+            }
+        });
+        return bar;
     }
 
     private static LtSection? FindLtSectionById(Notebook nb, string? id)

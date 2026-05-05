@@ -63,6 +63,12 @@ public partial class MainWindow
     {
         if (DocumentationView == null) return;
         DocumentationView.Children.Clear();
+        DocumentationView.RowDefinitions.Clear();
+        DocumentationView.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        DocumentationView.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var docBody = new Grid();
+        Grid.SetRow(docBody, 0);
 
         if (_docIndex.Order.Count == 0 && _docPackages.Count == 0)
             LoadDocumentationFromDisk();
@@ -98,7 +104,7 @@ public partial class MainWindow
         createBtn.Click += (_, _) => PromptCreateDocPackage();
         emptyStack.Children.Add(createBtn);
         _docEmptyState.Children.Add(emptyStack);
-        DocumentationView.Children.Add(_docEmptyState);
+        docBody.Children.Add(_docEmptyState);
 
         // Main grid: Col 0 = combo + tree, Col 2 = editor host
         _docMainGrid = new Grid();
@@ -152,7 +158,12 @@ public partial class MainWindow
         Grid.SetColumn(_docEditorHost, 2);
         _docMainGrid.Children.Add(_docEditorHost);
 
-        DocumentationView.Children.Add(_docMainGrid);
+        docBody.Children.Add(_docMainGrid);
+
+        var docStatusBar = BuildGrayFooterStatusBar("Documentation");
+        Grid.SetRow(docStatusBar, 1);
+        DocumentationView.Children.Add(docBody);
+        DocumentationView.Children.Add(docStatusBar);
 
         RefreshDocumentationView();
     }
