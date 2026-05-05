@@ -20,6 +20,49 @@ public sealed class BackupBundleService
     public DateTime GetLastWriteTime(string path)
         => File.GetLastWriteTime(path);
 
+    /// <summary>
+    /// Tab ids from the first line <c>^order^ id1,id2,...</c>, or <see langword="null"/> if the first line is not an order line.
+    /// </summary>
+    public string[]? TryParseLeadingOrderTabIds(string text, string orderPrefix)
+    {
+        if (text.Length == 0 || string.IsNullOrEmpty(orderPrefix))
+            return null;
+
+        int lineEnd = text.IndexOf('\n', StringComparison.Ordinal);
+        if (lineEnd < 0)
+            lineEnd = text.Length;
+
+        var firstLine = text[..lineEnd];
+        if (firstLine.Length > 0 && firstLine[^1] == '\r')
+            firstLine = firstLine[..^1];
+
+        if (!firstLine.StartsWith(orderPrefix, StringComparison.Ordinal))
+            return null;
+
+        var csv = firstLine.AsSpan(orderPrefix.Length).Trim();
+        if (csv.Length == 0)
+            return [];
+
+        return csv.ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>UTF-8 bytes exactly as <see cref="WriteBundle"/> would write (for comparison with an existing file).</summary>
+    public byte[] BuildBundleUtf8Bytes(
+        IEnumerable<BackupBundleSection> sections,
+        string bundleDivider,
+        string metadataPrefix,
+        string orderPrefix,
+        IEnumerable<string>? tabIdOrder)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new StreamWriter(ms, Encoding.UTF8, bufferSize: 1024, leaveOpen: true))
+        {
+            WriteBundleCore(writer, sections, bundleDivider, metadataPrefix, orderPrefix, tabIdOrder);
+        }
+
+        return ms.ToArray();
+    }
+
     public void WriteBundle(
         string path,
         IEnumerable<BackupBundleSection> sections,
@@ -33,6 +76,17 @@ public sealed class BackupBundleService
             Directory.CreateDirectory(folder);
 
         using var writer = new StreamWriter(path, append: false, Encoding.UTF8);
+        WriteBundleCore(writer, sections, bundleDivider, metadataPrefix, orderPrefix, tabIdOrder);
+    }
+
+    private static void WriteBundleCore(
+        TextWriter writer,
+        IEnumerable<BackupBundleSection> sections,
+        string bundleDivider,
+        string metadataPrefix,
+        string orderPrefix,
+        IEnumerable<string>? tabIdOrder)
+    {
         if (tabIdOrder != null)
         {
             var ids = new List<string>();

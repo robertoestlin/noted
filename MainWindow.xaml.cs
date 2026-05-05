@@ -6980,6 +6980,42 @@ public partial class MainWindow : Window
         doc.Editor.Select(targetOffset, 0);
     }
 
+    /// <summary>Strip caret from serialized metadata so backup dedup ignores caret-only moves.</summary>
+    private static string? MetadataPayloadWithoutCaretForBackupCompare(string? metadataPayload)
+    {
+        if (string.IsNullOrWhiteSpace(metadataPayload))
+            return metadataPayload;
+
+        try
+        {
+            var m = JsonSerializer.Deserialize<FileMetadata>(metadataPayload);
+            if (m == null)
+                return metadataPayload;
+
+            m.CaretOffset = null;
+            return JsonSerializer.Serialize(m);
+        }
+        catch
+        {
+            return metadataPayload;
+        }
+    }
+
+    private static List<BackupBundleService.BackupBundleSection> SectionsWithoutCaretForBackupCompare(
+        IEnumerable<BackupBundleService.BackupBundleSection> sections)
+    {
+        var result = new List<BackupBundleService.BackupBundleSection>();
+        foreach (var s in sections)
+        {
+            result.Add(new BackupBundleService.BackupBundleSection(
+                s.Header,
+                s.Content,
+                MetadataPayloadWithoutCaretForBackupCompare(s.MetadataPayload)));
+        }
+
+        return result;
+    }
+
     private void SaveSession(
         bool updateStatus = true,
         bool forceCloudBackup = false,
@@ -7035,7 +7071,6 @@ public partial class MainWindow : Window
             MoveDeletedInlineImagesToArchive(removedReferences);
             _referencedInlineImagesSnapshot = referencedNow;
 
-            var path = _backupBundleService.CreateBackupFilePath(_backupFolder, DateTime.Now);
             var sections = new List<BackupBundleService.BackupBundleSection>();
             var tabIdOrder = new List<string>();
             foreach (var item in MainTabControl.Items)
@@ -7053,11 +7088,68 @@ public partial class MainWindow : Window
                 tabIdOrder.Add(doc.StableTabId);
             }
 
-            _backupBundleService.WriteBundle(path, sections, BundleDivider, MetadataPrefix, OrderPrefix, tabIdOrder);
+            var candidateBytes = _backupBundleService.BuildBundleUtf8Bytes(
+                sections,
+                BundleDivider,
+                MetadataPrefix,
+                OrderPrefix,
+                tabIdOrder);
 
-            PruneBackups();
+            var candidateCompareBytes = _backupBundleService.BuildBundleUtf8Bytes(
+                SectionsWithoutCaretForBackupCompare(sections),
+                BundleDivider,
+                MetadataPrefix,
+                OrderPrefix,
+                tabIdOrder);
+
+            var latestBackupPath = GetLatestBackupFilePath(_backupFolder);
+            var shouldWriteNewBackup = true;
+            if (latestBackupPath != null
+                && File.Exists(latestBackupPath))
+            {
+                try
+                {
+                    var existingBytes = File.ReadAllBytes(latestBackupPath);
+                    var existingText = Encoding.UTF8.GetString(existingBytes);
+                    if (existingText.Length > 0 && existingText[0] == '\uFEFF')
+                        existingText = existingText[1..];
+
+                    var existingOrderIds = _backupBundleService.TryParseLeadingOrderTabIds(existingText, OrderPrefix);
+                    var existingSections =
+                        _backupBundleService.ParseBundle(existingText, MetadataPrefix, OrderPrefix);
+                    var existingCompareBytes = _backupBundleService.BuildBundleUtf8Bytes(
+                        SectionsWithoutCaretForBackupCompare(existingSections),
+                        BundleDivider,
+                        MetadataPrefix,
+                        OrderPrefix,
+                        existingOrderIds);
+
+                    if (existingCompareBytes.AsSpan().SequenceEqual(candidateCompareBytes))
+                        shouldWriteNewBackup = false;
+                }
+                catch
+                {
+                    // Unreadable previous backup — write a fresh snapshot.
+                }
+            }
+
+            string pathForCloudCopy;
+            if (shouldWriteNewBackup)
+            {
+                var path = _backupBundleService.CreateBackupFilePath(_backupFolder, DateTime.Now);
+                var folder = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(folder))
+                    Directory.CreateDirectory(folder);
+
+                File.WriteAllBytes(path, candidateBytes);
+                PruneBackups();
+                pathForCloudCopy = path;
+            }
+            else
+                pathForCloudCopy = latestBackupPath!;
+
             TrySaveCloudBackup(
-                path,
+                pathForCloudCopy,
                 forceCloudBackup,
                 cloudBackupFolderOverride,
                 persistCloudMetadata,
@@ -7070,7 +7162,10 @@ public partial class MainWindow : Window
                 doc.IsDirty = false;
                 RefreshTabHeader(doc);
             }
-            if (updateStatus && !Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+            if (updateStatus
+                && shouldWriteNewBackup
+                && !Dispatcher.HasShutdownStarted
+                && !Dispatcher.HasShutdownFinished)
                 Dispatcher.Invoke(() => StatusAutoSave.Text = $"Last saved: {DateTime.Now:yyyy-MM-dd HH:mm}");
         }
         catch (Exception ex)
