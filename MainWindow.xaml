@@ -250,6 +250,7 @@
                     <MenuItem Header="_C#">
                         <MenuItem Header="_JSON to CSharp" Click="MenuUsefulJsonToCSharp_Click"/>
                     </MenuItem>
+                    <MenuItem Header="_Crontab guru" Click="MenuUsefulCrontabGuru_Click"/>
                     <MenuItem Header="_Regular Expressions">
                         <MenuItem Header="_RegExr" Click="MenuUsefulRegexr_Click"/>
                         <MenuItem Header="Regular Expressions _101" Click="MenuUsefulRegex101_Click"/>

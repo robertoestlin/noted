@@ -7617,6 +7617,9 @@ public partial class MainWindow : Window
     private void MenuUsefulRegex101_Click(object sender, RoutedEventArgs e)
         => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://regex101.com/"));
 
+    private void MenuUsefulCrontabGuru_Click(object sender, RoutedEventArgs e)
+        => SafeHttpUriLauncher.TryOpenInDefaultBrowser(new Uri("https://crontab.guru/"));
+
     private void MenuUndo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Undo();
     private void MenuRedo_Click(object sender, RoutedEventArgs e) => CurrentDoc()?.Editor.Redo();
     private void MenuCut_Click(object sender, RoutedEventArgs e)
