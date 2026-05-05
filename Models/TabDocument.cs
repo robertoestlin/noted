@@ -49,6 +49,12 @@ public class TabDocument
     /// <summary>Whether the content has changed since the last explicit save or session load.</summary>
     public bool IsDirty { get; set; }
 
+    /// <summary>
+    /// When false, Noted-specific <c>#tag</c> visuals, masking, completion, and whitespace-to-hyphen
+    /// behavior are disabled for this editor (e.g. Documentation mode).
+    /// </summary>
+    public bool TagFeaturesEnabled { get; set; } = true;
+
     /// <summary>The AvalonEdit control that owns this document's text.</summary>
     public TextEditor Editor { get; set; } = null!;
 

@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.TextFormatting;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Rendering;
@@ -341,7 +342,7 @@ public partial class MainWindow
         if (_docNodeDocs.TryGetValue(node.Id, out var existing))
             return existing;
 
-        var editor = CreateEditor();
+        var editor = CreateEditor(addTagTextMaskingTransformer: false);
         editor.Text = node.Content ?? string.Empty;
 
         var doc = new TabDocument
@@ -351,11 +352,13 @@ public partial class MainWindow
             Editor = editor,
             CachedText = editor.Text,
             IsDirty = false,
-            LastChangedUtc = DateTime.UtcNow
+            LastChangedUtc = DateTime.UtcNow,
+            TagFeaturesEnabled = false
         };
         BindDocumentToEditor(doc, editor);
 
-        // Markdown line transformers — added on top of the standard set installed by CreateEditor().
+        // Markdown: collapse "#… " heading prefixes in the view (file text stays valid markdown).
+        editor.TextArea.TextView.ElementGenerators.Insert(0, new MarkdownHeadingPrefixGenerator());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownHeadingTransformer());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownFencedCodeBlockTransformer());
 
@@ -533,10 +536,104 @@ public partial class MainWindow
 
     // ── Markdown transformers ───────────────────────────────────────────────
 
+    private static bool IsMarkdownFenceLine(TextDocument doc, DocumentLine line)
+    {
+        if (line.Length < 3) return false;
+        var t = doc.GetText(line.Offset, line.Length).TrimEnd();
+        return t.StartsWith("```", StringComparison.Ordinal);
+    }
+
+    private static bool DocumentLineIsInsideFencedCodeBlock(TextDocument doc, DocumentLine line)
+    {
+        bool inside = false;
+        foreach (var prior in doc.Lines)
+        {
+            if (prior.Offset >= line.Offset)
+                break;
+            if (IsMarkdownFenceLine(doc, prior))
+                inside = !inside;
+        }
+        return inside;
+    }
+
+    private static bool TryGetMarkdownHeadingPrefixLength(string lineText, out int prefixLength)
+    {
+        prefixLength = 0;
+        int hashes = 0;
+        while (hashes < lineText.Length && hashes < 3 && lineText[hashes] == '#')
+            hashes++;
+        if (hashes == 0) return false;
+        if (hashes >= lineText.Length || lineText[hashes] != ' ')
+            return false;
+        prefixLength = hashes + 1;
+        return true;
+    }
+
     /// <summary>
-    /// Inline-styles lines starting with <c>#</c>, <c>##</c>, or <c>###</c> as markdown headings:
-    /// progressively larger font + bold weight. Mirrors the existing line-transformer pattern
-    /// used for bullets / smileys / horizontal rule.
+    /// Replaces the leading <c>#</c> / <c>##</c> / <c>###</c> + space with a zero-width
+    /// <see cref="FormattedTextElement"/> so stored markdown stays correct but the markers are not drawn.
+    /// </summary>
+    private sealed class MarkdownHeadingPrefixGenerator : VisualLineElementGenerator
+    {
+        public override int GetFirstInterestedOffset(int startOffset)
+        {
+            if (CurrentContext?.Document == null)
+                return -1;
+
+            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
+            if (startOffset != docLine.Offset)
+                return -1;
+
+            var doc = CurrentContext.Document;
+            if (DocumentLineIsInsideFencedCodeBlock(doc, docLine))
+                return -1;
+
+            var lineText = doc.GetText(docLine.Offset, docLine.Length);
+            if (!TryGetMarkdownHeadingPrefixLength(lineText, out _))
+                return -1;
+
+            return docLine.Offset;
+        }
+
+        public override VisualLineElement? ConstructElement(int offset)
+        {
+            if (CurrentContext?.Document == null)
+                return null;
+
+            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
+            if (offset != docLine.Offset)
+                return null;
+
+            var doc = CurrentContext.Document;
+            if (DocumentLineIsInsideFencedCodeBlock(doc, docLine))
+                return null;
+
+            var lineText = doc.GetText(docLine.Offset, docLine.Length);
+            if (!TryGetMarkdownHeadingPrefixLength(lineText, out int prefixLen))
+                return null;
+
+            return new MarkdownHeadingHiddenPrefixElement(prefixLen);
+        }
+    }
+
+    /// <summary>
+    /// Like <see cref="FormattedTextElement"/> with empty text, but uses <see cref="TextHidden"/> so the
+    /// collapsed prefix takes no horizontal space (empty formatted text can still reserve width).
+    /// </summary>
+    private sealed class MarkdownHeadingHiddenPrefixElement : VisualLineElement
+    {
+        public MarkdownHeadingHiddenPrefixElement(int documentLength)
+            : base(1, documentLength)
+        {
+        }
+
+        public override TextRun CreateTextRun(int startVisualColumn, ITextRunConstructionContext context)
+            => new TextHidden(VisualLength);
+    }
+
+    /// <summary>
+    /// Styles the visible heading title (after <c>#</c> markers); prefix is hidden by
+    /// <see cref="MarkdownHeadingPrefixGenerator"/>.
     /// </summary>
     private sealed class MarkdownHeadingTransformer : DocumentColorizingTransformer
     {
@@ -545,14 +642,15 @@ public partial class MainWindow
             if (CurrentContext?.Document == null || line.Length <= 0)
                 return;
 
-            var text = CurrentContext.Document.GetText(line.Offset, line.Length);
-            int hashes = 0;
-            while (hashes < text.Length && hashes < 3 && text[hashes] == '#')
-                hashes++;
-            if (hashes == 0) return;
-            if (hashes >= text.Length || text[hashes] != ' ')
+            var doc = CurrentContext.Document;
+            if (DocumentLineIsInsideFencedCodeBlock(doc, line))
                 return;
 
+            var text = doc.GetText(line.Offset, line.Length);
+            if (!TryGetMarkdownHeadingPrefixLength(text, out int prefixLen))
+                return;
+
+            int hashes = prefixLen - 1;
             double sizeMul = hashes switch
             {
                 1 => 1.7,
@@ -561,7 +659,11 @@ public partial class MainWindow
                 _ => 1.0
             };
 
-            ChangeLinePart(line.Offset, line.EndOffset, ve =>
+            int titleStart = line.Offset + prefixLen;
+            if (titleStart >= line.EndOffset)
+                return;
+
+            ChangeLinePart(titleStart, line.EndOffset, ve =>
             {
                 ve.TextRunProperties.SetFontRenderingEmSize(ve.TextRunProperties.FontRenderingEmSize * sizeMul);
                 var typeface = ve.TextRunProperties.Typeface;
@@ -601,11 +703,11 @@ public partial class MainWindow
             {
                 if (prior.Offset >= line.Offset)
                     break;
-                if (IsFenceLine(doc, prior))
+                if (IsMarkdownFenceLine(doc, prior))
                     insideFence = !insideFence;
             }
 
-            bool thisLineIsFence = IsFenceLine(doc, line);
+            bool thisLineIsFence = IsMarkdownFenceLine(doc, line);
             if (!insideFence && !thisLineIsFence) return;
 
             ChangeLinePart(line.Offset, line.EndOffset, ve =>
@@ -614,13 +716,6 @@ public partial class MainWindow
                 var t = ve.TextRunProperties.Typeface;
                 ve.TextRunProperties.SetTypeface(new Typeface(CodeFont, t.Style, t.Weight, t.Stretch));
             });
-        }
-
-        private static bool IsFenceLine(TextDocument doc, DocumentLine line)
-        {
-            if (line.Length < 3) return false;
-            var text = doc.GetText(line.Offset, line.Length).TrimEnd();
-            return text.StartsWith("```", StringComparison.Ordinal);
         }
     }
 }

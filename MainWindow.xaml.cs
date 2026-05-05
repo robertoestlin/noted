@@ -1413,8 +1413,8 @@ public partial class MainWindow : Window
     /// Wires a fully-configured editor to a <see cref="TabDocument"/> with the same handlers and
     /// background renderer used by Short-Term Notes tabs. Reused by Long-Term Notes pages and
     /// Documentation pages so all three modes share the same line-feature behavior
-    /// (highlights, assignees, bullets, smileys, tag styling, hover tooltips, image paste,
-    /// keyboard shortcuts).
+    /// (highlights, assignees, bullets, smileys, tag styling when <see cref="TabDocument.TagFeaturesEnabled"/>,
+    /// hover tooltips, image paste, keyboard shortcuts).
     /// </summary>
     private void BindDocumentToEditor(TabDocument doc, TextEditor editor)
     {
@@ -1434,7 +1434,7 @@ public partial class MainWindow : Window
             () => _fancyBulletsEnabled,
             () => _showSmileys,
             () => _fancyBulletStyle,
-            () => _renderStyledTags,
+            () => doc.TagFeaturesEnabled && _renderStyledTags,
             () => _showLineAssignments,
             badgeRecorderReset: () => doc.AssigneeBadgeBoundsCache.Clear(),
             badgeRecorder: bounds => doc.AssigneeBadgeBoundsCache.Add(bounds));
@@ -1473,11 +1473,14 @@ public partial class MainWindow : Window
             HideAssigneeHoverTooltip();
             HideBulletHoverTooltip();
         };
-        editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
-        editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
+        if (doc.TagFeaturesEnabled)
+        {
+            editor.TextArea.TextEntered += (_, e) => HandleTagHashTextEntered(doc, e);
+            editor.TextArea.PreviewTextInput += (_, e) => HandleTagWhitespaceInputAsHyphen(doc, e);
+        }
     }
 
-    private TextEditor CreateEditor()
+    private TextEditor CreateEditor(bool addTagTextMaskingTransformer = true)
     {
         var editor = new TextEditor
         {
@@ -1497,7 +1500,8 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
         editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
         editor.TextArea.TextView.LineTransformers.Add(new SmileyTextMaskingTransformer(() => _showSmileys));
-        editor.TextArea.TextView.LineTransformers.Add(new TagTextMaskingTransformer(() => _renderStyledTags));
+        if (addTagTextMaskingTransformer)
+            editor.TextArea.TextView.LineTransformers.Add(new TagTextMaskingTransformer(() => _renderStyledTags));
         // AvalonEdit enables hyperlinks by default (Ctrl+click). Intercept before it uses Process.Start with an arbitrary URI.
         editor.AddHandler(Hyperlink.RequestNavigateEvent, (RequestNavigateEventHandler)((_, e) =>
         {
@@ -4012,7 +4016,7 @@ public partial class MainWindow : Window
 
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
-        if (TryInsertNewlineClosingTagCompletion(doc, e))
+        if (doc.TagFeaturesEnabled && TryInsertNewlineClosingTagCompletion(doc, e))
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
