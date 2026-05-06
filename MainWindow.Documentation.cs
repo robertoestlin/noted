@@ -684,6 +684,69 @@ public partial class MainWindow
         return inside;
     }
 
+    /// <summary>
+    /// Finds a closed <c>``` … ```</c> span whose lines contain <paramref name="offset"/> (fence lines included).
+    /// Span is [<paramref name="spanStart"/>, <paramref name="spanStart"/> + <paramref name="spanLength"/>).
+    /// </summary>
+    private static bool TryGetFencedMarkdownBlockSpanContainingOffset(
+        TextDocument doc, int offset, out int spanStart, out int spanLength)
+    {
+        spanStart = 0;
+        spanLength = 0;
+        if (doc.LineCount == 0)
+            return false;
+
+        offset = Math.Max(0, Math.Min(offset, doc.TextLength));
+        var caretLineNum = doc.GetLineByOffset(offset).LineNumber;
+
+        bool inside = false;
+        int openLineNum = 0;
+        int openOffset = 0;
+
+        for (int lineNum = 1; lineNum <= doc.LineCount; lineNum++)
+        {
+            var line = doc.GetLineByNumber(lineNum);
+            if (!IsMarkdownFenceLine(doc, line))
+                continue;
+
+            if (!inside)
+            {
+                inside = true;
+                openLineNum = lineNum;
+                openOffset = line.Offset;
+            }
+            else
+            {
+                int closeEnd = line.EndOffset;
+                inside = false;
+                if (caretLineNum >= openLineNum && caretLineNum <= lineNum)
+                {
+                    spanStart = openOffset;
+                    spanLength = closeEnd - openOffset;
+                    return spanLength > 0;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static void RemoveDocumentationCodeSnippet(TextEditor editor)
+    {
+        if (editor.Document == null)
+            return;
+
+        int caret = editor.TextArea.Caret.Offset;
+        if (!TryGetFencedMarkdownBlockSpanContainingOffset(editor.Document, caret, out int start, out int length))
+            return;
+
+        editor.Document.Replace(start, length, string.Empty);
+        int newCaret = Math.Max(0, Math.Min(start, editor.Document.TextLength));
+        editor.TextArea.Caret.Offset = newCaret;
+        editor.Select(newCaret, 0);
+        editor.TextArea.TextView.Redraw();
+    }
+
     /// <summary>Fence delimiter lines plus body lines strictly between matching fences.</summary>
     private static bool DocumentLineShowsFencedCodeChrome(TextDocument doc, DocumentLine line)
     {

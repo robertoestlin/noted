@@ -2099,6 +2099,30 @@ public partial class MainWindow : Window
         editor.Select(editor.TextArea.Caret.Offset, 0);
     }
 
+    private static void InsertDocumentationCodeSnippet(TextEditor editor)
+    {
+        if (editor.Document == null)
+            return;
+
+        string fence =
+            "```" + Environment.NewLine + "# code snippet" + Environment.NewLine + "```" + Environment.NewLine;
+
+        int replaceStart = editor.SelectionStart;
+        int replaceLength = editor.SelectionLength;
+        int anchorOffset = Math.Max(0, Math.Min(replaceStart, editor.Document.TextLength));
+        var anchorLine = editor.Document.GetLineByOffset(anchorOffset);
+
+        bool needsLeadingNewLine = anchorOffset > anchorLine.Offset;
+        bool needsTrailingNewLine = anchorOffset < anchorLine.EndOffset;
+        string replacement =
+            $"{(needsLeadingNewLine ? Environment.NewLine : string.Empty)}{fence}{(needsTrailingNewLine ? Environment.NewLine : string.Empty)}";
+
+        editor.Document.Replace(replaceStart, replaceLength, replacement);
+        editor.TextArea.Caret.Offset = replaceStart + replacement.Length;
+        editor.Select(editor.TextArea.Caret.Offset, 0);
+        editor.TextArea.TextView.Redraw();
+    }
+
     private bool TryPasteClipboardImage(TabDocument doc)
     {
         BitmapSource? clipboardImage;
@@ -2148,6 +2172,12 @@ public partial class MainWindow : Window
     {
         var menu = new ContextMenu();
 
+        var addDocCodeSnippetItem = new MenuItem { Header = "Add code snippet" };
+        addDocCodeSnippetItem.Click += (_, _) => InsertDocumentationCodeSnippet(editor);
+
+        var removeDocCodeSnippetItem = new MenuItem { Header = "Remove code snippet" };
+        removeDocCodeSnippetItem.Click += (_, _) => RemoveDocumentationCodeSnippet(editor);
+
         var formatJsonItem = new MenuItem { Header = "Format JSON" };
         formatJsonItem.Click += (_, _) => FormatJson(editor, keepOriginal: false);
         var formatJsonKeepOriginalItem = new MenuItem { Header = "Format JSON (keep original)" };
@@ -2170,6 +2200,8 @@ public partial class MainWindow : Window
         var openImageFolderItem = new MenuItem { Header = "Show Image in Folder" };
         openImageFolderItem.Click += (_, _) => ShowInlineImageInFolder(editor);
 
+        menu.Items.Add(addDocCodeSnippetItem);
+        menu.Items.Add(removeDocCodeSnippetItem);
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(formatJsonKeepOriginalItem);
         menu.Items.Add(copySelectionItem);
@@ -2187,14 +2219,24 @@ public partial class MainWindow : Window
         menu.Opened += (_, _) =>
         {
             bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
-            bool showFormatJson = _appMode != AppMode.Documentation;
+            bool docMode = _appMode == AppMode.Documentation;
+            addDocCodeSnippetItem.Visibility = docMode ? Visibility.Visible : Visibility.Collapsed;
+            addDocCodeSnippetItem.IsEnabled = docMode && editor.Document != null;
+
+            bool canRemoveSnippet = docMode && editor.Document != null
+                && TryGetFencedMarkdownBlockSpanContainingOffset(
+                    editor.Document, editor.TextArea.Caret.Offset, out _, out _);
+            removeDocCodeSnippetItem.Visibility = canRemoveSnippet ? Visibility.Visible : Visibility.Collapsed;
+            removeDocCodeSnippetItem.IsEnabled = canRemoveSnippet;
+
+            bool showFormatJson = !docMode;
             formatJsonItem.Visibility = showFormatJson ? Visibility.Visible : Visibility.Collapsed;
             formatJsonKeepOriginalItem.Visibility = showFormatJson ? Visibility.Visible : Visibility.Collapsed;
             bool canFormatJson = showFormatJson && editor.Document != null && editor.Document.LineCount > 0;
             formatJsonItem.IsEnabled = canFormatJson;
             formatJsonKeepOriginalItem.IsEnabled = canFormatJson;
 
-            bool showSelectionAndLineMenus = _appMode != AppMode.Documentation;
+            bool showSelectionAndLineMenus = !docMode;
             copySelectionItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
             moveSelectionItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
             sepAfterTransfer.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
