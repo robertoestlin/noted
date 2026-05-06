@@ -138,6 +138,26 @@ public partial class MainWindow
     private static string TrimDnsFqdn(string name) =>
         (name ?? string.Empty).Trim().TrimEnd('.');
 
+    /// <summary>Reads the hostname from our printed line <c>--- nslookup host ---</c>.</summary>
+    private static string? TryExtractNslookupHostFromMongoSrvResponse(string? responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return null;
+
+        const string marker = "--- nslookup ";
+        var idx = responseText.IndexOf(marker, StringComparison.Ordinal);
+        if (idx < 0)
+            return null;
+
+        var start = idx + marker.Length;
+        var endRel = responseText.IndexOf(" ---", start, StringComparison.Ordinal);
+        if (endRel < 0)
+            return null;
+
+        var host = responseText.Substring(start, endRel - start).Trim();
+        return string.IsNullOrEmpty(host) ? null : host;
+    }
+
     private static string FormatPrivateLinkIps(IPAddress[] addresses)
     {
         if (addresses is not { Length: > 0 })
@@ -356,6 +376,40 @@ public partial class MainWindow
         buttonRow.Children.Add(btnLookup);
         top.Children.Add(buttonRow);
 
+        var btnCopySrvNslookupCmd = new Button
+        {
+            Padding = new Thickness(6, 2, 6, 2),
+            MinWidth = 28,
+            Height = 26,
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Content = "\uE8C8",
+            FontSize = 14,
+            IsEnabled = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = System.Windows.Input.Cursors.Hand
+        };
+        var btnCopyHostNslookupCmd = new Button
+        {
+            Padding = new Thickness(6, 2, 6, 2),
+            MinWidth = 28,
+            Height = 26,
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Content = "\uE8C8",
+            FontSize = 14,
+            IsEnabled = false,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = System.Windows.Input.Cursors.Hand
+        };
+        var copyNslookupBar = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 6),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        copyNslookupBar.Children.Add(btnCopySrvNslookupCmd);
+        copyNslookupBar.Children.Add(btnCopyHostNslookupCmd);
+
         var txtOutput = new TextBox
         {
             IsReadOnly = true,
@@ -414,10 +468,12 @@ public partial class MainWindow
         };
         bottom.Children.Add(btnClose);
         DockPanel.SetDock(top, Dock.Top);
+        DockPanel.SetDock(copyNslookupBar, Dock.Top);
         DockPanel.SetDock(bottom, Dock.Bottom);
         DockPanel.SetDock(docsFooter, Dock.Bottom);
         DockPanel.SetDock(status, Dock.Bottom);
         root.Children.Add(top);
+        root.Children.Add(copyNslookupBar);
         root.Children.Add(bottom);
         root.Children.Add(docsFooter);
         root.Children.Add(status);
@@ -431,12 +487,53 @@ public partial class MainWindow
             status.Foreground = brush ?? Brushes.DimGray;
         }
 
+        void UpdateNslookupCopyUi(string? srvNslookupFullCommand, string? hostNslookupFullCommand)
+        {
+            btnCopySrvNslookupCmd.Tag = srvNslookupFullCommand ?? string.Empty;
+            btnCopySrvNslookupCmd.IsEnabled = !string.IsNullOrEmpty(srvNslookupFullCommand);
+            btnCopySrvNslookupCmd.ToolTip = string.IsNullOrEmpty(srvNslookupFullCommand)
+                ? "Copy nslookup for SRV record (after lookup)"
+                : srvNslookupFullCommand;
+
+            btnCopyHostNslookupCmd.Tag = hostNslookupFullCommand ?? string.Empty;
+            btnCopyHostNslookupCmd.IsEnabled = !string.IsNullOrEmpty(hostNslookupFullCommand);
+            btnCopyHostNslookupCmd.ToolTip = string.IsNullOrEmpty(hostNslookupFullCommand)
+                ? "Copy nslookup for first SRV target host (after lookup)"
+                : hostNslookupFullCommand;
+        }
+
+        void CopyNslookupTagToClipboard(Button source)
+        {
+            if (source.Tag is not string text || string.IsNullOrEmpty(text))
+                return;
+            try
+            {
+                Clipboard.SetText(text);
+                SetStatus("Copied to clipboard.");
+            }
+            catch
+            {
+                SetStatus("Could not copy to clipboard.", Brushes.IndianRed);
+            }
+        }
+
+        btnCopySrvNslookupCmd.Click += (_, _) => CopyNslookupTagToClipboard(btnCopySrvNslookupCmd);
+        btnCopyHostNslookupCmd.Click += (_, _) => CopyNslookupTagToClipboard(btnCopyHostNslookupCmd);
+
         void ApplyMongoSrvHistoryListItemToEditor(MongoSrvLookupHistoryListItem item)
         {
             txtInput.Text = item.Entry.InputText;
             txtOutput.Text = item.Entry.ResponseText;
             SetStatus(item.Entry.Success ? "Saved lookup (history)." : "Saved lookup (history; had errors).",
                 item.Entry.Success ? Brushes.DimGray : Brushes.IndianRed);
+
+            string? srvCmd = null;
+            if (TryNormalizeMongoSrvLookupInput(item.Entry.InputText, out var historyQuery))
+                srvCmd = $"nslookup -type=SRV {historyQuery}";
+
+            var hostFromResponse = TryExtractNslookupHostFromMongoSrvResponse(item.Entry.ResponseText);
+            var hostCmd = string.IsNullOrEmpty(hostFromResponse) ? null : $"nslookup {hostFromResponse}";
+            UpdateNslookupCopyUi(srvCmd, hostCmd);
         }
 
         bool lookupOnNextTextChange = false;
@@ -479,6 +576,7 @@ public partial class MainWindow
                 lstHistory.SelectedIndex = -1;
                 txtInput.Clear();
                 txtOutput.Clear();
+                UpdateNslookupCopyUi(null, null);
             }
             else
                 lstHistory.SelectedIndex = Math.Min(deleteIx, _mongoSrvLookupHistory.Count - 1);
@@ -500,12 +598,14 @@ public partial class MainWindow
             {
                 SetStatus("Enter a valid _mongodb._tcp.<cluster-host> value or mongodb+srv:// URI.", Brushes.IndianRed);
                 txtOutput.Text = string.Empty;
+                UpdateNslookupCopyUi(null, null);
                 btnLookup.IsEnabled = true;
                 return;
             }
 
             SetStatus("Looking up DNS SRV records...");
             txtOutput.Text = string.Empty;
+            UpdateNslookupCopyUi(null, null);
 
             try
             {
@@ -513,6 +613,7 @@ public partial class MainWindow
                 var succeeded = false;
                 Brush? statusBrush = Brushes.DimGray;
                 var statusFinal = string.Empty;
+                string? hostNslookupCopyTarget = null;
 
                 try
                 {
@@ -536,6 +637,10 @@ public partial class MainWindow
                     }
                     else
                     {
+                        var firstTargetHost = TrimDnsFqdn(records[0].Target.Value);
+                        if (!string.IsNullOrEmpty(firstTargetHost))
+                            hostNslookupCopyTarget = firstTargetHost;
+
                         foreach (var record in records)
                             sb.AppendLine($"{query} service = {record.Priority} {record.Weight} {record.Port} {record.Target}");
 
@@ -559,7 +664,6 @@ public partial class MainWindow
                                 sb.AppendLine(ns);
                         }
 
-                        var firstTargetHost = TrimDnsFqdn(records[0].Target.Value);
                         if (!string.IsNullOrEmpty(firstTargetHost))
                         {
                             sb.AppendLine();
@@ -622,6 +726,11 @@ public partial class MainWindow
 
                 txtOutput.Text = responseText;
                 SetStatus(statusFinal, statusBrush);
+                UpdateNslookupCopyUi(
+                    $"nslookup -type=SRV {query}",
+                    string.IsNullOrEmpty(hostNslookupCopyTarget)
+                        ? null
+                        : $"nslookup {hostNslookupCopyTarget}");
                 PushMongoSrvLookupHistory(inputSnap, query, responseText, succeeded);
                 RefreshMongoSrvLookupHistoryUi(true);
             }
@@ -722,6 +831,7 @@ public partial class MainWindow
         txtInput.Clear();
         txtOutput.Clear();
         SetStatus(string.Empty);
+        UpdateNslookupCopyUi(null, null);
 
         dlg.Content = outerGrid;
         dlg.ShowDialog();
