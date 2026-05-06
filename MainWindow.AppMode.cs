@@ -207,6 +207,11 @@ public partial class MainWindow
     private void ApplyModeGating()
     {
         bool isShortTerm = _appMode == AppMode.ShortTerm;
+        bool showSelectionActionsMenu = _appMode != AppMode.Documentation;
+        if (MenuItemSelectionActions != null)
+            MenuItemSelectionActions.Visibility = showSelectionActionsMenu ? Visibility.Visible : Visibility.Collapsed;
+        if (SeparatorBeforeSelectionActions != null)
+            SeparatorBeforeSelectionActions.Visibility = showSelectionActionsMenu ? Visibility.Visible : Visibility.Collapsed;
 
         // Tab-bound menu items
         if (MenuItemNewTab != null)            MenuItemNewTab.IsEnabled = isShortTerm;

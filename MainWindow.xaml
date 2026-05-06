@@ -191,8 +191,8 @@
                     <MenuItem x:Name="MenuItemGoToLine" Header="_Go To Line..." InputGestureText="Ctrl+G" Click="MenuGoToLine_Click"/>
                     <MenuItem x:Name="MenuItemGoToTab" Header="Go To _Tab..." InputGestureText="Ctrl+P" Click="MenuGoToTab_Click"/>
                     <MenuItem x:Name="MenuItemTrimTrailingEmptyLines" Header="Trim _Trailing Empty Lines" InputGestureText="Ctrl+Shift+Space" Click="MenuTrimTrailingEmptyLines_Click"/>
-                    <Separator/>
-                    <MenuItem Header="Selection _Actions">
+                    <Separator x:Name="SeparatorBeforeSelectionActions"/>
+                    <MenuItem x:Name="MenuItemSelectionActions" Header="Selection _Actions">
                         <MenuItem x:Name="MenuItemCopySelectionTo"
                                   Header="_Copy Selection To"
                                   SubmenuOpened="MenuCopySelectionTo_SubmenuOpened">

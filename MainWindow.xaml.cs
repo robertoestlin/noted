@@ -2174,10 +2174,12 @@ public partial class MainWindow : Window
         menu.Items.Add(formatJsonKeepOriginalItem);
         menu.Items.Add(copySelectionItem);
         menu.Items.Add(moveSelectionItem);
-        menu.Items.Add(new Separator());
+        var sepAfterTransfer = new Separator();
+        menu.Items.Add(sepAfterTransfer);
         menu.Items.Add(resetImageSizeItem);
         menu.Items.Add(openImageFolderItem);
-        menu.Items.Add(new Separator());
+        var sepBeforeLineAssign = new Separator();
+        menu.Items.Add(sepBeforeLineAssign);
         menu.Items.Add(assignLineOwnerItem);
         menu.Items.Add(clearLineOwnerItem);
         menu.Items.Add(bulletInfoItem);
@@ -2185,16 +2187,27 @@ public partial class MainWindow : Window
         menu.Opened += (_, _) =>
         {
             bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
-            bool canFormatJson = editor.Document != null && editor.Document.LineCount > 0;
+            bool showFormatJson = _appMode != AppMode.Documentation;
+            formatJsonItem.Visibility = showFormatJson ? Visibility.Visible : Visibility.Collapsed;
+            formatJsonKeepOriginalItem.Visibility = showFormatJson ? Visibility.Visible : Visibility.Collapsed;
+            bool canFormatJson = showFormatJson && editor.Document != null && editor.Document.LineCount > 0;
             formatJsonItem.IsEnabled = canFormatJson;
             formatJsonKeepOriginalItem.IsEnabled = canFormatJson;
-            copySelectionItem.IsEnabled = hasSelection;
-            moveSelectionItem.IsEnabled = hasSelection;
+
+            bool showSelectionAndLineMenus = _appMode != AppMode.Documentation;
+            copySelectionItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            moveSelectionItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            sepAfterTransfer.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            assignLineOwnerItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            clearLineOwnerItem.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            sepBeforeLineAssign.Visibility = showSelectionAndLineMenus ? Visibility.Visible : Visibility.Collapsed;
+            copySelectionItem.IsEnabled = showSelectionAndLineMenus && hasSelection;
+            moveSelectionItem.IsEnabled = showSelectionAndLineMenus && hasSelection;
 
             var doc = FindDocByEditor(editor);
             bool canAssign = doc != null && _users.Count > 0;
-            assignLineOwnerItem.IsEnabled = canAssign;
-            clearLineOwnerItem.IsEnabled = doc != null;
+            assignLineOwnerItem.IsEnabled = showSelectionAndLineMenus && canAssign;
+            clearLineOwnerItem.IsEnabled = showSelectionAndLineMenus && doc != null;
             resetImageSizeItem.IsEnabled = CanResetInlineImageSizeAtCaret(editor);
             openImageFolderItem.IsEnabled = CanShowInlineImageInFolderAtCaret(editor);
 
