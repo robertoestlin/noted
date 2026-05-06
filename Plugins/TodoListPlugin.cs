@@ -509,12 +509,12 @@ public partial class MainWindow
             rowContextMenu.Items.Add(renameItem);
             if (isOverdue)
             {
-                var resetRedItem = new MenuItem
+                var resetCreatedTimeItem = new MenuItem
                 {
-                    Header = "Reset red",
-                    ToolTip = "Set created time to now so the overdue highlight clears."
+                    Header = "Reset created time",
+                    ToolTip = "Sets created time to now so the overdue highlight clears."
                 };
-                resetRedItem.Click += (_, _) =>
+                resetCreatedTimeItem.Click += (_, _) =>
                 {
                     item.CreatedUtc = DateTime.UtcNow;
                     RenderTodoLists();
@@ -522,7 +522,7 @@ public partial class MainWindow
                     TodoPanelBorder?.Focus();
                     Keyboard.Focus(TodoPanelBorder);
                 };
-                rowContextMenu.Items.Add(resetRedItem);
+                rowContextMenu.Items.Add(resetCreatedTimeItem);
             }
             row.ContextMenu = rowContextMenu;
 
