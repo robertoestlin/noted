@@ -2088,6 +2088,7 @@ public partial class MainWindow
                 {
                     CopyClosedTabsFileToBackupFolder(previousBackupFolder, backupPath);
                     CopySearchFilesHistoryFileToBackupFolder(previousBackupFolder, backupPath);
+                    CopyMongoSrvLookupHistoryFileToBackupFolder(previousBackupFolder, backupPath);
                     CopySelectedAdditionalBackupArtifacts(previousBackupFolder, backupPath);
                 }
 

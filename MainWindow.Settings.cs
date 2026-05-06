@@ -48,6 +48,7 @@ public partial class MainWindow
             SaveComputerStatisticsPluginState(opts);
             SaveMessageOverlayPluginState(opts);
             SaveSearchFilesHistory(opts);
+            SaveMongoSrvLookupHistory(opts);
             SaveTodoItems(opts);
             SaveSafePasteData(opts);
             SaveSafePasteKeys(opts);
@@ -811,6 +812,7 @@ public partial class MainWindow
             LoadSafePasteData(legacyCombined);
             LoadTimeReports();
             LoadSearchFilesHistory();
+            LoadMongoSrvLookupHistory();
             LoadTodoItems();
             LoadStandupNotes();
             LoadStateConfig();
@@ -944,6 +946,52 @@ public partial class MainWindow
             SaveSearchFilesHistory(new JsonSerializerOptions { WriteIndented = true });
     }
 
+    private static List<MongoSrvLookupHistoryEntry> NormalizeMongoSrvLookupHistory(
+        IEnumerable<MongoSrvLookupHistoryEntry>? entries,
+        int limit)
+    {
+        if (entries == null)
+            return [];
+
+        return entries
+            .Select(entry =>
+            {
+                entry.InputText ??= string.Empty;
+                entry.SrvQuery ??= string.Empty;
+                entry.ResponseText ??= string.Empty;
+                return entry;
+            })
+            .OrderByDescending(entry => entry.CreatedUtc)
+            .Take(limit)
+            .ToList();
+    }
+
+    private void SaveMongoSrvLookupHistory(JsonSerializerOptions options)
+    {
+        var historyPath = Path.Combine(_backupFolder, MongoSrvLookupHistoryFileName);
+        _mongoSrvLookupHistory = NormalizeMongoSrvLookupHistory(_mongoSrvLookupHistory, MongoSrvLookupHistoryLimit);
+        _windowSettingsStore.Save(historyPath, _mongoSrvLookupHistory, options);
+    }
+
+    private void LoadMongoSrvLookupHistory()
+    {
+        var historyPath = Path.Combine(_backupFolder, MongoSrvLookupHistoryFileName);
+        var history = _windowSettingsStore.Load<List<MongoSrvLookupHistoryEntry>>(historyPath);
+        _mongoSrvLookupHistory = NormalizeMongoSrvLookupHistory(history, MongoSrvLookupHistoryLimit);
+        if (history == null)
+            SaveMongoSrvLookupHistory(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private void PersistMongoSrvLookupHistory()
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            SaveMongoSrvLookupHistory(new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { /* non-critical */ }
+    }
+
     private void LoadTimeReports()
     {
         var timeReportsPath = Path.Combine(_backupFolder, TimeReportsFileName);
@@ -1021,6 +1069,7 @@ public partial class MainWindow
         _projectLineCounterIgnoredFileTypes = [];
         _searchFilesHistory = [];
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
+        _mongoSrvLookupHistory = [];
         _tabCleanupStaleDays = DefaultTabCleanupStaleDays;
         _closedTabsMaxCount = DefaultClosedTabsMaxCount;
         _closedTabsRetentionDays = DefaultClosedTabsRetentionDays;
@@ -1447,6 +1496,9 @@ public partial class MainWindow
 
     private void CopySearchFilesHistoryFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExists(fromFolder, toFolder, SearchFilesHistoryFileName);
+
+    private void CopyMongoSrvLookupHistoryFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExists(fromFolder, toFolder, MongoSrvLookupHistoryFileName);
 
     private bool CopyTimeReportsFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TimeReportsFileName);

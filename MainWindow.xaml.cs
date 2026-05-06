@@ -96,6 +96,7 @@ public partial class MainWindow : Window
     private const string SafePasteKeysFileName = "safe-paste-keys.json";
     private const string ClosedTabsFileName = "closed-tabs.json";
     private const string SearchFilesHistoryFileName = "plugin-search-files-history.json";
+    private const string MongoSrvLookupHistoryFileName = "plugin-mongo-srv-lookup-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string ProjectLineCounterStateFileName = "plugin-project-line-counter.json";
     private const string TaskPanelPluginStateFileName = "plugin-task-panel.json";

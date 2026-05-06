@@ -233,6 +233,15 @@ public sealed class SearchFilesHistoryMatch
     public string LinePreview { get; set; } = string.Empty;
 }
 
+public sealed class MongoSrvLookupHistoryEntry
+{
+    public DateTime CreatedUtc { get; set; }
+    public string InputText { get; set; } = string.Empty;
+    public string SrvQuery { get; set; } = string.Empty;
+    public string ResponseText { get; set; } = string.Empty;
+    public bool Success { get; set; }
+}
+
 public sealed class SearchFilesHistoryEntry
 {
     public DateTime CreatedUtc { get; set; }
