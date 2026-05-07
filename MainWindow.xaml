@@ -275,6 +275,7 @@
                         <MenuItem Header="_Project Line Counter" Click="MenuProjectLineCounter_Click"/>
                     </MenuItem>
                     <MenuItem Header="Safe _Paste Area" Click="MenuSafePasteArea_Click"/>
+                    <MenuItem Header="Sc_ripts" Click="MenuScripts_Click"/>
                     <MenuItem Header="_Seach Files" Click="MenuSearchFiles_Click"/>
                     <MenuItem Header="Stan_dup" Click="MenuStandup_Click"/>
                     <MenuItem x:Name="MenuItemTaskPanel" Header="Task _Panel" InputGestureText="F3" Click="MenuTodoList_Click"/>

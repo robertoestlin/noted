@@ -28,6 +28,9 @@
     <Content Include="Plugins\resources\midi\*.mid">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Plugins\resources\script-packages\builtin\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,10 @@
+#!/bin/bash
+# cfb — create feature branch
+# TODO: replace this placeholder with the real implementation.
+
+if [ -z "$1" ]; then
+  echo "Usage: cfb <branch-name>"
+  exit 1
+fi
+
+echo "(placeholder) would create feature branch: $1"

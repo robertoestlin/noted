@@ -1,0 +1,13 @@
+#!/bin/bash
+# This is a poor man's version of the 'watch' command for systems without native support
+ARGS="${@}"
+
+clear; 
+
+while(true); do 
+  OUTPUT=`$ARGS`
+  clear 
+  echo -e "${OUTPUT[@]}"
+  sleep 1
+done
+

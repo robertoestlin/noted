@@ -1,0 +1,83 @@
+{
+  "version": 3,
+  "name": "Built-in Scripts",
+  "scripts": [
+    {
+      "file": "cfb",
+      "title": "cfb — create feature branch (placeholder)",
+      "language": "bash",
+      "filename": "cfb",
+      "description": "Placeholder. Will create a feature branch from the current base branch. Usage: cfb <branch-name>"
+    },
+    {
+      "file": "clean",
+      "title": "clean — strip bin/obj from a .NET repo",
+      "language": "bash",
+      "filename": "clean",
+      "description": "Recursively deletes bin/ and obj/ folders next to a .sln/.csproj. -d also removes .vscode/, -b runs dotnet restore + build afterwards."
+    },
+    {
+      "file": "del-branch-after-pr",
+      "title": "del-branch-after-pr — delete branch after PR merged (placeholder)",
+      "language": "bash",
+      "filename": "del-branch-after-pr",
+      "description": "Placeholder. Will delete a local branch after its PR has been merged. Usage: del-branch-after-pr [branch-name]"
+    },
+    {
+      "file": "findf",
+      "title": "findf — find file by name (case-insensitive)",
+      "language": "bash",
+      "filename": "findf",
+      "description": "Wraps `find . -iname '*<term>*'` and prints the command before running it."
+    },
+    {
+      "file": "gss",
+      "title": "gss — interactive git fast-forward",
+      "language": "bash",
+      "filename": "gss",
+      "description": "Fetches, reports commits behind, optionally stashes local changes, fast-forwards, and re-applies the stash. Detects diverged branches and bails out cleanly."
+    },
+    {
+      "file": "jwt_decode",
+      "title": "jwt_decode — pretty-print a JWT from stdin",
+      "language": "bash",
+      "filename": "jwt_decode",
+      "description": "Reads a JWT on stdin, base64url-decodes the header and payload, and pipes both through jq. Requires jq."
+    },
+    {
+      "file": "myip",
+      "title": "myip — print public IP",
+      "language": "bash",
+      "filename": "myip",
+      "description": "Curls ifconfig.me and prints the resolved public IP address."
+    },
+    {
+      "file": "nu",
+      "title": "nu — upgrade NuGet package references",
+      "language": "bash",
+      "filename": "nu",
+      "description": "Walks every *.*proj file and runs `dotnet add package <name>` for each PackageReference whose version is not a pre-release."
+    },
+    {
+      "file": "search",
+      "title": "search — recursive grep (skips dll/zip/js/css)",
+      "language": "bash",
+      "filename": "search",
+      "description": "Case-insensitive recursive grep with line numbers, excluding common binary and front-end build artefacts."
+    },
+    {
+      "file": "search_word",
+      "title": "search_word — highlighted in-file search",
+      "language": "bash",
+      "filename": "search_word",
+      "description": "Awk-based search that prints matching lines with the pattern highlighted in red and prefixed by line number. Usage: search_word <pattern> <file>"
+    },
+    {
+      "file": "watch",
+      "title": "watch — poor-man's watch(1)",
+      "language": "bash",
+      "filename": "watch",
+      "description": "Re-runs the supplied command every second on a cleared screen. Stand-in for `watch` on systems that don't ship it."
+    }
+  ]
+}

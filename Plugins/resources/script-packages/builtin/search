@@ -1,0 +1,2 @@
+#!/bin/bash
+grep --ignore-case --exclude=\*.dll --exclude=\*.zip --exclude=\*.js --exclude=\*.css -rnI ./ -e "$1"

@@ -595,3 +595,24 @@ public sealed class DocPackagesIndex
     public List<string> Order { get; set; } = new();
     public string? CurrentId { get; set; }
 }
+
+// ---------------------------------------------------------------------------
+// Script packs (one file per pack, plain text format)
+// ---------------------------------------------------------------------------
+
+/// <summary>Persisted at <c>{BackupFolder}/script-packages/{name}.script-pack</c>.</summary>
+public sealed class ScriptPack
+{
+    public int Version { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public List<ScriptItem> Scripts { get; set; } = new();
+}
+
+public sealed class ScriptItem
+{
+    public string Title { get; set; } = string.Empty;
+    public string Language { get; set; } = string.Empty;
+    public string Filename { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+}

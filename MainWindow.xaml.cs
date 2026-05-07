@@ -1322,6 +1322,7 @@ public partial class MainWindow : Window
         ApplyShortcutBindings();
         EnsureSettingsFileExists();
         EnsureBackupImagesFolderExists();
+        EnsureBuiltinScriptPackUpToDate();
         LoadClosedTabHistory();
         _tabSyncHistoryService.Load(_backupFolder);
         Loaded += (_, _) => { if (_startMaximized) WindowState = WindowState.Maximized; };
@@ -7779,6 +7780,7 @@ public partial class MainWindow : Window
     private void MenuMidiPlayer_Click(object sender, RoutedEventArgs e) => OpenOrRestoreMidiPlayer();
     private void MenuCidrConverter_Click(object sender, RoutedEventArgs e) => ShowCidrConverterDialog();
     private void MenuPasswordGenerator_Click(object sender, RoutedEventArgs e) => ShowPasswordGeneratorDialog();
+    private void MenuScripts_Click(object sender, RoutedEventArgs e) => ShowScriptsDialog();
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();
     private void MenuStandup_Click(object sender, RoutedEventArgs e) => ShowStandupDialog();
     private void MenuComputerStatistics_Click(object sender, RoutedEventArgs e) => ShowComputerStatisticsDialog();

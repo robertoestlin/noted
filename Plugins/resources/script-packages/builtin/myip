@@ -1,0 +1,5 @@
+#!/bin/bash
+#curl -w '\n' -s api.ipify.org
+curl -s -w '\n' ifconfig.me
+
+

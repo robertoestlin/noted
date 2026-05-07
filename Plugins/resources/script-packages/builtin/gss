@@ -1,0 +1,100 @@
+#!/bin/bash
+
+function display_commits_behind() {
+    echo "You are $1 commit$([[ $1 -gt 1 ]] && echo "s") behind the remote branch."
+
+    commit_names=$(git log --pretty=format:"%h %s" HEAD..origin/$(git symbolic-ref --short HEAD))
+    echo -e "Commits behind:\n$commit_names"
+}
+
+function stash_changes() {
+    read -p "Do you want to stash everything including untracked files? (y/n): " stash_choice
+
+    if [[ ${stash_choice,,} == "y" ]]; then
+        git stash -u
+        echo "Changes stashed successfully."
+    else
+        echo "Exiting. Please commit or stash your changes before fast-forwarding."
+        exit 0
+    fi
+}
+
+function fast_forward() {
+    read -p "Do you want to fast-forward? (y/n): " choice
+
+    if [[ ${choice,,} == "y" ]]; then
+        git pull
+        echo "Fast-forward successful."
+    else
+        echo "Exiting. No changes applied."
+        exit 0
+    fi
+}
+
+function apply_stash() {
+    read -p "Do you want to apply the stash? (y/n): " apply_stash_choice
+
+    if [[ ${apply_stash_choice,,} == "y" ]]; then
+        git stash apply
+        echo "Stash applied successfully."
+    fi
+}
+
+git fetch
+
+commits_behind=$(git rev-list HEAD..origin/$(git symbolic-ref --short HEAD) --count)
+
+# Check for branch divergence
+if [[ $(git status | grep -E "Your branch and .* have diverged|Your branch is ahead") ]]; then
+    echo -e "Your branch has diverged from the remote branch."
+
+    # Display the last 5 origin commits
+    echo -e "\nOrigin/$(git symbolic-ref --short HEAD):"
+    git log --pretty=format:"%C(yellow)%h %Creset%s %Cgreen(%ad)%Creset" --date=local -n 5 origin/$(git symbolic-ref --short HEAD)
+
+    # Display the last 5 local commits
+    echo -e "\nLocal:"
+    git log --pretty=format:"%C(yellow)%h %Creset%s %Cgreen(%ad)%Creset" --date=local -n 5
+
+    git status
+    echo "Undo your last commit but keep changes: git reset HEAD^"
+    exit 0
+fi
+
+if [ $commits_behind -gt 0 ]; then
+    display_commits_behind $commits_behind
+
+    # Check if there are changes in the working directory (excluding untracked files)
+    if [[ $(git diff --exit-code) ]]; then
+        echo "Local changes detected."
+        stash_changes
+
+        # Check if a fast-forward merge is possible
+        can_fast_forward=$(git merge-base origin/$(git symbolic-ref --short HEAD) HEAD)
+
+        if [[ $can_fast_forward == $(git rev-parse HEAD) && ! $(git diff $can_fast_forward) ]]; then
+            fast_forward
+            apply_stash
+            git diff
+            echo "Resolve the merge conflict, commit and push. And have a nice day!"
+            exit 0
+        else
+            echo "Fast-forward is not possible. Exiting."
+            exit 0
+        fi
+    else
+        # Check if a fast-forward merge is possible
+        can_fast_forward=$(git merge-base origin/$(git symbolic-ref --short HEAD) HEAD)
+
+        if [[ $can_fast_forward == $(git rev-parse HEAD) ]]; then
+            fast_forward
+            echo "Continue with other actions..."
+            exit 0
+        else
+            echo "Fast-forward is not possible. Exiting."
+            exit 0
+        fi
+    fi
+else
+    echo "Your branch is up-to-date. No action needed."
+fi

@@ -1,0 +1,79 @@
+#!/bin/bash
+
+show_help() {
+  echo "Usage: $0 [-d] [-b]"
+  echo "  -d    Delete .vscode/ directory"
+  echo "  -b    Run 'dotnet restore' and 'dotnet build'"
+  echo "  If no options are provided, the script will perform the following by default:"
+  echo "  - Delete 'bin/' and 'obj/' folders recursively"
+  exit 0
+}
+
+delete_vscode_directory=false
+run_build=false
+deleted_vscode=false
+deleted_folders=false
+
+while getopts ":db" opt; do
+  case $opt in
+    d)
+      delete_vscode_directory=true
+      ;;
+    b)
+      run_build=true
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      show_help
+      ;;
+  esac
+done
+
+sln=$(find . -maxdepth 1 -name '*.sln' -o -name '*.csproj')
+
+if [ -z "$sln" ]; then
+  echo "Did not find sln/csproj file"
+else
+  echo "Found sln/csproj file: $sln"
+
+  if [ "$delete_vscode_directory" == true ]; then
+    if [ -e ".vscode/" ]; then
+      read -p "Do you want to delete .vscode/ directory? (y/n): " answer
+      if [ "$answer" == "y" ]; then
+        rm -rf .vscode/
+        echo "Deleted .vscode/"
+        deleted_vscode=true
+      else
+        echo "Operation aborted. .vscode/ directory not deleted."
+      fi
+    else
+      echo ".vscode/ not found, nothing to delete."
+    fi
+  fi
+
+  folders_to_delete=$(find . -type d -name "bin" -o -type d -name "obj")
+  if [ -n "$folders_to_delete" ]; then
+    echo "Folders to delete:"
+    echo "$folders_to_delete"
+    echo
+    read -p "Do you want to delete these folders? (y/n): " answer
+    if [ "$answer" == "y" ]; then
+      echo "Deleting folders..."
+      echo "$folders_to_delete" | xargs rm -rf
+      deleted_folders=true
+    else
+      echo "Operation aborted. Folders not deleted."
+    fi
+  else
+    echo "No 'bin/' or 'obj/' folders found, nothing to delete."
+  fi
+
+  if [ "$run_build" == true ]; then
+    dotnet restore
+    dotnet build
+  fi
+fi
+
+if [ "$deleted_vscode" == false ] && [ "$deleted_folders" == false ]; then
+  echo "No actions performed."
+fi

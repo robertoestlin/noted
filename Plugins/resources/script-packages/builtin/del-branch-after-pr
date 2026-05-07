@@ -1,0 +1,12 @@
+#!/bin/bash
+# del-branch-after-pr — delete a local branch after its PR has merged
+# TODO: replace this placeholder with the real implementation.
+
+branch="${1:-$(git symbolic-ref --short HEAD 2>/dev/null)}"
+
+if [ -z "$branch" ]; then
+  echo "Usage: del-branch-after-pr [branch-name]"
+  exit 1
+fi
+
+echo "(placeholder) would delete branch: $branch"

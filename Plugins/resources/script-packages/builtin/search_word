@@ -1,0 +1,11 @@
+#!/bin/bash
+# Usage: Search for a word within a file and display matching lines with highlighted pattern and line numbers.
+# Syntax: search_word "word-to-search" <file>
+
+if [ "$#" -eq 0 ] || [ "$1" == "-h" ]; then
+    echo "Usage: search_word <pattern> <file>"
+    echo "Example: search_word \"example\" myfile.txt"
+    exit 1
+fi
+
+awk -v search="$1" '$0 ~ search { gsub(search, "\033[1;31m&\033[0m"); printf("%-4d: %s\n", NR, $0) }' "$2"
