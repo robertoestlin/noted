@@ -511,6 +511,8 @@ public sealed class WindowSettings
     public bool? ShowBulletHoverTooltips { get; set; }
     public bool ShowHorizontalRuler { get; set; } = true;
     public bool ShowInlineImages { get; set; } = true;
+    /// <summary>When null (older settings), spreadsheet chrome stays enabled.</summary>
+    public bool? RenderSpreadsheet { get; set; }
     public string FancyBulletStyle { get; set; } = "dot";
     public List<string>? Users { get; set; }
     public List<UserProfile>? UserProfiles { get; set; }

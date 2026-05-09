@@ -303,6 +303,7 @@ public partial class MainWindow : Window
     private bool _showBulletHoverTooltips = true;
     private bool _showHorizontalRuler = true;
     private bool _showInlineImages = true;
+    private bool _renderSpreadsheet = true;
     private ExternalBrowserChoice _externalBrowserForLinks = ExternalBrowserChoice.Default;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
     private bool _isFredagspartySessionEnabled = false;
@@ -1452,6 +1453,7 @@ public partial class MainWindow : Window
             MarkDirty(doc);
             RedrawHighlight(doc);
             HideAssigneeHoverTooltip();
+            TrySyncSpreadsheetSums(editor);
         };
         editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
@@ -1513,6 +1515,7 @@ public partial class MainWindow : Window
             SafeHttpUriLauncher.TryOpenHyperlinkUri(e.Uri);
         }));
         EnableJsonSyntaxHighlighting(editor);
+        AttachSpreadsheetEditorChrome(editor);
         editor.ContextMenu = BuildEditorContextMenu(editor);
         ApplyFridayBackgroundToEditor(editor);
         ApplyVisualLineWrapSettings(editor);
@@ -2201,8 +2204,20 @@ public partial class MainWindow : Window
         var openImageFolderItem = new MenuItem { Header = "Show Image in Folder" };
         openImageFolderItem.Click += (_, _) => ShowInlineImageInFolder(editor);
 
+        var sepSpreadsheet = new Separator();
+        var addSpreadsheetItem = new MenuItem { Header = "Add spreadsheet" };
+        addSpreadsheetItem.Click += (_, _) => InsertSpreadsheetSection(editor);
+        var removeSpreadsheetItem = new MenuItem { Header = "Remove spreadsheet" };
+        removeSpreadsheetItem.Click += (_, _) => RemoveSpreadsheetSection(editor);
+        var editSpreadsheetItem = new MenuItem { Header = "Edit spreadsheet" };
+        editSpreadsheetItem.Click += (_, _) => ShowSpreadsheetEditDialog(editor);
+
         menu.Items.Add(addDocCodeSnippetItem);
         menu.Items.Add(removeDocCodeSnippetItem);
+        menu.Items.Add(sepSpreadsheet);
+        menu.Items.Add(addSpreadsheetItem);
+        menu.Items.Add(removeSpreadsheetItem);
+        menu.Items.Add(editSpreadsheetItem);
         menu.Items.Add(formatJsonItem);
         menu.Items.Add(formatJsonKeepOriginalItem);
         menu.Items.Add(copySelectionItem);
@@ -2221,6 +2236,15 @@ public partial class MainWindow : Window
         {
             bool hasSelection = !string.IsNullOrEmpty(editor.SelectedText);
             bool docMode = _appMode == AppMode.Documentation;
+            bool shortTerm = _appMode == AppMode.ShortTerm;
+            bool inSpreadsheet = shortTerm && editor.Document != null
+                && TryGetSpreadsheetBlockSpanContainingOffset(
+                    editor.Document, editor.TextArea.Caret.Offset, out _, out _);
+            sepSpreadsheet.Visibility = shortTerm ? Visibility.Visible : Visibility.Collapsed;
+            addSpreadsheetItem.Visibility = shortTerm ? Visibility.Visible : Visibility.Collapsed;
+            removeSpreadsheetItem.Visibility = shortTerm && inSpreadsheet ? Visibility.Visible : Visibility.Collapsed;
+            editSpreadsheetItem.Visibility =
+                shortTerm && inSpreadsheet && _renderSpreadsheet ? Visibility.Visible : Visibility.Collapsed;
             addDocCodeSnippetItem.Visibility = docMode ? Visibility.Visible : Visibility.Collapsed;
             addDocCodeSnippetItem.IsEnabled = docMode && editor.Document != null;
 
@@ -7623,6 +7647,7 @@ public partial class MainWindow : Window
         MenuItemShowLineAssignments.IsChecked = _showLineAssignments;
         MenuItemShowHorizontalRuler.IsChecked = _showHorizontalRuler;
         MenuItemShowInlineImages.IsChecked = _showInlineImages;
+        MenuItemRenderSpreadsheet.IsChecked = _renderSpreadsheet;
     }
 
     private void ApplyViewRenderingSettings()
@@ -7764,6 +7789,14 @@ public partial class MainWindow : Window
     private void MenuShowInlineImages_Click(object sender, RoutedEventArgs e)
     {
         _showInlineImages = MenuItemShowInlineImages.IsChecked;
+        ApplyViewRenderingSettings();
+        SaveWindowSettings();
+    }
+
+    private void MenuRenderSpreadsheet_Click(object sender, RoutedEventArgs e)
+    {
+        _renderSpreadsheet = MenuItemRenderSpreadsheet.IsChecked == true;
+        UpdateViewMenuChecks();
         ApplyViewRenderingSettings();
         SaveWindowSettings();
     }

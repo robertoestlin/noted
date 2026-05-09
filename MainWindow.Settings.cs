@@ -128,6 +128,7 @@ public partial class MainWindow
             ShowBulletHoverTooltips = _showBulletHoverTooltips,
             ShowHorizontalRuler = _showHorizontalRuler,
             ShowInlineImages = _showInlineImages,
+            RenderSpreadsheet = _renderSpreadsheet,
             FancyBulletStyle = FancyBulletStyleToSetting(_fancyBulletStyle),
             UptimeHeartbeatSeconds = _uptimeHeartbeatSeconds,
             WriteUptimeHeartbeatInNoted = _writeUptimeHeartbeatInNoted,
@@ -1233,6 +1234,7 @@ public partial class MainWindow
         _showBulletHoverTooltips = state.ShowBulletHoverTooltips ?? true;
         _showHorizontalRuler = state.ShowHorizontalRuler;
         _showInlineImages = state.ShowInlineImages;
+        _renderSpreadsheet = state.RenderSpreadsheet ?? true;
         _fancyBulletStyle = ParseFancyBulletStyle(state.FancyBulletStyle);
         UpdateViewMenuChecks();
 

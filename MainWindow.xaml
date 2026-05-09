@@ -296,6 +296,10 @@
                               Header="Render Inline _Images"
                               IsCheckable="True"
                               Click="MenuShowInlineImages_Click"/>
+                    <MenuItem x:Name="MenuItemRenderSpreadsheet"
+                              Header="_Spreadsheet"
+                              IsCheckable="True"
+                              Click="MenuRenderSpreadsheet_Click"/>
                 </MenuItem>
                 <MenuItem Header="_Tools">
                     <MenuItem Header="_Settings" Click="MenuSettings_Click"/>

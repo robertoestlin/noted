@@ -1,0 +1,111 @@
+<Window x:Class="Noted.SpreadsheetEditWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit spreadsheet"
+        Width="720"
+        Height="480"
+        MinWidth="560"
+        MinHeight="360"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        Icon="logo/logo.png">
+    <Window.Resources>
+        <Style x:Key="GridCellTextStyle" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="GridReadOnlyTextStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas"/>
+            <Setter Property="Margin" Value="4,2"/>
+            <Setter Property="Foreground" Value="#0D7377"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Title" FontWeight="SemiBold"/>
+        <TextBox x:Name="TitleBox"
+                 Grid.Row="1"
+                 Margin="0,6,0,8"
+                 FontFamily="Consolas"
+                 VerticalContentAlignment="Center"/>
+
+        <TextBlock Grid.Row="2" Text="Currency" FontWeight="SemiBold"/>
+        <TextBox x:Name="CurrencyBox"
+                 Grid.Row="3"
+                 Margin="0,6,0,12"
+                 FontFamily="Consolas"
+                 VerticalContentAlignment="Center"/>
+
+        <DataGrid x:Name="RowsGrid"
+                  Grid.Row="4"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  HeadersVisibility="Column"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  GridLinesVisibility="Horizontal"
+                  AlternatingRowBackground="#F8FAFC"
+                  Margin="0,0,0,10">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Description"
+                                    Binding="{Binding Description, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="*"
+                                    EditingElementStyle="{StaticResource GridCellTextStyle}"/>
+                <DataGridTextColumn Header="Quantity"
+                                    Binding="{Binding Quantity, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="100"
+                                    EditingElementStyle="{StaticResource GridCellTextStyle}"/>
+                <DataGridTextColumn Header="Unit price"
+                                    Binding="{Binding UnitPrice, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="110"
+                                    EditingElementStyle="{StaticResource GridCellTextStyle}"/>
+                <DataGridTextColumn Header="Total"
+                                    Binding="{Binding TotalDisplay}"
+                                    Width="110"
+                                    IsReadOnly="True"
+                                    ElementStyle="{StaticResource GridReadOnlyTextStyle}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,10">
+            <Button Content="Add row"
+                    Padding="12,6"
+                    Margin="0,0,8,0"
+                    Click="AddRow_Click"/>
+            <Button Content="Remove row"
+                    Padding="12,6"
+                    Click="RemoveRow_Click"/>
+        </StackPanel>
+
+        <TextBlock x:Name="SumBlock"
+                   Grid.Row="6"
+                   Margin="0,0,0,14"
+                   FontWeight="Bold"
+                   FontSize="14"/>
+
+        <StackPanel Grid.Row="7"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="OK"
+                    IsDefault="True"
+                    Padding="18,6"
+                    Margin="0,0,8,0"
+                    Click="Ok_Click"/>
+            <Button Content="Cancel"
+                    IsCancel="True"
+                    Padding="18,6"/>
+        </StackPanel>
+    </Grid>
+</Window>
