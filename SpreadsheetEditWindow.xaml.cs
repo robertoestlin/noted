@@ -25,7 +25,7 @@ public partial class SpreadsheetEditWindow : Window
             : currency.Trim();
         CurrencyBox.TextChanged += (_, _) => RefreshSum();
         foreach (var r in rows)
-            _rows.Add(r);
+            _rows.Add(r.Clone());
         if (_rows.Count == 0)
             _rows.Add(SpreadsheetEditRowModel.CreateDefault());
         RowsGrid.ItemsSource = _rows;
@@ -305,6 +305,15 @@ public sealed class SpreadsheetEditRowModel : INotifyPropertyChanged
             Quantity = blankRowForTab ? "" : "1",
             UnitPrice = blankRowForTab ? "" : "0",
         };
+
+    public SpreadsheetEditRowModel Clone()
+    {
+        var c = new SpreadsheetEditRowModel();
+        c.Description = Description;
+        c.Quantity = Quantity;
+        c.UnitPrice = UnitPrice;
+        return c;
+    }
 
     public string Description
     {

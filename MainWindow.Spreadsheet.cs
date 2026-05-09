@@ -593,7 +593,9 @@ public partial class MainWindow
             {
                 if (IsBareMarkdownCloseFenceLine(doc, line))
                 {
-                    int closeEnd = line.EndOffset;
+                    // Include this line's terminator — DocumentLine.EndOffset stops before the delimiter;
+                    // omitting it left the old \r\n after ``` outside Replace and duplicated newlines from Build… each OK.
+                    int closeEnd = line.Offset + line.TotalLength;
                     inside = false;
                     if (caretLineNum >= openLineNum && caretLineNum <= lineNum)
                     {
@@ -824,7 +826,11 @@ public partial class MainWindow
         editor.TextArea.TextView.Redraw();
     }
 
-    private void TrySyncSpreadsheetSums(TextEditor editor)
+    /// <param name="anchorOffsetForActiveBlock">
+    /// Optional offset known to lie inside the fenced block (e.g. block start after Replace from the edit dialog).
+    /// When null, the caret offset is used.
+    /// </param>
+    private void TrySyncSpreadsheetSums(TextEditor editor, int? anchorOffsetForActiveBlock = null)
     {
         if (_spreadsheetSumSyncSuppress)
             return;
@@ -834,13 +840,20 @@ public partial class MainWindow
         if (!_renderSpreadsheet)
             return;
 
+        var doc = editor.Document;
+        int caret = anchorOffsetForActiveBlock ?? editor.TextArea.Caret.Offset;
+        // Only rewrite the ```spreadsheet … ``` block that contains the caret so edits in one table
+        // never reformat totals / columns in another fenced spreadsheet in the same note.
+        if (!TryGetSpreadsheetBlockSpanContainingOffset(doc, caret, out _, out _))
+            return;
+
         _spreadsheetSumSyncSuppress = true;
         try
         {
             bool any = false;
-            if (TryMutateSpreadsheetDataRowTotals(editor.Document))
+            if (TryMutateSpreadsheetDataRowTotals(doc, caret))
                 any = true;
-            if (TryMutateSpreadsheetSumLines(editor.Document))
+            if (TryMutateSpreadsheetSumLines(doc, caret))
                 any = true;
             if (any)
                 editor.TextArea.TextView.Redraw();
@@ -851,9 +864,23 @@ public partial class MainWindow
         }
     }
 
-    private static bool TryMutateSpreadsheetDataRowTotals(TextDocument doc)
+    /// <summary>
+    /// Half-open offset range <c>[openFence.Offset, closeFence.Offset + closeFence.TotalLength)</c> — matches <see cref="TryGetSpreadsheetBlockSpanContainingOffset"/>.
+    /// </summary>
+    private static bool SpreadsheetFencedBlockContainsCaretOffset(
+        TextDocument doc, int openLineNum, int closeLineNum, int caretOffset)
     {
-        var blocks = new List<(int openLine, int headerLine, int sumLine)>();
+        var openLn = doc.GetLineByNumber(openLineNum);
+        var closeLn = doc.GetLineByNumber(closeLineNum);
+        int start = openLn.Offset;
+        int endExclusive = closeLn.Offset + closeLn.TotalLength;
+        caretOffset = Math.Clamp(caretOffset, 0, doc.TextLength);
+        return caretOffset >= start && caretOffset < endExclusive;
+    }
+
+    private static bool TryMutateSpreadsheetDataRowTotals(TextDocument doc, int caretOffset)
+    {
+        var blocks = new List<(int openLine, int headerLine, int sumLine, int closeLine)>();
         bool inside = false;
         int curOpen = -1;
         int curHeader = -1;
@@ -876,7 +903,7 @@ public partial class MainWindow
 
             if (IsBareMarkdownCloseFenceLine(doc, line))
             {
-                blocks.Add((curOpen, curHeader, curSum));
+                blocks.Add((curOpen, curHeader, curSum, lineNum));
                 inside = false;
                 continue;
             }
@@ -900,6 +927,8 @@ public partial class MainWindow
         foreach (var b in blocks)
         {
             if (b.openLine < 0 || b.headerLine < 0 || b.sumLine < 0)
+                continue;
+            if (!SpreadsheetFencedBlockContainsCaretOffset(doc, b.openLine, b.closeLine, caretOffset))
                 continue;
 
             var openFence = doc.GetLineByNumber(b.openLine);
@@ -1110,7 +1139,7 @@ public partial class MainWindow
         w3Full = Math.Max(w3Num + sfx, headerTailLen);
     }
 
-    private static bool TryMutateSpreadsheetSumLines(TextDocument doc)
+    private static bool TryMutateSpreadsheetSumLines(TextDocument doc, int caretOffset)
     {
         bool any = false;
         bool inside = false;
@@ -1132,7 +1161,9 @@ public partial class MainWindow
 
             if (IsBareMarkdownCloseFenceLine(doc, line))
             {
-                if (openLine != null && TryUpdateSumForClosedSpreadsheetBlock(doc, openLine, line))
+                if (openLine != null
+                    && SpreadsheetFencedBlockContainsCaretOffset(doc, openLine.LineNumber, lineNum, caretOffset)
+                    && TryUpdateSumForClosedSpreadsheetBlock(doc, openLine, line))
                     any = true;
                 inside = false;
                 openLine = null;
@@ -1337,7 +1368,9 @@ public partial class MainWindow
         }
 
         editor.TextArea.TextView.Redraw();
-        TrySyncSpreadsheetSums(editor);
+        // Do not call TrySyncSpreadsheetSums here: BuildSpreadsheetSectionTextFromEdit already writes totals,
+        // column widths, and the blank line before Sum. A second layout pass mutates header/data/sum differently
+        // and shifts the Sum row (or spacing) relative to the freshly inserted block.
     }
 
     private static bool TryParseSpreadsheetBlockForEdit(

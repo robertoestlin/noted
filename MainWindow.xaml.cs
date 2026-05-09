@@ -1360,6 +1360,10 @@ public partial class MainWindow : Window
     {
         var name = header ?? $"new {NextFileNumber()}";
         var resolvedId = NormalizeStableTabId(stableTabId);
+        // Duplicate ids break plain-text tab sync: multiple tabs would resolve to the same instream file
+        // and receive identical ApplyIncomingTextToTab bodies on each pull.
+        if (resolvedId.Length > 0 && IsStableTabIdAlreadyOpen(resolvedId))
+            resolvedId = string.Empty;
 
         var editor = CreateEditor();
         if (content != null)
@@ -2621,6 +2625,17 @@ public partial class MainWindow : Window
 
     private TabDocument? FindDocByEditor(TextEditor editor)
         => _docs.Values.FirstOrDefault(doc => ReferenceEquals(doc.Editor, editor));
+
+    private bool IsStableTabIdAlreadyOpen(string normalizedTabId)
+    {
+        foreach (var doc in _docs.Values)
+        {
+            if (string.Equals(doc.StableTabId, normalizedTabId, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 
     private void PopulateTransferMenu(MenuItem menu, TextEditor? sourceEditor, bool moveSelection)
     {
