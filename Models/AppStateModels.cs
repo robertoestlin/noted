@@ -78,6 +78,31 @@ public enum TodoBucket
     ThisWeek = 1
 }
 
+public enum TodoStatus
+{
+    Queued = 0,
+    Active = 1,
+    Waiting = 2,
+    Blocked = 3,
+    Done = 4,
+    Cancelled = 5,
+}
+
+public enum TodoLogEntryKind
+{
+    Note = 0,
+    StatusChange = 1,
+}
+
+public sealed class TodoLogEntry
+{
+    public DateTime TimestampUtc { get; set; }
+    public TodoLogEntryKind Kind { get; set; }
+    public string? Text { get; set; }
+    public TodoStatus? FromStatus { get; set; }
+    public TodoStatus? ToStatus { get; set; }
+}
+
 public sealed class TodoItemState
 {
     public string Id { get; set; } = string.Empty;
@@ -95,6 +120,10 @@ public sealed class TodoItemState
     public int SortOrder { get; set; }
     public DateTime CreatedUtc { get; set; }
     public DateTime? CompletedAtUtc { get; set; }
+
+    public TodoStatus Status { get; set; } = TodoStatus.Queued;
+    public bool IsImportant { get; set; }
+    public List<TodoLogEntry> Log { get; set; } = new();
 }
 
 public sealed class TaskGroupState

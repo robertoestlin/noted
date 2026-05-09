@@ -43,7 +43,10 @@ public partial class MainWindow
             GroupId = item.GroupId,
             SortOrder = item.SortOrder,
             CreatedUtc = item.CreatedUtc,
-            CompletedAtUtc = item.CompletedAtUtc
+            CompletedAtUtc = item.CompletedAtUtc,
+            Status = item.Status,
+            IsImportant = item.IsImportant,
+            Log = item.Log == null ? new List<TodoLogEntry>() : new List<TodoLogEntry>(item.Log)
         }).ToList();
     }
 
@@ -58,6 +61,13 @@ public partial class MainWindow
                 if (text.Length == 0)
                     continue;
 
+                var migratedStatus = rawItem.Status;
+                if (rawItem.CompletedAtUtc.HasValue && migratedStatus == TodoStatus.Queued)
+                {
+                    // Legacy item: had CompletedAtUtc but no Status field in JSON (defaulted to Queued).
+                    migratedStatus = TodoStatus.Done;
+                }
+
                 _todoItems.Add(new TodoItemState
                 {
                     Id = string.IsNullOrWhiteSpace(rawItem.Id) ? Guid.NewGuid().ToString("N") : rawItem.Id,
@@ -67,7 +77,10 @@ public partial class MainWindow
                     GroupId = rawItem.GroupId,
                     SortOrder = rawItem.SortOrder,
                     CreatedUtc = rawItem.CreatedUtc == default ? DateTime.UtcNow : rawItem.CreatedUtc,
-                    CompletedAtUtc = rawItem.CompletedAtUtc
+                    CompletedAtUtc = rawItem.CompletedAtUtc,
+                    Status = migratedStatus,
+                    IsImportant = rawItem.IsImportant,
+                    Log = rawItem.Log ?? new List<TodoLogEntry>()
                 });
             }
         }
@@ -128,6 +141,62 @@ public partial class MainWindow
             return null;
         return _taskAreas.FirstOrDefault(area => string.Equals(area.Id, _currentTaskAreaId, StringComparison.OrdinalIgnoreCase))
             ?? _taskAreas[0];
+    }
+
+    private static bool IsVisibleInPanel(TodoItemState item) =>
+        item.Status != TodoStatus.Cancelled;
+
+    private static void SetTodoItemStatus(TodoItemState item, TodoStatus newStatus)
+    {
+        if (item.Status == newStatus)
+            return;
+        var oldStatus = item.Status;
+        item.Status = newStatus;
+        item.CompletedAtUtc = newStatus == TodoStatus.Done ? DateTime.UtcNow : null;
+        item.Log ??= new List<TodoLogEntry>();
+        item.Log.Add(new TodoLogEntry
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Kind = TodoLogEntryKind.StatusChange,
+            FromStatus = oldStatus,
+            ToStatus = newStatus
+        });
+    }
+
+    private static TodoStatus DerivePreviousStatusBeforeDone(TodoItemState item)
+    {
+        if (item.Log != null)
+        {
+            for (int i = item.Log.Count - 1; i >= 0; i--)
+            {
+                var entry = item.Log[i];
+                if (entry.Kind == TodoLogEntryKind.StatusChange && entry.ToStatus == TodoStatus.Done)
+                    return entry.FromStatus ?? TodoStatus.Queued;
+            }
+        }
+        return TodoStatus.Queued;
+    }
+
+    private static Brush GetStatusBrush(TodoStatus status) => status switch
+    {
+        TodoStatus.Queued => Brushes.Gray,
+        TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5)),
+        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xF9, 0xA8, 0x25)),
+        TodoStatus.Blocked => Brushes.IndianRed,
+        TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0x43, 0xA0, 0x47)),
+        _ => Brushes.Gray
+    };
+
+    private static string FormatLogEntryForDisplay(TodoLogEntry entry)
+    {
+        var stamp = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
+        if (entry.Kind == TodoLogEntryKind.StatusChange)
+        {
+            var from = entry.FromStatus?.ToString() ?? "?";
+            var to = entry.ToStatus?.ToString() ?? "?";
+            return $"{stamp}  {from} → {to}";
+        }
+        return $"{stamp}  {entry.Text ?? string.Empty}";
     }
 
     private static bool TryGetTaskPanelShortcutToken(Key key, out string token)
@@ -375,14 +444,16 @@ public partial class MainWindow
         itemsPanel.Drop += TodoGroupPanel_Drop;
 
         var activeItems = _todoItems
-            .Where(item => !item.CompletedAtUtc.HasValue
+            .Where(item => IsVisibleInPanel(item)
+                && !item.CompletedAtUtc.HasValue
                 && string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.SortOrder)
             .ThenBy(item => item.CreatedUtc)
             .ToList();
         var completedItems = _todoItems
-            .Where(item => item.CompletedAtUtc.HasValue
+            .Where(item => IsVisibleInPanel(item)
+                && item.CompletedAtUtc.HasValue
                 && string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase))
             .OrderBy(item => item.SortOrder)
@@ -507,6 +578,57 @@ public partial class MainWindow
             var renameItem = new MenuItem { Header = "Rename..." };
             renameItem.Click += (_, _) => RenameTodoItem(item);
             rowContextMenu.Items.Add(renameItem);
+
+            var setStatusItem = new MenuItem { Header = "Set status" };
+            foreach (TodoStatus statusOption in Enum.GetValues<TodoStatus>())
+            {
+                if (statusOption == item.Status)
+                    continue;
+                if (statusOption == TodoStatus.Done)
+                    continue; // canonical path is the checkbox
+                var captured = statusOption;
+                var statusMenuItem = new MenuItem { Header = captured.ToString() };
+                statusMenuItem.Click += (_, _) =>
+                {
+                    SetTodoItemStatus(item, captured);
+                    RenderTodoLists();
+                    SaveWindowSettings();
+                    TodoPanelBorder?.Focus();
+                    Keyboard.Focus(TodoPanelBorder);
+                };
+                setStatusItem.Items.Add(statusMenuItem);
+            }
+            rowContextMenu.Items.Add(setStatusItem);
+
+            var importantItem = new MenuItem
+            {
+                Header = item.IsImportant ? "Remove important" : "Mark as important"
+            };
+            importantItem.Click += (_, _) =>
+            {
+                item.IsImportant = !item.IsImportant;
+                item.Log ??= new List<TodoLogEntry>();
+                item.Log.Add(new TodoLogEntry
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Kind = TodoLogEntryKind.Note,
+                    Text = item.IsImportant ? "Marked important" : "Removed important"
+                });
+                RenderTodoLists();
+                SaveWindowSettings();
+                TodoPanelBorder?.Focus();
+                Keyboard.Focus(TodoPanelBorder);
+            };
+            rowContextMenu.Items.Add(importantItem);
+
+            var updateTaskItem = new MenuItem { Header = "Update task..." };
+            updateTaskItem.Click += (_, _) => ShowTaskLogDialog(item, focusInput: true);
+            rowContextMenu.Items.Add(updateTaskItem);
+
+            var showLogItem = new MenuItem { Header = "Show log..." };
+            showLogItem.Click += (_, _) => ShowTaskLogDialog(item, focusInput: false);
+            rowContextMenu.Items.Add(showLogItem);
+
             if (isOverdue)
             {
                 var resetCreatedTimeItem = new MenuItem
@@ -529,13 +651,26 @@ public partial class MainWindow
             var createdLocalText = item.CreatedUtc != default
                 ? item.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
                 : "Unknown";
-            var tipLines = new List<string>(capacity: 3)
+            var tipLines = new List<string>(capacity: 4)
             {
                 item.Text ?? string.Empty,
-                $"Created: {createdLocalText}"
+                $"Created: {createdLocalText}",
+                $"Status: {item.Status}"
             };
             if (isOverdue)
                 tipLines.Add("Overdue: not completed within the configured time for this group.");
+            if (item.Log != null && item.Log.Count > 0)
+            {
+                const int maxTooltipLogEntries = 10;
+                int total = item.Log.Count;
+                int skipped = Math.Max(0, total - maxTooltipLogEntries);
+                tipLines.Add(string.Empty);
+                tipLines.Add(skipped > 0 ? $"Log (last {maxTooltipLogEntries} of {total}):" : "Log:");
+                for (int i = skipped; i < total; i++)
+                {
+                    tipLines.Add(FormatLogEntryForDisplay(item.Log[i]));
+                }
+            }
             row.ToolTip = new ToolTip
             {
                 Content = new TextBlock
@@ -557,19 +692,58 @@ public partial class MainWindow
             var textBlock = new TextBlock
             {
                 Text = item.Text,
-                TextDecorations = isCompleted ? TextDecorations.Strikethrough : null
+                TextDecorations = isCompleted ? TextDecorations.Strikethrough : null,
+                VerticalAlignment = VerticalAlignment.Center
             };
             if (isOverdue)
             {
                 textBlock.Foreground = Brushes.IndianRed;
                 textBlock.FontWeight = FontWeights.SemiBold;
             }
-            checkBox.Content = textBlock;
+            bool showStatusBadge = item.Status != TodoStatus.Queued;
+            if (!showStatusBadge && !item.IsImportant)
+            {
+                checkBox.Content = textBlock;
+            }
+            else
+            {
+                var contentPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                contentPanel.Children.Add(textBlock);
+                if (showStatusBadge)
+                {
+                    contentPanel.Children.Add(new TextBlock
+                    {
+                        Text = item.Status.ToString().ToUpperInvariant(),
+                        FontSize = 9,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = GetStatusBrush(item.Status),
+                        Margin = new Thickness(8, 0, 0, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                }
+                if (item.IsImportant)
+                {
+                    contentPanel.Children.Add(new TextBlock
+                    {
+                        Text = "IMPORTANT",
+                        FontSize = 9,
+                        FontWeight = FontWeights.Bold,
+                        Foreground = Brushes.Crimson,
+                        Margin = new Thickness(8, 0, 0, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                }
+                checkBox.Content = contentPanel;
+            }
             checkBox.Checked += (_, _) =>
             {
-                if (item.CompletedAtUtc.HasValue)
+                if (item.Status == TodoStatus.Done)
                     return;
-                item.CompletedAtUtc = DateTime.UtcNow;
+                SetTodoItemStatus(item, TodoStatus.Done);
                 RenderTodoLists();
                 SaveWindowSettings();
                 TodoPanelBorder?.Focus();
@@ -577,9 +751,10 @@ public partial class MainWindow
             };
             checkBox.Unchecked += (_, _) =>
             {
-                if (!item.CompletedAtUtc.HasValue)
+                if (item.Status != TodoStatus.Done)
                     return;
-                item.CompletedAtUtc = null;
+                var previous = DerivePreviousStatusBeforeDone(item);
+                SetTodoItemStatus(item, previous);
                 RenderTodoLists();
                 SaveWindowSettings();
                 TodoPanelBorder?.Focus();
@@ -1108,6 +1283,170 @@ public partial class MainWindow
         return dialog.ShowDialog() == true ? updatedText : null;
     }
 
+    private void ShowTaskLogDialog(TodoItemState item, bool focusInput)
+    {
+        item.Log ??= new List<TodoLogEntry>();
+
+        var dialog = new Window
+        {
+            Title = $"Log: {item.Text}",
+            Width = 560,
+            Height = 460,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this
+        };
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var headerText = new TextBlock
+        {
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 4),
+            TextWrapping = TextWrapping.Wrap,
+            Text = item.Text
+        };
+        DockPanel.SetDock(headerText, Dock.Top);
+        root.Children.Add(headerText);
+
+        var createdText = item.CreatedUtc != default
+            ? item.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
+            : "Unknown";
+        var statusText = new TextBlock
+        {
+            Margin = new Thickness(0, 0, 0, 8),
+            Foreground = Brushes.DimGray,
+            Text = $"Status: {item.Status}    Created: {createdText}"
+        };
+        DockPanel.SetDock(statusText, Dock.Top);
+        root.Children.Add(statusText);
+
+        var bottom = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+        DockPanel.SetDock(bottom, Dock.Bottom);
+
+        var actionRow = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+        DockPanel.SetDock(actionRow, Dock.Bottom);
+
+        var rightButtons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        DockPanel.SetDock(rightButtons, Dock.Right);
+        var addButton = new Button { Content = "Add entry", Width = 100, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+        var closeButton = new Button { Content = "Close", Width = 90, IsCancel = true };
+        rightButtons.Children.Add(addButton);
+        rightButtons.Children.Add(closeButton);
+        actionRow.Children.Add(rightButtons);
+
+        var statusGroup = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        statusGroup.Children.Add(new TextBlock
+        {
+            Text = "Set status to:",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0)
+        });
+        var statusCombo = new ComboBox
+        {
+            Width = 130,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        foreach (TodoStatus s in Enum.GetValues<TodoStatus>())
+            statusCombo.Items.Add(s);
+        statusCombo.SelectedItem = item.Status;
+        statusGroup.Children.Add(statusCombo);
+        actionRow.Children.Add(statusGroup);
+
+        var entryBox = new TextBox
+        {
+            Height = 60,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        bottom.Children.Add(actionRow);
+        bottom.Children.Add(entryBox);
+
+        root.Children.Add(bottom);
+
+        var listBox = new ListBox
+        {
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            FontSize = 12,
+            BorderBrush = Brushes.LightGray,
+            BorderThickness = new Thickness(1),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        ScrollViewer.SetHorizontalScrollBarVisibility(listBox, ScrollBarVisibility.Auto);
+        ScrollViewer.SetVerticalScrollBarVisibility(listBox, ScrollBarVisibility.Auto);
+        root.Children.Add(listBox);
+
+        void RefreshList()
+        {
+            listBox.Items.Clear();
+            foreach (var entry in item.Log)
+                listBox.Items.Add(FormatLogEntryForDisplay(entry));
+            if (listBox.Items.Count > 0)
+                listBox.ScrollIntoView(listBox.Items[listBox.Items.Count - 1]);
+        }
+        RefreshList();
+
+        addButton.Click += (_, _) =>
+        {
+            var text = (entryBox.Text ?? string.Empty).Trim();
+            var selectedStatus = statusCombo.SelectedItem is TodoStatus picked ? picked : item.Status;
+            bool willChangeStatus = selectedStatus != item.Status;
+            if (text.Length == 0 && !willChangeStatus)
+                return;
+
+            if (text.Length > 0)
+            {
+                item.Log.Add(new TodoLogEntry
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Kind = TodoLogEntryKind.Note,
+                    Text = text
+                });
+            }
+            if (willChangeStatus)
+            {
+                SetTodoItemStatus(item, selectedStatus);
+                statusText.Text = $"Status: {item.Status}    Created: {createdText}";
+                statusCombo.SelectedItem = item.Status;
+            }
+
+            entryBox.Text = string.Empty;
+            RefreshList();
+            RenderTodoLists();
+            SaveWindowSettings();
+            entryBox.Focus();
+            Keyboard.Focus(entryBox);
+        };
+
+        dialog.Content = root;
+        dialog.Loaded += (_, _) =>
+        {
+            if (focusInput)
+            {
+                entryBox.Focus();
+                Keyboard.Focus(entryBox);
+            }
+            else
+            {
+                closeButton.Focus();
+            }
+        };
+
+        dialog.ShowDialog();
+
+        TodoPanelBorder?.Focus();
+        Keyboard.Focus(TodoPanelBorder);
+    }
+
     private void ShowExportTasksDialog()
     {
         var area = GetCurrentTaskArea();
@@ -1209,7 +1548,8 @@ public partial class MainWindow
             foreach (var group in area.Groups.OrderBy(g => g.SortOrder))
             {
                 var groupItems = _todoItems
-                    .Where(item => string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
+                    .Where(item => IsVisibleInPanel(item)
+                        && string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(item.GroupId, group.Id, StringComparison.OrdinalIgnoreCase)
                         && (showFinished || !item.CompletedAtUtc.HasValue))
                     .OrderBy(item => item.SortOrder)
@@ -1359,6 +1699,8 @@ public partial class MainWindow
 
         bool ShouldIncludeItem(TodoItemState item, bool includeFinished)
         {
+            if (!IsVisibleInPanel(item))
+                return false;
             if (!string.Equals(item.AreaId, area.Id, StringComparison.OrdinalIgnoreCase))
                 return false;
             if (!includeFinished && item.CompletedAtUtc.HasValue)
