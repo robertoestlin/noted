@@ -827,6 +827,9 @@ public partial class MainWindow
             return;
         if (FindDocByEditor(editor) == null || editor.Document == null)
             return;
+        // When spreadsheet view is off, fenced blocks are edited as plain text; do not rewrite rows/sums on TextChanged.
+        if (!_renderSpreadsheet)
+            return;
 
         _spreadsheetSumSyncSuppress = true;
         try
