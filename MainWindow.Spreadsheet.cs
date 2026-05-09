@@ -432,8 +432,8 @@ public partial class MainWindow
             SpreadsheetAmountHelpers.TryParseDecimal(
                 string.IsNullOrWhiteSpace(row.UnitPrice) ? "0" : row.UnitPrice.Trim(),
                 out var uParsed);
-            string unitMoney = SpreadsheetAmountHelpers.FormatNumber(uParsed);
-            string totMoney = SpreadsheetAmountHelpers.FormatNumber(row.LineTotalValue);
+            string unitMoney = SpreadsheetAmountHelpers.FormatMoneyAmount(uParsed);
+            string totMoney = SpreadsheetAmountHelpers.FormatMoneyAmount(row.LineTotalValue);
             w0 = Math.Max(w0, desc.Length);
             w1 = Math.Max(w1, qty.Length);
             w2 = Math.Max(w2, unitMoney.Length);
@@ -441,7 +441,7 @@ public partial class MainWindow
         }
 
         // Total column numeric zone width (suffix for currency is added when building / syncing rows).
-        w3 = Math.Max(w3, Math.Max("Total".Length, SpreadsheetAmountHelpers.FormatNumber(0).Length));
+        w3 = Math.Max(w3, Math.Max("Total".Length, SpreadsheetAmountHelpers.FormatMoneyAmount(0).Length));
     }
 
     private static bool TryFindSpreadsheetHeaderBoundsForDocumentLine(
@@ -800,9 +800,12 @@ public partial class MainWindow
             _spreadsheetSumSyncSuppress = false;
         }
 
-        editor.TextArea.Caret.Offset = replaceStart + replacement.Length;
-        editor.Select(editor.TextArea.Caret.Offset, 0);
+        int blockContentStart = replaceStart + (needsLeadingNewline ? Environment.NewLine.Length : 0);
+        editor.TextArea.Caret.Offset = blockContentStart;
+        editor.Select(blockContentStart, 0);
         editor.TextArea.TextView.Redraw();
+
+        ShowSpreadsheetEditDialog(editor);
     }
 
     private static void RemoveSpreadsheetSection(TextEditor editor)
@@ -1033,8 +1036,8 @@ public partial class MainWindow
             return false;
 
         string qtyDisp = SpreadsheetAmountHelpers.FormatNumber(qty);
-        string unitDisp = SpreadsheetAmountHelpers.FormatNumber(unit);
-        string totDisp = SpreadsheetAmountHelpers.FormatNumber(computed);
+        string unitDisp = SpreadsheetAmountHelpers.FormatMoneyAmount(unit);
+        string totDisp = SpreadsheetAmountHelpers.FormatMoneyAmount(computed);
 
         if (!TryGetSpreadsheetColumnBoundsFromHeader(headerLineRaw, out var hb))
             return false;
@@ -1069,8 +1072,8 @@ public partial class MainWindow
 
         int sfx = SpreadsheetTotalCurrencySuffixWidth(currency);
         w3Num = Math.Max(
-            Math.Max("Total".Length, SpreadsheetAmountHelpers.FormatNumber(grandTotal).Length),
-            SpreadsheetAmountHelpers.FormatNumber(0).Length);
+            Math.Max("Total".Length, SpreadsheetAmountHelpers.FormatMoneyAmount(grandTotal).Length),
+            SpreadsheetAmountHelpers.FormatMoneyAmount(0).Length);
 
         for (int lineNum = headerLineNum + 1; lineNum < sumLineNum; lineNum++)
         {
@@ -1098,8 +1101,8 @@ public partial class MainWindow
             string desc = string.IsNullOrWhiteSpace(parts[0]) ? "Item" : parts[0].Trim();
             w0 = Math.Max(w0, desc.Length);
             w1 = Math.Max(w1, SpreadsheetAmountHelpers.FormatNumber(qty).Length);
-            w2 = Math.Max(w2, SpreadsheetAmountHelpers.FormatNumber(unit).Length);
-            w3Num = Math.Max(w3Num, SpreadsheetAmountHelpers.FormatNumber(computed).Length);
+            w2 = Math.Max(w2, SpreadsheetAmountHelpers.FormatMoneyAmount(unit).Length);
+            w3Num = Math.Max(w3Num, SpreadsheetAmountHelpers.FormatMoneyAmount(computed).Length);
         }
 
         w0 = Math.Max(w0, "Sum".Length);
@@ -1202,7 +1205,7 @@ public partial class MainWindow
                 return false;
         }
 
-        string sumNumeric = SpreadsheetAmountHelpers.FormatNumber(sum);
+        string sumNumeric = SpreadsheetAmountHelpers.FormatMoneyAmount(sum);
         string sumLineText = doc.GetText(sumLine.Offset, sumLine.Length);
 
         ComputeSpreadsheetBlockLayoutWidths(
@@ -1456,10 +1459,7 @@ public partial class MainWindow
             ? SpreadsheetAmountHelpers.DefaultCurrency
             : currency.Trim();
 
-        var active = rows.Where(r =>
-            !(string.IsNullOrWhiteSpace(r.Description)
-              && string.IsNullOrWhiteSpace(r.Quantity)
-              && string.IsNullOrWhiteSpace(r.UnitPrice))).ToList();
+        var active = rows.Where(r => !r.IsEffectivelyBlank).ToList();
         if (active.Count == 0)
             active = [SpreadsheetEditRowModel.CreateDefault()];
 
@@ -1471,7 +1471,7 @@ public partial class MainWindow
         }
 
         ComputeSpreadsheetColumnWidths(active, out int w0, out int w1, out int w2, out int w3Num);
-        w3Num = Math.Max(w3Num, SpreadsheetAmountHelpers.FormatNumber(sum).Length);
+        w3Num = Math.Max(w3Num, SpreadsheetAmountHelpers.FormatMoneyAmount(sum).Length);
         int sfx = SpreadsheetTotalCurrencySuffixWidth(currency);
         int w3 = w3Num + sfx;
         w0 = Math.Max(w0, "Sum".Length);
@@ -1497,8 +1497,8 @@ public partial class MainWindow
             string qty = string.IsNullOrWhiteSpace(row.Quantity) ? "0" : row.Quantity.Trim();
             string unitRaw = string.IsNullOrWhiteSpace(row.UnitPrice) ? "0" : row.UnitPrice.Trim();
             SpreadsheetAmountHelpers.TryParseDecimal(unitRaw, out var unitDec);
-            string unitMoney = SpreadsheetAmountHelpers.FormatNumber(unitDec);
-            string lineMoney = SpreadsheetAmountHelpers.FormatNumber(lineTotal);
+            string unitMoney = SpreadsheetAmountHelpers.FormatMoneyAmount(unitDec);
+            string lineMoney = SpreadsheetAmountHelpers.FormatMoneyAmount(lineTotal);
             sb.Append(SpreadsheetPresentationLeftMargin);
             sb.Append(FormatSpreadsheetPipeRow(
                 desc,
@@ -1515,7 +1515,7 @@ public partial class MainWindow
             "Sum",
             "",
             "",
-            SpreadsheetFormatTotalSumCell(SpreadsheetAmountHelpers.FormatNumber(sum), w3Num, w3, currency),
+            SpreadsheetFormatTotalSumCell(SpreadsheetAmountHelpers.FormatMoneyAmount(sum), w3Num, w3, currency),
             w0, w1, w2, w3));
         sb.Append(nl);
         sb.Append("```");

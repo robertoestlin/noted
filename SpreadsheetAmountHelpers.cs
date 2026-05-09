@@ -62,11 +62,23 @@ internal static class SpreadsheetAmountHelpers
         return value.ToString("0.##", inv);
     }
 
+    /// <summary>
+    /// Unit price / line total / sum: whole values stay plain (<c>75</c>); fractional values use exactly two decimals (<c>300.50</c>).
+    /// </summary>
+    internal static string FormatMoneyAmount(decimal value)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        decimal rounded = decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+        if (rounded == decimal.Truncate(rounded))
+            return decimal.Truncate(rounded).ToString("0", inv);
+        return rounded.ToString("0.00", inv);
+    }
+
     /// <summary>Amount + space + currency (used on Sum row in the document only).</summary>
     internal static string FormatSumWithCurrency(decimal amount, string currency)
     {
         currency = string.IsNullOrWhiteSpace(currency) ? DefaultCurrency : currency.Trim();
-        return FormatNumber(amount) + " " + currency;
+        return FormatMoneyAmount(amount) + " " + currency;
     }
 
     internal static bool TrySafeMultiply(decimal a, decimal b, out decimal product)
