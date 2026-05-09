@@ -68,7 +68,7 @@ public partial class MainWindow
                     migratedStatus = TodoStatus.Done;
                 }
 
-                _todoItems.Add(new TodoItemState
+                var loaded = new TodoItemState
                 {
                     Id = string.IsNullOrWhiteSpace(rawItem.Id) ? Guid.NewGuid().ToString("N") : rawItem.Id,
                     Text = text,
@@ -81,7 +81,10 @@ public partial class MainWindow
                     Status = migratedStatus,
                     IsImportant = rawItem.IsImportant,
                     Log = rawItem.Log ?? new List<TodoLogEntry>()
-                });
+                };
+                if (loaded.Status == TodoStatus.Cancelled && !loaded.CompletedAtUtc.HasValue)
+                    loaded.CompletedAtUtc = loaded.CreatedUtc != default ? loaded.CreatedUtc : DateTime.UtcNow;
+                _todoItems.Add(loaded);
             }
         }
 
@@ -143,8 +146,8 @@ public partial class MainWindow
             ?? _taskAreas[0];
     }
 
-    private static bool IsVisibleInPanel(TodoItemState item) =>
-        item.Status != TodoStatus.Cancelled;
+    private static bool IsVisibleInPanel(TodoItemState _) =>
+        true;
 
     private static void SetTodoItemStatus(TodoItemState item, TodoStatus newStatus)
     {
@@ -184,17 +187,19 @@ public partial class MainWindow
         }
 
         item.Status = newStatus;
-        item.CompletedAtUtc = newStatus == TodoStatus.Done ? DateTime.UtcNow : null;
+        item.CompletedAtUtc = newStatus is TodoStatus.Done or TodoStatus.Cancelled
+            ? DateTime.UtcNow
+            : null;
     }
 
-    private static TodoStatus DerivePreviousStatusBeforeDone(TodoItemState item)
+    private static TodoStatus DerivePreviousStatusBeforeTerminal(TodoItemState item, TodoStatus terminal)
     {
         if (item.Log != null)
         {
             for (int i = item.Log.Count - 1; i >= 0; i--)
             {
                 var entry = item.Log[i];
-                if (entry.Kind == TodoLogEntryKind.StatusChange && entry.ToStatus == TodoStatus.Done)
+                if (entry.Kind == TodoLogEntryKind.StatusChange && entry.ToStatus == terminal)
                     return entry.FromStatus ?? TodoStatus.Queued;
             }
         }
@@ -208,6 +213,7 @@ public partial class MainWindow
         TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xC2, 0x41, 0x0C)),
         TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xCF, 0x22, 0x2E)),
         TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
+        TodoStatus.Cancelled => new SolidColorBrush(Color.FromRgb(0x57, 0x60, 0x6A)),
         _ => new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81))
     };
 
@@ -218,6 +224,7 @@ public partial class MainWindow
         TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xFF, 0xED, 0xD5)),
         TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xFF, 0xE6, 0xE6)),
         TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0xDA, 0xFB, 0xE1)),
+        TodoStatus.Cancelled => new SolidColorBrush(Color.FromRgb(0xF0, 0xF3, 0xF6)),
         _ => new SolidColorBrush(Color.FromRgb(0xEA, 0xEE, 0xF2))
     };
 
@@ -817,15 +824,18 @@ public partial class MainWindow
                 {
                     var statusFg = GetStatusBrush(item.Status);
                     var statusBg = GetStatusBackgroundBrush(item.Status);
-                    Brush? statusBorder = item.Status == TodoStatus.Waiting
-                        ? new SolidColorBrush(Color.FromRgb(0xFB, 0x92, 0x3C))
-                        : null;
+                    Brush? statusBorder = item.Status switch
+                    {
+                        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xFB, 0x92, 0x3C)),
+                        TodoStatus.Cancelled => new SolidColorBrush(Color.FromRgb(0xD0, 0xD7, 0xDE)),
+                        _ => null
+                    };
                     contentPanel.Children.Add(BuildPillBadge(
                         GetTodoStatusDisplayName(item.Status),
                         statusFg,
                         statusBg,
                         statusBorder,
-                        compact: item.Status != TodoStatus.Done));
+                        compact: item.Status is not (TodoStatus.Done or TodoStatus.Cancelled)));
                 }
                 if (item.IsImportant)
                 {
@@ -841,7 +851,7 @@ public partial class MainWindow
             }
             checkBox.Checked += (_, _) =>
             {
-                if (item.Status == TodoStatus.Done)
+                if (item.Status is TodoStatus.Done or TodoStatus.Cancelled)
                     return;
                 SetTodoItemStatus(item, TodoStatus.Done);
                 RenderTodoLists();
@@ -851,14 +861,26 @@ public partial class MainWindow
             };
             checkBox.Unchecked += (_, _) =>
             {
-                if (item.Status != TodoStatus.Done)
+                if (item.Status == TodoStatus.Done)
+                {
+                    var previous = DerivePreviousStatusBeforeTerminal(item, TodoStatus.Done);
+                    SetTodoItemStatus(item, previous);
+                    RenderTodoLists();
+                    SaveWindowSettings();
+                    TodoPanelBorder?.Focus();
+                    Keyboard.Focus(TodoPanelBorder);
                     return;
-                var previous = DerivePreviousStatusBeforeDone(item);
-                SetTodoItemStatus(item, previous);
-                RenderTodoLists();
-                SaveWindowSettings();
-                TodoPanelBorder?.Focus();
-                Keyboard.Focus(TodoPanelBorder);
+                }
+
+                if (item.Status == TodoStatus.Cancelled)
+                {
+                    var previous = DerivePreviousStatusBeforeTerminal(item, TodoStatus.Cancelled);
+                    SetTodoItemStatus(item, previous);
+                    RenderTodoLists();
+                    SaveWindowSettings();
+                    TodoPanelBorder?.Focus();
+                    Keyboard.Focus(TodoPanelBorder);
+                }
             };
             Grid.SetColumn(checkBox, 0);
             row.Children.Add(checkBox);
@@ -927,6 +949,7 @@ public partial class MainWindow
     private UIElement BuildCompletedRow(TodoItemState item)
     {
         var completedAt = item.CompletedAtUtc?.ToLocalTime() ?? DateTime.Now;
+        bool isCancelled = item.Status == TodoStatus.Cancelled;
 
         var grid = new Grid { Margin = new Thickness(4, 4, 4, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
@@ -935,12 +958,15 @@ public partial class MainWindow
         var checkIcon = new TextBlock
         {
             Text = "\u2713",
-            Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
+            Foreground = isCancelled
+                ? new SolidColorBrush(Color.FromRgb(0x57, 0x60, 0x6A))
+                : new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
             FontSize = 18,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, -2, 0, 0)
+            Margin = new Thickness(0, -2, 0, 0),
+            ToolTip = isCancelled ? "Cancelled" : "Completed"
         };
         Grid.SetColumn(checkIcon, 0);
         grid.Children.Add(checkIcon);
@@ -957,15 +983,47 @@ public partial class MainWindow
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 2)
         };
+        if (isCancelled)
+            nameText.TextDecorations = TextDecorations.Strikethrough;
         textContainer.Children.Add(nameText);
 
+        var endedVerb = isCancelled ? "Cancelled" : "Completed";
         var detailsText = new TextBlock
         {
-            Text = $"Completed at {completedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
+            Text = $"{endedVerb} at {completedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
             Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81)),
             FontSize = 12
         };
         textContainer.Children.Add(detailsText);
+
+        if (isCancelled)
+        {
+            var cancelledBadge = BuildPillBadge(
+                "Cancelled",
+                GetStatusBrush(TodoStatus.Cancelled),
+                GetStatusBackgroundBrush(TodoStatus.Cancelled),
+                new SolidColorBrush(Color.FromRgb(0xD0, 0xD7, 0xDE)),
+                compact: false);
+            cancelledBadge.Margin = new Thickness(0, 4, 0, 0);
+            cancelledBadge.HorizontalAlignment = HorizontalAlignment.Left;
+            textContainer.Children.Add(cancelledBadge);
+        }
+
+        var logButton = new Button
+        {
+            Content = "View log…",
+            Margin = new Thickness(0, 6, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Padding = new Thickness(0, 2, 0, 2),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x09, 0x69, 0xDA)),
+            Cursor = Cursors.Hand,
+            FontSize = 12
+        };
+        var capturedItem = item;
+        logButton.Click += (_, _) => ShowTaskLogDialog(capturedItem, focusInput: false);
+        textContainer.Children.Add(logButton);
 
         grid.Children.Add(textContainer);
 
