@@ -40,6 +40,49 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Subtle, modern button used in the Task Panel header. -->
+        <Style x:Key="TaskPanelHeaderButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Foreground" Value="#24292F"/>
+            <Setter Property="BorderBrush" Value="#D0D7DE"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#F6F8FA"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#AFB8C1"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#EAEEF2"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#8C959F"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#8C959F"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#F6F8FA"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#D8DEE4"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -57,22 +100,27 @@
             <Border x:Name="TodoPanelBorder"
                     Grid.Column="0"
                     Visibility="Collapsed"
-                    BorderBrush="#DDDDDD"
+                    BorderBrush="#D0D7DE"
                     BorderThickness="0,0,1,0"
-                    Background="#FAFAFA"
+                    Background="#F6F8FA"
                     Focusable="True"
                     FocusVisualStyle="{x:Null}"
                     PreviewKeyDown="TodoPanelBorder_PreviewKeyDown"
                     MouseDown="TodoPanelBorder_MouseDown">
-                <DockPanel Margin="10">
-                    <TextBlock x:Name="TodoPanelTitleText"
-                               DockPanel.Dock="Top"
-                               Text="Task Panel"
-                               FontSize="18"
-                               FontWeight="SemiBold"
-                               Margin="0,0,0,8"/>
+                <DockPanel Margin="12,12,12,12">
+                    <Border DockPanel.Dock="Top"
+                            BorderBrush="#E1E4E8"
+                            BorderThickness="0,0,0,1"
+                            Margin="0,0,0,10"
+                            Padding="0,0,0,8">
+                        <TextBlock x:Name="TodoPanelTitleText"
+                                   Text="Task Panel"
+                                   FontSize="17"
+                                   FontWeight="SemiBold"
+                                   Foreground="#1F2328"/>
+                    </Border>
 
-                    <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                    <Grid DockPanel.Dock="Bottom" Margin="0,10,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -92,6 +140,7 @@
                                     Margin="0,0,6,0"
                                     FontWeight="SemiBold"
                                     ToolTip="Add task to first group"
+                                    Style="{StaticResource TaskPanelHeaderButtonStyle}"
                                     Click="TodoAddTodayButton_Click"/>
                             <Button x:Name="TodoCompletedToggleButton"
                                     Content="✓"
@@ -99,11 +148,14 @@
                                     Height="30"
                                     FontWeight="SemiBold"
                                     ToolTip="Recently Completed"
+                                    Style="{StaticResource TaskPanelHeaderButtonStyle}"
                                     Click="TodoCompletedToggleButton_Click"/>
                         </StackPanel>
                     </Grid>
 
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  Margin="-4,0,-4,0"
+                                  Padding="4,0,4,0">
                         <StackPanel x:Name="TodoGroupsContainer"/>
                     </ScrollViewer>
                 </DockPanel>

@@ -179,12 +179,22 @@ public partial class MainWindow
 
     private static Brush GetStatusBrush(TodoStatus status) => status switch
     {
-        TodoStatus.Queued => Brushes.Gray,
-        TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5)),
-        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xF9, 0xA8, 0x25)),
-        TodoStatus.Blocked => Brushes.IndianRed,
-        TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0x43, 0xA0, 0x47)),
-        _ => Brushes.Gray
+        TodoStatus.Queued => new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81)),
+        TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0x09, 0x69, 0xDA)),
+        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0x9A, 0x67, 0x00)),
+        TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xCF, 0x22, 0x2E)),
+        TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
+        _ => new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81))
+    };
+
+    private static Brush GetStatusBackgroundBrush(TodoStatus status) => status switch
+    {
+        TodoStatus.Queued => new SolidColorBrush(Color.FromRgb(0xEA, 0xEE, 0xF2)),
+        TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0xDD, 0xF4, 0xFF)),
+        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xFF, 0xF1, 0xCC)),
+        TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xFF, 0xE6, 0xE6)),
+        TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0xDA, 0xFB, 0xE1)),
+        _ => new SolidColorBrush(Color.FromRgb(0xEA, 0xEE, 0xF2))
     };
 
     private static string FormatLogEntryForDisplay(TodoLogEntry entry)
@@ -391,14 +401,13 @@ public partial class MainWindow
         var groupTag = new TodoGroupPanelTag { AreaId = area.Id, GroupId = group.Id };
         var wrapper = new StackPanel
         {
-            Margin = new Thickness(0, 0, 0, 10),
             AllowDrop = true,
             Tag = groupTag
         };
         wrapper.DragOver += TodoGroupPanel_DragOver;
         wrapper.Drop += TodoGroupPanel_Drop;
 
-        var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 6) };
         headerRow.AllowDrop = true;
         headerRow.Tag = groupTag;
         headerRow.DragOver += TodoGroupPanel_DragOver;
@@ -409,6 +418,8 @@ public partial class MainWindow
         {
             Text = group.Name,
             FontWeight = FontWeights.SemiBold,
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x57, 0x60, 0x6A)),
             VerticalAlignment = VerticalAlignment.Center
         };
         Grid.SetColumn(headerText, 0);
@@ -420,14 +431,17 @@ public partial class MainWindow
             Width = 22,
             Height = 22,
             Padding = new Thickness(0),
-            FontSize = 13,
+            FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             ToolTip = $"Add task to {group.Name}",
             Background = Brushes.Transparent,
             BorderBrush = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Foreground = Brushes.Gray
+            Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81)),
+            Cursor = Cursors.Hand
         };
+        addButton.MouseEnter += (_, _) => addButton.Foreground = new SolidColorBrush(Color.FromRgb(0x09, 0x69, 0xDA));
+        addButton.MouseLeave += (_, _) => addButton.Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81));
         addButton.Click += (_, _) => ShowAddTodoDialog(area.Id, group.Id);
         Grid.SetColumn(addButton, 1);
         headerRow.Children.Add(addButton);
@@ -466,7 +480,18 @@ public partial class MainWindow
             itemsPanel.Children.Add(BuildEmptyHint($"No tasks for {group.Name.ToLower(CultureInfo.CurrentCulture)}."));
 
         wrapper.Children.Add(itemsPanel);
-        return wrapper;
+
+        var card = new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE1, 0xE4, 0xE8)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 8, 8, 8),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = wrapper
+        };
+        return card;
     }
 
     private sealed class TodoGroupPanelTag
@@ -479,9 +504,28 @@ public partial class MainWindow
         => new()
         {
             Text = text,
-            Foreground = Brushes.DimGray,
-            Margin = new Thickness(0, 0, 0, 6),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x95, 0xA1)),
+            Margin = new Thickness(0, 0, 0, 4),
+            FontSize = 12,
             FontStyle = FontStyles.Italic
+        };
+
+    private static Border BuildPillBadge(string text, Brush foreground, Brush background)
+        => new()
+        {
+            Background = background,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = 9,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = foreground,
+                VerticalAlignment = VerticalAlignment.Center
+            }
         };
 
     private void AddTodoSectionRows(Panel panel, IEnumerable<TodoItemState> items, string areaId, string groupId)
@@ -687,18 +731,20 @@ public partial class MainWindow
             {
                 VerticalAlignment = VerticalAlignment.Center,
                 IsChecked = isCompleted,
-                Opacity = isCompleted ? 0.75 : 1.0
+                Opacity = isCompleted ? 0.6 : 1.0
             };
             var textBlock = new TextBlock
             {
                 Text = item.Text,
                 TextDecorations = isCompleted ? TextDecorations.Strikethrough : null,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = isCompleted
+                    ? new SolidColorBrush(Color.FromRgb(0x8B, 0x95, 0xA1))
+                    : new SolidColorBrush(Color.FromRgb(0x1F, 0x23, 0x28))
             };
             if (isOverdue)
             {
-                textBlock.Foreground = Brushes.IndianRed;
-                textBlock.FontWeight = FontWeights.SemiBold;
+                textBlock.FontWeight = FontWeights.Bold;
             }
             bool showStatusBadge = item.Status != TodoStatus.Queued;
             if (!showStatusBadge && !item.IsImportant)
@@ -715,27 +761,17 @@ public partial class MainWindow
                 contentPanel.Children.Add(textBlock);
                 if (showStatusBadge)
                 {
-                    contentPanel.Children.Add(new TextBlock
-                    {
-                        Text = item.Status.ToString().ToUpperInvariant(),
-                        FontSize = 9,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = GetStatusBrush(item.Status),
-                        Margin = new Thickness(8, 0, 0, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    });
+                    contentPanel.Children.Add(BuildPillBadge(
+                        item.Status.ToString().ToUpperInvariant(),
+                        GetStatusBrush(item.Status),
+                        GetStatusBackgroundBrush(item.Status)));
                 }
                 if (item.IsImportant)
                 {
-                    contentPanel.Children.Add(new TextBlock
-                    {
-                        Text = "IMPORTANT",
-                        FontSize = 9,
-                        FontWeight = FontWeights.Bold,
-                        Foreground = Brushes.Crimson,
-                        Margin = new Thickness(8, 0, 0, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    });
+                    contentPanel.Children.Add(BuildPillBadge(
+                        "IMPORTANT",
+                        new SolidColorBrush(Color.FromRgb(0x9A, 0x4D, 0x00)),
+                        new SolidColorBrush(Color.FromRgb(0xFF, 0xF1, 0xE5))));
                 }
                 checkBox.Content = contentPanel;
             }
@@ -773,21 +809,22 @@ public partial class MainWindow
                 Background = Brushes.Transparent,
                 BorderBrush = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
-                Foreground = Brushes.Gray,
-                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x95, 0xA1)),
+                FontSize = 14,
                 FontWeight = FontWeights.Normal,
-                Opacity = 0.55,
-                Padding = new Thickness(0)
+                Opacity = 0.6,
+                Padding = new Thickness(0),
+                Cursor = Cursors.Hand
             };
             removeButton.MouseEnter += (_, _) =>
             {
                 removeButton.Opacity = 1.0;
-                removeButton.Foreground = Brushes.DimGray;
+                removeButton.Foreground = new SolidColorBrush(Color.FromRgb(0xCF, 0x22, 0x2E));
             };
             removeButton.MouseLeave += (_, _) =>
             {
-                removeButton.Opacity = 0.55;
-                removeButton.Foreground = Brushes.Gray;
+                removeButton.Opacity = 0.6;
+                removeButton.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x95, 0xA1));
             };
             removeButton.Click += (_, _) =>
             {
@@ -834,7 +871,7 @@ public partial class MainWindow
         var checkIcon = new TextBlock
         {
             Text = "\u2713",
-            Foreground = Brushes.MediumSeaGreen,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
             FontSize = 18,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Top,
@@ -851,6 +888,7 @@ public partial class MainWindow
         {
             Text = item.Text,
             FontSize = 14,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x1F, 0x23, 0x28)),
             Opacity = 0.9,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 2)
@@ -860,7 +898,7 @@ public partial class MainWindow
         var detailsText = new TextBlock
         {
             Text = $"Completed at {completedAt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)} \u2022 {GetTodoItemLocationLabel(item)}",
-            Foreground = Brushes.Gray,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81)),
             FontSize = 12
         };
         textContainer.Children.Add(detailsText);
@@ -870,7 +908,7 @@ public partial class MainWindow
         var border = new Border
         {
             Background = Brushes.Transparent,
-            BorderBrush = new SolidColorBrush(Color.FromArgb(30, 128, 128, 128)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE1, 0xE4, 0xE8)),
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(0, 0, 0, 8),
             Margin = new Thickness(0, 0, 0, 4),
