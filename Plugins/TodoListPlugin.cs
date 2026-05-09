@@ -151,16 +151,40 @@ public partial class MainWindow
         if (item.Status == newStatus)
             return;
         var oldStatus = item.Status;
+        item.Log ??= new List<TodoLogEntry>();
+        var now = DateTime.UtcNow;
+
+        // Leaving "not started": record an implicit move to in progress first, then the chosen status.
+        if (oldStatus == TodoStatus.Queued && newStatus != TodoStatus.Active)
+        {
+            item.Log.Add(new TodoLogEntry
+            {
+                TimestampUtc = now,
+                Kind = TodoLogEntryKind.StatusChange,
+                FromStatus = TodoStatus.Queued,
+                ToStatus = TodoStatus.Active
+            });
+            item.Log.Add(new TodoLogEntry
+            {
+                TimestampUtc = now,
+                Kind = TodoLogEntryKind.StatusChange,
+                FromStatus = TodoStatus.Active,
+                ToStatus = newStatus
+            });
+        }
+        else
+        {
+            item.Log.Add(new TodoLogEntry
+            {
+                TimestampUtc = now,
+                Kind = TodoLogEntryKind.StatusChange,
+                FromStatus = oldStatus,
+                ToStatus = newStatus
+            });
+        }
+
         item.Status = newStatus;
         item.CompletedAtUtc = newStatus == TodoStatus.Done ? DateTime.UtcNow : null;
-        item.Log ??= new List<TodoLogEntry>();
-        item.Log.Add(new TodoLogEntry
-        {
-            TimestampUtc = DateTime.UtcNow,
-            Kind = TodoLogEntryKind.StatusChange,
-            FromStatus = oldStatus,
-            ToStatus = newStatus
-        });
     }
 
     private static TodoStatus DerivePreviousStatusBeforeDone(TodoItemState item)
@@ -181,7 +205,7 @@ public partial class MainWindow
     {
         TodoStatus.Queued => new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81)),
         TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0x09, 0x69, 0xDA)),
-        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0x9A, 0x67, 0x00)),
+        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xC2, 0x41, 0x0C)),
         TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xCF, 0x22, 0x2E)),
         TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0x1A, 0x7F, 0x37)),
         _ => new SolidColorBrush(Color.FromRgb(0x6E, 0x77, 0x81))
@@ -191,10 +215,22 @@ public partial class MainWindow
     {
         TodoStatus.Queued => new SolidColorBrush(Color.FromRgb(0xEA, 0xEE, 0xF2)),
         TodoStatus.Active => new SolidColorBrush(Color.FromRgb(0xDD, 0xF4, 0xFF)),
-        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xFF, 0xF1, 0xCC)),
+        TodoStatus.Waiting => new SolidColorBrush(Color.FromRgb(0xFF, 0xED, 0xD5)),
         TodoStatus.Blocked => new SolidColorBrush(Color.FromRgb(0xFF, 0xE6, 0xE6)),
         TodoStatus.Done => new SolidColorBrush(Color.FromRgb(0xDA, 0xFB, 0xE1)),
         _ => new SolidColorBrush(Color.FromRgb(0xEA, 0xEE, 0xF2))
+    };
+
+    /// <summary>User-visible task status label (panel badges, tooltips, menus).</summary>
+    private static string GetTodoStatusDisplayName(TodoStatus status) => status switch
+    {
+        TodoStatus.Queued => "Not started",
+        TodoStatus.Active => "In progress",
+        TodoStatus.Waiting => "Waiting",
+        TodoStatus.Blocked => "Blocked",
+        TodoStatus.Done => "Done",
+        TodoStatus.Cancelled => "Cancelled",
+        _ => status.ToString()
     };
 
     private static string FormatLogEntryForDisplay(TodoLogEntry entry)
@@ -202,8 +238,8 @@ public partial class MainWindow
         var stamp = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
         if (entry.Kind == TodoLogEntryKind.StatusChange)
         {
-            var from = entry.FromStatus?.ToString() ?? "?";
-            var to = entry.ToStatus?.ToString() ?? "?";
+            var from = entry.FromStatus is { } fs ? GetTodoStatusDisplayName(fs) : "?";
+            var to = entry.ToStatus is { } ts ? GetTodoStatusDisplayName(ts) : "?";
             return $"{stamp}  {from} → {to}";
         }
         return $"{stamp}  {entry.Text ?? string.Empty}";
@@ -510,23 +546,41 @@ public partial class MainWindow
             FontStyle = FontStyles.Italic
         };
 
-    private static Border BuildPillBadge(string text, Brush foreground, Brush background)
-        => new()
+    private static Border BuildPillBadge(
+        string text,
+        Brush foreground,
+        Brush background,
+        Brush? borderBrush = null,
+        FontWeight? fontWeight = null,
+        bool compact = false)
+    {
+        var weight = fontWeight ?? FontWeights.SemiBold;
+        var radius = compact ? 8 : 10;
+        var pad = compact ? new Thickness(6, 2, 6, 2) : new Thickness(8, 3, 8, 3);
+        var margin = compact ? new Thickness(6, 0, 0, 0) : new Thickness(8, 0, 0, 0);
+        var fontSize = compact ? 10.0 : 11.0;
+        return new Border
         {
             Background = background,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(6, 1, 6, 1),
-            Margin = new Thickness(8, 0, 0, 0),
+            BorderBrush = borderBrush,
+            BorderThickness = borderBrush != null ? new Thickness(1) : new Thickness(0),
+            CornerRadius = new CornerRadius(radius),
+            Padding = pad,
+            Margin = margin,
             VerticalAlignment = VerticalAlignment.Center,
+            SnapsToDevicePixels = true,
             Child = new TextBlock
             {
                 Text = text,
-                FontSize = 9,
-                FontWeight = FontWeights.SemiBold,
+                FontSize = fontSize,
+                FontWeight = weight,
                 Foreground = foreground,
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 200
             }
         };
+    }
 
     private void AddTodoSectionRows(Panel panel, IEnumerable<TodoItemState> items, string areaId, string groupId)
     {
@@ -631,7 +685,7 @@ public partial class MainWindow
                 if (statusOption == TodoStatus.Done)
                     continue; // canonical path is the checkbox
                 var captured = statusOption;
-                var statusMenuItem = new MenuItem { Header = captured.ToString() };
+                var statusMenuItem = new MenuItem { Header = GetTodoStatusDisplayName(captured) };
                 statusMenuItem.Click += (_, _) =>
                 {
                     SetTodoItemStatus(item, captured);
@@ -646,7 +700,7 @@ public partial class MainWindow
 
             var importantItem = new MenuItem
             {
-                Header = item.IsImportant ? "Remove important" : "Mark as important"
+                Header = item.IsImportant ? "Remove Prio" : "Mark as Prio"
             };
             importantItem.Click += (_, _) =>
             {
@@ -656,7 +710,7 @@ public partial class MainWindow
                 {
                     TimestampUtc = DateTime.UtcNow,
                     Kind = TodoLogEntryKind.Note,
-                    Text = item.IsImportant ? "Marked important" : "Removed important"
+                    Text = item.IsImportant ? "Marked as Prio" : "Removed Prio"
                 });
                 RenderTodoLists();
                 SaveWindowSettings();
@@ -699,7 +753,7 @@ public partial class MainWindow
             {
                 item.Text ?? string.Empty,
                 $"Created: {createdLocalText}",
-                $"Status: {item.Status}"
+                $"Status: {GetTodoStatusDisplayName(item.Status)}"
             };
             if (isOverdue)
                 tipLines.Add("Overdue: not completed within the configured time for this group.");
@@ -761,17 +815,27 @@ public partial class MainWindow
                 contentPanel.Children.Add(textBlock);
                 if (showStatusBadge)
                 {
+                    var statusFg = GetStatusBrush(item.Status);
+                    var statusBg = GetStatusBackgroundBrush(item.Status);
+                    Brush? statusBorder = item.Status == TodoStatus.Waiting
+                        ? new SolidColorBrush(Color.FromRgb(0xFB, 0x92, 0x3C))
+                        : null;
                     contentPanel.Children.Add(BuildPillBadge(
-                        item.Status.ToString().ToUpperInvariant(),
-                        GetStatusBrush(item.Status),
-                        GetStatusBackgroundBrush(item.Status)));
+                        GetTodoStatusDisplayName(item.Status),
+                        statusFg,
+                        statusBg,
+                        statusBorder,
+                        compact: item.Status != TodoStatus.Done));
                 }
                 if (item.IsImportant)
                 {
                     contentPanel.Children.Add(BuildPillBadge(
-                        "IMPORTANT",
-                        new SolidColorBrush(Color.FromRgb(0x9A, 0x4D, 0x00)),
-                        new SolidColorBrush(Color.FromRgb(0xFF, 0xF1, 0xE5))));
+                        "Prio",
+                        new SolidColorBrush(Color.FromRgb(0x9D, 0x17, 0x4D)),
+                        new SolidColorBrush(Color.FromRgb(0xFC, 0xE7, 0xF3)),
+                        new SolidColorBrush(Color.FromRgb(0xF9, 0xA8, 0xD4)),
+                        FontWeights.Bold,
+                        compact: true));
                 }
                 checkBox.Content = contentPanel;
             }
@@ -1353,7 +1417,8 @@ public partial class MainWindow
         {
             Margin = new Thickness(0, 0, 0, 8),
             Foreground = Brushes.DimGray,
-            Text = $"Status: {item.Status}    Created: {createdText}"
+            TextWrapping = TextWrapping.Wrap,
+            Text = $"Status: {GetTodoStatusDisplayName(item.Status)} · Created: {createdText}"
         };
         DockPanel.SetDock(statusText, Dock.Top);
         root.Children.Add(statusText);
@@ -1392,9 +1457,13 @@ public partial class MainWindow
             Width = 130,
             VerticalAlignment = VerticalAlignment.Center
         };
-        foreach (TodoStatus s in Enum.GetValues<TodoStatus>())
-            statusCombo.Items.Add(s);
-        statusCombo.SelectedItem = item.Status;
+        statusCombo.ItemsSource = Enum.GetValues<TodoStatus>()
+            .Cast<TodoStatus>()
+            .Select(s => new { Status = s, Label = GetTodoStatusDisplayName(s) })
+            .ToList();
+        statusCombo.DisplayMemberPath = "Label";
+        statusCombo.SelectedValuePath = "Status";
+        statusCombo.SelectedValue = item.Status;
         statusGroup.Children.Add(statusCombo);
         actionRow.Children.Add(statusGroup);
 
@@ -1426,7 +1495,7 @@ public partial class MainWindow
         void RefreshList()
         {
             listBox.Items.Clear();
-            foreach (var entry in item.Log)
+            foreach (var entry in item.Log!)
                 listBox.Items.Add(FormatLogEntryForDisplay(entry));
             if (listBox.Items.Count > 0)
                 listBox.ScrollIntoView(listBox.Items[listBox.Items.Count - 1]);
@@ -1436,14 +1505,29 @@ public partial class MainWindow
         addButton.Click += (_, _) =>
         {
             var text = (entryBox.Text ?? string.Empty).Trim();
-            var selectedStatus = statusCombo.SelectedItem is TodoStatus picked ? picked : item.Status;
+            var selectedStatus = statusCombo.SelectedValue is TodoStatus picked ? picked : item.Status;
             bool willChangeStatus = selectedStatus != item.Status;
             if (text.Length == 0 && !willChangeStatus)
                 return;
 
+            // First note on a not-started task: move to In progress before applying note / combo status.
+            var logHasNote = item.Log!.Any(e => e.Kind == TodoLogEntryKind.Note);
+            if (text.Length > 0
+                && !logHasNote
+                && item.Status == TodoStatus.Queued)
+            {
+                SetTodoItemStatus(item, TodoStatus.Active);
+                if (selectedStatus == TodoStatus.Queued)
+                    statusCombo.SelectedValue = item.Status;
+                statusText.Text = $"Status: {GetTodoStatusDisplayName(item.Status)} · Created: {createdText}";
+            }
+
+            selectedStatus = statusCombo.SelectedValue is TodoStatus p2 ? p2 : item.Status;
+            willChangeStatus = selectedStatus != item.Status;
+
             if (text.Length > 0)
             {
-                item.Log.Add(new TodoLogEntry
+                item.Log!.Add(new TodoLogEntry
                 {
                     TimestampUtc = DateTime.UtcNow,
                     Kind = TodoLogEntryKind.Note,
@@ -1453,8 +1537,8 @@ public partial class MainWindow
             if (willChangeStatus)
             {
                 SetTodoItemStatus(item, selectedStatus);
-                statusText.Text = $"Status: {item.Status}    Created: {createdText}";
-                statusCombo.SelectedItem = item.Status;
+                statusText.Text = $"Status: {GetTodoStatusDisplayName(item.Status)} · Created: {createdText}";
+                statusCombo.SelectedValue = item.Status;
             }
 
             entryBox.Text = string.Empty;
