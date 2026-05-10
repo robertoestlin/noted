@@ -5493,7 +5493,8 @@ public partial class MainWindow : Window
     private void ShowFindReplaceDialog(
         TabDocument? explicitDoc = null,
         bool findOnly = false,
-        bool longTermNotebookScope = false)
+        bool longTermNotebookScope = false,
+        bool documentationPackageScope = false)
     {
         var doc = explicitDoc ?? CurrentDoc();
         if (doc == null)
@@ -5559,7 +5560,11 @@ public partial class MainWindow : Window
         var chkWholeWord = new CheckBox { Content = "Whole word" };
         var chkAllTabs = new CheckBox
         {
-            Content = longTermNotebookScope ? "Find in all pages" : "Find in all tabs",
+            Content = longTermNotebookScope
+                ? "Find in all pages"
+                : documentationPackageScope
+                    ? "Find in all notebooks"
+                    : "Find in all tabs",
             Margin = new Thickness(16, 0, 0, 0)
         };
         optionsPanel.Children.Add(chkMatchCase);
@@ -5648,6 +5653,18 @@ public partial class MainWindow : Window
                 return false;
 
             status.Text = $"Match found in \"{foundDoc.DisplayHeader}\".";
+            return true;
+        }
+
+        bool JumpToDocumentationMatch(DocPackage pkg, DocNode node, int foundOffset, int length)
+        {
+            NavigateToDocumentationPageForFind(pkg, node);
+            if (!_docNodeDocs.TryGetValue(node.Id, out var foundDoc))
+                return false;
+            if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
+                return false;
+
+            status.Text = $"Match found in \"{FormatDocumentationFindLocation(pkg, foundDoc)}\".";
             return true;
         }
 
@@ -5794,6 +5811,84 @@ public partial class MainWindow : Window
                         AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
                         int lineOffset = line.FirstOffset;
                         var lineRow = CreateResultRow(lineText, () => JumpToLongTermMatch(targetPage, lineOffset, needle.Length));
+                        tabMatchesPanel.Children.Add(lineRow);
+                    }
+                }
+
+                if (!supportsLinePreview)
+                    status.Text = "Line previews are shown only for single-line find text.";
+                return;
+            }
+
+            if (documentationPackageScope)
+            {
+                var docMatches =
+                    new List<(DocPackage Pkg, DocNode Node, TabDocument Doc, int Count, int FirstOffset,
+                        List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
+                foreach (var (pkg, node, tabDoc) in GetAllDocumentationNotebookPageDocumentsOrdered())
+                {
+                    var offsets = GetMatchOffsets(tabDoc.Editor.Text, needle, comparison, wholeWord);
+                    if (offsets.Count == 0)
+                        continue;
+
+                    var lineMatches = new List<(int LineNumber, string Text, int FirstOffset)>();
+                    var addedLines = new HashSet<int>();
+                    if (supportsLinePreview)
+                    {
+                        var document = tabDoc.Editor.Document;
+                        foreach (var offset in offsets)
+                        {
+                            var line = document.GetLineByOffset(offset);
+                            if (!addedLines.Add(line.LineNumber))
+                                continue;
+
+                            string lineText = document.GetText(line).TrimEnd('\r', '\n');
+                            lineMatches.Add((line.LineNumber, lineText, offset));
+                        }
+                    }
+
+                    docMatches.Add((pkg, node, tabDoc, offsets.Count, offsets[0], lineMatches));
+                }
+
+                if (docMatches.Count == 0)
+                {
+                    tabMatchesBorder.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                tabMatchesBorder.Visibility = Visibility.Visible;
+                foreach (var item in docMatches)
+                {
+                    var targetPkg = item.Pkg;
+                    var targetNode = item.Node;
+                    var targetDoc = item.Doc;
+                    var header = FormatDocumentationFindLocation(targetPkg, targetDoc);
+                    if (item.Lines.Count == 0)
+                    {
+                        var fallbackText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                        fallbackText.Inlines.Add(new Run($"{header} ({item.Count}): ")
+                        {
+                            Foreground = Brushes.DimGray,
+                            FontWeight = FontWeights.SemiBold
+                        });
+                        fallbackText.Inlines.Add(new Run("jump to first match"));
+                        var fallbackRow = CreateResultRow(fallbackText,
+                            () => JumpToDocumentationMatch(targetPkg, targetNode, item.FirstOffset, needle.Length));
+                        tabMatchesPanel.Children.Add(fallbackRow);
+                        continue;
+                    }
+
+                    foreach (var line in item.Lines)
+                    {
+                        var lineText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                        lineText.Inlines.Add(new Run($"{header} ({item.Count}) - {line.LineNumber}: ")
+                        {
+                            Foreground = Brushes.DimGray
+                        });
+                        AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
+                        int lineOffset = line.FirstOffset;
+                        var lineRow = CreateResultRow(lineText,
+                            () => JumpToDocumentationMatch(targetPkg, targetNode, lineOffset, needle.Length));
                         tabMatchesPanel.Children.Add(lineRow);
                     }
                 }
@@ -5962,6 +6057,56 @@ public partial class MainWindow : Window
                 }
 
                 status.Text = "No matches in any page.";
+                return false;
+            }
+
+            if (documentationPackageScope)
+            {
+                var orderedDoc = GetAllDocumentationNotebookPageDocumentsOrdered();
+                if (orderedDoc.Count == 0)
+                {
+                    status.Text = "No pages in documentation.";
+                    return false;
+                }
+
+                TabDocument? activeDocPage = GetActiveDocumentationTabDocument();
+                var docSelEditor = activeDocPage?.Editor ?? editor;
+                int startOffsetDoc = docSelEditor.SelectionStart + docSelEditor.SelectionLength;
+
+                int docIndex = orderedDoc.FindIndex(x => activeDocPage != null && x.Doc.StableTabId == activeDocPage.StableTabId);
+                if (docIndex < 0)
+                    docIndex = orderedDoc.FindIndex(x => x.Doc.StableTabId == doc.StableTabId);
+                if (docIndex < 0)
+                    docIndex = 0;
+
+                for (int i = docIndex; i < orderedDoc.Count; i++)
+                {
+                    var (dPkg, dNode, tabDoc) = orderedDoc[i];
+                    int searchStart = i == docIndex ? startOffsetDoc : 0;
+                    if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var foundDocMatch))
+                        return JumpToDocumentationMatch(dPkg, dNode, foundDocMatch, needle.Length);
+                }
+
+                if (!wrap)
+                {
+                    status.Text = "No more matches.";
+                    return false;
+                }
+
+                for (int i = 0; i <= docIndex; i++)
+                {
+                    var (dPkg, dNode, tabDoc) = orderedDoc[i];
+                    string textToSearch = tabDoc.Editor.Text;
+                    int limit = i == docIndex ? Math.Clamp(startOffsetDoc, 0, textToSearch.Length) : textToSearch.Length;
+                    if (limit <= 0)
+                        continue;
+
+                    string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
+                    if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundDocWrap))
+                        return JumpToDocumentationMatch(dPkg, dNode, foundDocWrap, needle.Length);
+                }
+
+                status.Text = "No matches in any notebook.";
                 return false;
             }
 
@@ -8088,6 +8233,12 @@ public partial class MainWindow : Window
             var ltDoc = GetActiveLongTermTabDocument();
             if (ltDoc != null)
                 ShowFindReplaceDialog(explicitDoc: ltDoc, findOnly: true, longTermNotebookScope: true);
+            return;
+        }
+
+        if (_appMode == AppMode.Documentation)
+        {
+            OpenDocumentationFindDialog();
             return;
         }
 

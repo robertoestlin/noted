@@ -412,6 +412,123 @@ public partial class MainWindow
             editor.Focus();
     }
 
+    private TabDocument? _documentationFindScratchDoc;
+
+    /// <summary>Used by Find dialog when scope is documentation pages (not main-window tabs).</summary>
+    private bool IsDocumentationPageDocument(TabDocument doc)
+        => _docNodeDocs.Values.Any(d => ReferenceEquals(d, doc));
+
+    private TabDocument? GetActiveDocumentationTabDocument()
+    {
+        if (_docCurrentNode == null || _docCurrentNode.Kind is not (DocNodeKind.Page or DocNodeKind.SubPage))
+            return null;
+        return GetOrCreateDocNodeDocument(_docCurrentNode);
+    }
+
+    private void OpenDocumentationFindDialog()
+        => ShowFindReplaceDialog(explicitDoc: ResolveDocumentationFindSeedDocument(), findOnly: true,
+            documentationPackageScope: true);
+
+    private TabDocument ResolveDocumentationFindSeedDocument()
+        => GetActiveDocumentationTabDocument()
+           ?? GetFirstDocumentationPageDocumentInPackage(_docCurrentPackage)
+           ?? GetFirstDocumentationPageDocumentAcrossAllPackages()
+           ?? GetDocumentationFindScratchDocument();
+
+    private TabDocument? GetFirstDocumentationPageDocumentInPackage(DocPackage? pkg)
+    {
+        if (pkg == null) return null;
+        foreach (var n in EnumerateDocumentationPageNodesInPackage(pkg))
+            return GetOrCreateDocNodeDocument(n);
+        return null;
+    }
+
+    private TabDocument? GetFirstDocumentationPageDocumentAcrossAllPackages()
+    {
+        foreach (var pkg in _docPackages)
+        {
+            foreach (var n in EnumerateDocumentationPageNodesInPackage(pkg))
+                return GetOrCreateDocNodeDocument(n);
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<DocNode> EnumerateDocumentationPageNodesInPackage(DocPackage pkg)
+    {
+        foreach (var root in DocNodesSortedForTree(pkg.Nodes))
+        {
+            var acc = new List<DocNode>();
+            EnumerateDocPageNodes(root, acc);
+            foreach (var p in acc)
+                yield return p;
+        }
+    }
+
+    private TabDocument GetDocumentationFindScratchDocument()
+    {
+        if (_documentationFindScratchDoc != null)
+            return _documentationFindScratchDoc;
+
+        var editor = CreateEditor(addTagTextMaskingTransformer: false);
+        _documentationFindScratchDoc = new TabDocument
+        {
+            Header = "",
+            StableTabId = "__documentation_find_scratch__",
+            Editor = editor,
+            CachedText = editor.Text,
+            IsDirty = false,
+            LastChangedUtc = DateTime.UtcNow,
+            TagFeaturesEnabled = false
+        };
+        BindDocumentToEditor(_documentationFindScratchDoc, editor);
+        return _documentationFindScratchDoc;
+    }
+
+    private static string FormatDocumentationFindLocation(DocPackage pkg, TabDocument tabDoc)
+        => $"{pkg.Name} › {tabDoc.DisplayHeader}";
+
+    private static void EnumerateDocPageNodes(DocNode node, List<DocNode> list)
+    {
+        if (node.Kind is DocNodeKind.Page or DocNodeKind.SubPage)
+            list.Add(node);
+        foreach (var child in DocNodesSortedForTree(node.Children))
+            EnumerateDocPageNodes(child, list);
+    }
+
+    /// <summary>All notebook (doc package) order in <see cref="_docPackages"/>, pages in tree order per package.</summary>
+    private List<(DocPackage Pkg, DocNode Node, TabDocument Doc)> GetAllDocumentationNotebookPageDocumentsOrdered()
+    {
+        var list = new List<(DocPackage, DocNode, TabDocument)>();
+        foreach (var pkg in _docPackages)
+        {
+            foreach (var n in EnumerateDocumentationPageNodesInPackage(pkg))
+                list.Add((pkg, n, GetOrCreateDocNodeDocument(n)));
+        }
+
+        return list;
+    }
+
+    /// <summary>Switches notebook if needed, selects the tree node, and shows the editor (Find across notebooks).</summary>
+    private void NavigateToDocumentationPageForFind(DocPackage pkg, DocNode targetNode)
+    {
+        if (targetNode.Kind is not (DocNodeKind.Page or DocNodeKind.SubPage))
+            return;
+
+        FlushActiveDocPageText();
+
+        _docCurrentPackage = pkg;
+        pkg.CurrentNodeId = targetNode.Id;
+        MarkDocPackageDirty(pkg);
+        _docIndex.CurrentId = pkg.Id;
+        MarkDocIndexDirty();
+        RefreshDocPackageCombo();
+
+        _docCurrentNode = targetNode;
+        RefreshDocTree();
+        ShowActiveDocPageEditor();
+    }
+
     // ── Mutations ───────────────────────────────────────────────────────────
 
     private void PromptCreateDocPackage()

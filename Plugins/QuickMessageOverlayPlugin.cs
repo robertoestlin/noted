@@ -2200,6 +2200,15 @@ public partial class MainWindow
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (_appMode == AppMode.Documentation
+            && (Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && (key == Key.F || key == Key.H))
+        {
+            OpenDocumentationFindDialog();
+            e.Handled = true;
+            return;
+        }
+
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && key == Key.O
             && MessageOverlay.Visibility != Visibility.Visible)
