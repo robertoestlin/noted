@@ -307,6 +307,7 @@ public partial class MainWindow : Window
     private ExternalBrowserChoice _externalBrowserForLinks = ExternalBrowserChoice.Default;
     private FancyBulletStyle _fancyBulletStyle = FancyBulletStyle.Dot;
     private bool _isFredagspartySessionEnabled = false;
+    private bool _fredagspartySuppressedUntilAppClose;
     private bool _isFredagspartyTemporarilyDisabled;
     private ImageBrush? _fridayBackgroundBrush;
     private readonly List<KeyBinding> _shortcutBindings = [];
@@ -3745,9 +3746,16 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool ShouldUseFridayBackground()
+    private bool IsFredagspartyAutomaticDay()
+        => DateTime.Now.DayOfWeek == DayOfWeek.Friday;
+
+    private bool FredagspartyWouldBeActive(bool fridayFeelingEnabled)
         => !_isFredagspartyTemporarilyDisabled
-            && (_isFredagspartySessionEnabled || (_isFridayFeelingEnabled && DateTime.Now.DayOfWeek == DayOfWeek.Friday));
+            && !_fredagspartySuppressedUntilAppClose
+            && (_isFredagspartySessionEnabled || (fridayFeelingEnabled && IsFredagspartyAutomaticDay()));
+
+    private bool ShouldUseFridayBackground()
+        => FredagspartyWouldBeActive(_isFridayFeelingEnabled);
 
     private ImageBrush? GetFridayBackgroundBrush()
     {

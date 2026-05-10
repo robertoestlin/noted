@@ -109,6 +109,7 @@ public partial class MainWindow
         var originalExternalBrowserForLinks = _externalBrowserForLinks;
         var originalFancyBulletStyle = _fancyBulletStyle;
         bool originalFredagspartySessionEnabled = _isFredagspartySessionEnabled;
+        bool originalFredagspartySuppressedUntilAppClose = _fredagspartySuppressedUntilAppClose;
         bool originalFredagspartyTemporarilyDisabled = _isFredagspartyTemporarilyDisabled;
         bool viewPreviewCommitted = false;
 
@@ -1084,7 +1085,6 @@ public partial class MainWindow
             IsChecked = _isFridayFeelingEnabled,
             Margin = new Thickness(0, 0, 0, 10)
         };
-        var untilCloseFredagsparty = _isFredagspartySessionEnabled;
         var btnFredagspartyUntilAppCloses = new Button
         {
             Padding = new Thickness(10, 2, 10, 2),
@@ -1105,15 +1105,28 @@ public partial class MainWindow
             }
 
             btnFredagspartyUntilAppCloses.IsEnabled = true;
-            btnFredagspartyUntilAppCloses.Content = untilCloseFredagsparty
+            var on = FredagspartyWouldBeActive(chkFridayFeeling.IsChecked == true);
+            btnFredagspartyUntilAppCloses.Content = on
                 ? "Turn off Fredagsparty until app closes"
                 : "Turn on Fredagsparty until app closes";
         }
+        chkFridayFeeling.Checked += (_, _) => RefreshFredagspartyUntilCloseButtonLabel();
+        chkFridayFeeling.Unchecked += (_, _) => RefreshFredagspartyUntilCloseButtonLabel();
         RefreshFredagspartyUntilCloseButtonLabel();
         btnFredagspartyUntilAppCloses.Click += (_, _) =>
         {
-            untilCloseFredagsparty = !untilCloseFredagsparty;
-            _isFredagspartySessionEnabled = untilCloseFredagsparty;
+            if (FredagspartyWouldBeActive(chkFridayFeeling.IsChecked == true))
+            {
+                _isFredagspartySessionEnabled = false;
+                if (chkFridayFeeling.IsChecked == true && IsFredagspartyAutomaticDay())
+                    _fredagspartySuppressedUntilAppClose = true;
+            }
+            else
+            {
+                _fredagspartySuppressedUntilAppClose = false;
+                _isFredagspartySessionEnabled = true;
+            }
+
             RefreshFredagspartyUntilCloseButtonLabel();
             ApplyFridayFeelingToOpenEditors();
         };
@@ -2137,7 +2150,6 @@ public partial class MainWindow
                 _criticalHighlightedLineColor = criticalHighlightedLineColor;
                 _selectedCriticalHighlightedLineColor = selectedCriticalHighlightedLineColor;
                 _isFridayFeelingEnabled = chkFridayFeeling.IsChecked == true;
-                _isFredagspartySessionEnabled = untilCloseFredagsparty;
                 _fancyBulletsEnabled = chkStyledBullets.IsChecked == true;
                 _wrapLongLinesVisually = chkWrapLongLinesVisually.IsChecked == true;
                 _visualLineWrapColumn = NormalizeVisualLineWrapColumn(visualWrapColumn);
@@ -2214,6 +2226,7 @@ public partial class MainWindow
             _externalBrowserForLinks = originalExternalBrowserForLinks;
             SyncExternalBrowserLauncherPreference();
             _isFredagspartySessionEnabled = originalFredagspartySessionEnabled;
+            _fredagspartySuppressedUntilAppClose = originalFredagspartySuppressedUntilAppClose;
             _isFredagspartyTemporarilyDisabled = originalFredagspartyTemporarilyDisabled;
             ApplyFridayFeelingToOpenEditors();
             ApplyViewRenderingSettings();

@@ -1058,6 +1058,7 @@ public partial class MainWindow
         _externalBrowserForLinks = ExternalBrowserChoice.Default;
         _fancyBulletStyle = FancyBulletStyle.Dot;
         _isFredagspartySessionEnabled = false;
+        _fredagspartySuppressedUntilAppClose = false;
         _users = [];
         _timeReports.Clear();
         _pluginAlarms = [];
