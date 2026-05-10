@@ -895,6 +895,69 @@ public partial class MainWindow
         return null;
     }
 
+    /// <summary>Selects a section or sub-section in the tree (used by Find on structure names).</summary>
+    private void NavigateToLongTermSectionForFind(LtSection section)
+    {
+        if (_ltCurrentNotebook == null) return;
+
+        FlushActiveLongTermPageText();
+        _ltCurrentSection = section;
+        _ltCurrentNotebook.CurrentSectionId = section.Id;
+        _ltCurrentPage = FirstPageInSection(section);
+        _ltCurrentNotebook.CurrentPageId = _ltCurrentPage?.Id;
+        MarkLongTermNotebookDirty(_ltCurrentNotebook);
+        RefreshLtSectionsTree();
+        RefreshLtPagesTree();
+        ShowActiveLongTermPageEditor();
+    }
+
+    private List<(string Label, Action Jump)> CollectLongTermStructuralNameFindJumps(string needle,
+        StringComparison comparison, bool wholeWord)
+    {
+        var list = new List<(string Label, Action Jump)>();
+        if (_ltCurrentNotebook == null)
+            return list;
+
+        void WalkPage(LtPage page, List<string> crumbs, bool isSubPage)
+        {
+            crumbs.Add(page.Name);
+            if (NeedleMatchesInNamedText(page.Name, needle, comparison, wholeWord))
+            {
+                var p = page;
+                var label = string.Join(" › ", crumbs) + (isSubPage ? " (sub-page name)" : " (page name)");
+                list.Add((label, () => NavigateToLongTermPageForFind(p)));
+            }
+
+            foreach (var sp in page.SubPages)
+                WalkPage(sp, crumbs, isSubPage: true);
+            crumbs.RemoveAt(crumbs.Count - 1);
+        }
+
+        void WalkSection(LtSection section, List<string> crumbs, bool isSubSection)
+        {
+            crumbs.Add(section.Name);
+            if (NeedleMatchesInNamedText(section.Name, needle, comparison, wholeWord))
+            {
+                var s = section;
+                var kind = isSubSection ? "sub-section name" : "section name";
+                list.Add(($"{string.Join(" › ", crumbs)} ({kind})", () => NavigateToLongTermSectionForFind(s)));
+            }
+
+            foreach (var sub in section.SubSections)
+                WalkSection(sub, crumbs, isSubSection: true);
+
+            foreach (var page in section.Pages)
+                WalkPage(page, crumbs, isSubPage: false);
+
+            crumbs.RemoveAt(crumbs.Count - 1);
+        }
+
+        foreach (var section in _ltCurrentNotebook.Sections)
+            WalkSection(section, [], isSubSection: false);
+
+        return list;
+    }
+
     /// <summary>Selects the section/pages tree for this page and shows its editor (used by Find across pages).</summary>
     private void NavigateToLongTermPageForFind(LtPage targetPage)
     {

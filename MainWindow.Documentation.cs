@@ -510,11 +510,8 @@ public partial class MainWindow
     }
 
     /// <summary>Switches notebook if needed, selects the tree node, and shows the editor (Find across notebooks).</summary>
-    private void NavigateToDocumentationPageForFind(DocPackage pkg, DocNode targetNode)
+    private void NavigateToDocumentationNodeForFind(DocPackage pkg, DocNode targetNode)
     {
-        if (targetNode.Kind is not (DocNodeKind.Page or DocNodeKind.SubPage))
-            return;
-
         FlushActiveDocPageText();
 
         _docCurrentPackage = pkg;
@@ -527,6 +524,70 @@ public partial class MainWindow
         _docCurrentNode = targetNode;
         RefreshDocTree();
         ShowActiveDocPageEditor();
+    }
+
+    private void NavigateToDocumentationPageForFind(DocPackage pkg, DocNode targetNode)
+        => NavigateToDocumentationNodeForFind(pkg, targetNode);
+
+    private void NavigateToDocumentationPackageSurfaceForFind(DocPackage pkg)
+    {
+        FlushActiveDocPageText();
+        _docCurrentPackage = pkg;
+        _docIndex.CurrentId = pkg.Id;
+        MarkDocIndexDirty();
+        RefreshDocPackageCombo();
+        RefreshDocTree();
+        ShowActiveDocPageEditor();
+    }
+
+    private static IEnumerable<DocNode> EnumerateDocTreePreorderSorted(DocNode root)
+    {
+        yield return root;
+        foreach (var child in DocNodesSortedForTree(root.Children))
+        {
+            foreach (var n in EnumerateDocTreePreorderSorted(child))
+                yield return n;
+        }
+    }
+
+    private List<(string Label, Action Jump)> CollectDocumentationStructuralNameFindJumps(string needle,
+        StringComparison comparison, bool wholeWord)
+    {
+        var list = new List<(string Label, Action Jump)>();
+
+        foreach (var pk in _docPackages)
+        {
+            if (!NeedleMatchesInNamedText(pk.Name ?? string.Empty, needle, comparison, wholeWord))
+                continue;
+
+            var p = pk;
+            list.Add(($"{p.Name}: notebook name (name)", () => NavigateToDocumentationPackageSurfaceForFind(p)));
+        }
+
+        foreach (var pkg in _docPackages)
+        foreach (var root in DocNodesSortedForTree(pkg.Nodes))
+        foreach (var node in EnumerateDocTreePreorderSorted(root))
+        {
+            if (!NeedleMatchesInNamedText(node.Name ?? string.Empty, needle, comparison, wholeWord))
+                continue;
+
+            var nk = pkg;
+            var nn = node;
+            var label = $"{nk.Name} › {FormatDocNodeHeader(nn)} (name)";
+            list.Add((label, () =>
+            {
+                NavigateToDocumentationNodeForFind(nk, nn);
+                if (nn is { Kind: DocNodeKind.Page or DocNodeKind.SubPage })
+                {
+                    var ed = GetOrCreateDocNodeDocument(nn).Editor;
+                    ed.Focus();
+                    ed.TextArea.ClearSelection();
+                    ed.TextArea.Caret.Offset = 0;
+                }
+            }));
+        }
+
+        return list;
     }
 
     // ── Mutations ───────────────────────────────────────────────────────────

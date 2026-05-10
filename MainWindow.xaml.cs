@@ -5428,6 +5428,9 @@ public partial class MainWindow : Window
         return leftOk && rightOk;
     }
 
+    private static bool NeedleMatchesInNamedText(string text, string needle, StringComparison comparison, bool wholeWord)
+        => TryFindNextIndex(text, needle, 0, comparison, wholeWord, out _);
+
     private static bool TryFindNextIndex(
         string text,
         string findText,
@@ -5628,6 +5631,9 @@ public partial class MainWindow : Window
         Grid.SetColumn(buttons, 1);
         root.Children.Add(buttons);
 
+        var unifiedAllScopeFindSteps = new List<Action>();
+        var unifiedAllScopeFindCursor = -1;
+
         StringComparison GetComparison()
             => chkMatchCase.IsChecked == true ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
@@ -5641,6 +5647,19 @@ public partial class MainWindow : Window
                 return false;
 
             status.Text = $"Match found in \"{foundDoc.DisplayHeader}\".";
+            return true;
+        }
+
+        bool JumpToShortTermTabNameMatch(TabItem tab)
+        {
+            if (!_docs.TryGetValue(tab, out var foundDoc))
+                return false;
+
+            MainTabControl.SelectedItem = tab;
+            foundDoc.Editor.Focus();
+            foundDoc.Editor.TextArea.ClearSelection();
+            foundDoc.Editor.TextArea.Caret.Offset = 0;
+            status.Text = $"Tab name match: \"{foundDoc.DisplayHeader}\".";
             return true;
         }
 
@@ -5658,13 +5677,18 @@ public partial class MainWindow : Window
 
         bool JumpToDocumentationMatch(DocPackage pkg, DocNode node, int foundOffset, int length)
         {
-            NavigateToDocumentationPageForFind(pkg, node);
-            if (!_docNodeDocs.TryGetValue(node.Id, out var foundDoc))
-                return false;
-            if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
-                return false;
+            NavigateToDocumentationNodeForFind(pkg, node);
+            if (node.Kind is DocNodeKind.Page or DocNodeKind.SubPage
+                && _docNodeDocs.TryGetValue(node.Id, out var foundDoc))
+            {
+                if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
+                    return false;
 
-            status.Text = $"Match found in \"{FormatDocumentationFindLocation(pkg, foundDoc)}\".";
+                status.Text = $"Match found in \"{FormatDocumentationFindLocation(pkg, foundDoc)}\".";
+                return true;
+            }
+
+            status.Text = $"Match open (no page editor). \"{pkg.Name} › {FormatDocNodeHeader(node)}\".";
             return true;
         }
 
@@ -5733,9 +5757,17 @@ public partial class MainWindow : Window
             return row;
         }
 
+        void AddUnifiedFindResultRow(TextBlock content, Action onClick)
+        {
+            unifiedAllScopeFindSteps.Add(onClick);
+            tabMatchesPanel.Children.Add(CreateResultRow(content, onClick));
+        }
+
         void RefreshTabMatchButtons()
         {
             tabMatchesPanel.Children.Clear();
+            unifiedAllScopeFindSteps.Clear();
+            unifiedAllScopeFindCursor = -1;
 
             var needle = txtFind.Text ?? string.Empty;
             if (chkAllTabs.IsChecked != true || string.IsNullOrEmpty(needle))
@@ -5750,7 +5782,20 @@ public partial class MainWindow : Window
 
             if (longTermNotebookScope)
             {
-                var ltMatches = new List<(LtPage Page, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
+                foreach (var (label, jump) in CollectLongTermStructuralNameFindJumps(needle, comparison, wholeWord))
+                {
+                    var nameRow = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                    nameRow.Inlines.Add(new Run(label)
+                    {
+                        Foreground = Brushes.DimGray,
+                        FontWeight = FontWeights.SemiBold
+                    });
+                    AddUnifiedFindResultRow(nameRow, jump);
+                }
+
+                var ltMatches =
+                    new List<(LtPage Page, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber,
+                        string Text, int FirstOffset)> Lines)>();
                 foreach (var (page, tabDoc) in GetLongTermOrderedPageDocuments())
                 {
                     var offsets = GetMatchOffsets(tabDoc.Editor.Text, needle, comparison, wholeWord);
@@ -5776,7 +5821,7 @@ public partial class MainWindow : Window
                     ltMatches.Add((page, tabDoc, offsets.Count, offsets[0], lineMatches));
                 }
 
-                if (ltMatches.Count == 0)
+                if (ltMatches.Count == 0 && unifiedAllScopeFindSteps.Count == 0)
                 {
                     tabMatchesBorder.Visibility = Visibility.Collapsed;
                     return;
@@ -5796,8 +5841,8 @@ public partial class MainWindow : Window
                             FontWeight = FontWeights.SemiBold
                         });
                         fallbackText.Inlines.Add(new Run("jump to first match"));
-                        var fallbackRow = CreateResultRow(fallbackText, () => JumpToLongTermMatch(targetPage, item.FirstOffset, needle.Length));
-                        tabMatchesPanel.Children.Add(fallbackRow);
+                        AddUnifiedFindResultRow(fallbackText,
+                            () => JumpToLongTermMatch(targetPage, item.FirstOffset, needle.Length));
                         continue;
                     }
 
@@ -5810,8 +5855,8 @@ public partial class MainWindow : Window
                         });
                         AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
                         int lineOffset = line.FirstOffset;
-                        var lineRow = CreateResultRow(lineText, () => JumpToLongTermMatch(targetPage, lineOffset, needle.Length));
-                        tabMatchesPanel.Children.Add(lineRow);
+                        AddUnifiedFindResultRow(lineText,
+                            () => JumpToLongTermMatch(targetPage, lineOffset, needle.Length));
                     }
                 }
 
@@ -5822,6 +5867,18 @@ public partial class MainWindow : Window
 
             if (documentationPackageScope)
             {
+                foreach (var (label, jump) in CollectDocumentationStructuralNameFindJumps(needle, comparison,
+                             wholeWord))
+                {
+                    var nameRow = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                    nameRow.Inlines.Add(new Run(label)
+                    {
+                        Foreground = Brushes.DimGray,
+                        FontWeight = FontWeights.SemiBold
+                    });
+                    AddUnifiedFindResultRow(nameRow, jump);
+                }
+
                 var docMatches =
                     new List<(DocPackage Pkg, DocNode Node, TabDocument Doc, int Count, int FirstOffset,
                         List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
@@ -5850,7 +5907,7 @@ public partial class MainWindow : Window
                     docMatches.Add((pkg, node, tabDoc, offsets.Count, offsets[0], lineMatches));
                 }
 
-                if (docMatches.Count == 0)
+                if (docMatches.Count == 0 && unifiedAllScopeFindSteps.Count == 0)
                 {
                     tabMatchesBorder.Visibility = Visibility.Collapsed;
                     return;
@@ -5872,9 +5929,9 @@ public partial class MainWindow : Window
                             FontWeight = FontWeights.SemiBold
                         });
                         fallbackText.Inlines.Add(new Run("jump to first match"));
-                        var fallbackRow = CreateResultRow(fallbackText,
-                            () => JumpToDocumentationMatch(targetPkg, targetNode, item.FirstOffset, needle.Length));
-                        tabMatchesPanel.Children.Add(fallbackRow);
+                        AddUnifiedFindResultRow(fallbackText,
+                            () => JumpToDocumentationMatch(targetPkg, targetNode, item.FirstOffset,
+                                needle.Length));
                         continue;
                     }
 
@@ -5887,9 +5944,8 @@ public partial class MainWindow : Window
                         });
                         AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
                         int lineOffset = line.FirstOffset;
-                        var lineRow = CreateResultRow(lineText,
+                        AddUnifiedFindResultRow(lineText,
                             () => JumpToDocumentationMatch(targetPkg, targetNode, lineOffset, needle.Length));
-                        tabMatchesPanel.Children.Add(lineRow);
                     }
                 }
 
@@ -5898,7 +5954,28 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var matches = new List<(TabItem Tab, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
+            foreach (var tab in MainTabControl.Items.OfType<TabItem>())
+            {
+                if (!_docs.TryGetValue(tab, out var tabDocForName))
+                    continue;
+
+                if (!NeedleMatchesInNamedText(tabDocForName.DisplayHeader ?? string.Empty, needle, comparison,
+                        wholeWord))
+                    continue;
+
+                var tTab = tab;
+                var nameRow = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                nameRow.Inlines.Add(new Run($"{tabDocForName.DisplayHeader}: tab title (name)")
+                {
+                    Foreground = Brushes.DimGray,
+                    FontWeight = FontWeights.SemiBold
+                });
+                AddUnifiedFindResultRow(nameRow, () => JumpToShortTermTabNameMatch(tTab));
+            }
+
+            var matches =
+                new List<(TabItem Tab, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text,
+                    int FirstOffset)> Lines)>();
             foreach (var tab in MainTabControl.Items.OfType<TabItem>())
             {
                 if (!_docs.TryGetValue(tab, out var tabDoc))
@@ -5927,7 +6004,7 @@ public partial class MainWindow : Window
                 matches.Add((tab, tabDoc, offsets.Count, offsets[0], lineMatches));
             }
 
-            if (matches.Count == 0)
+            if (matches.Count == 0 && unifiedAllScopeFindSteps.Count == 0)
             {
                 tabMatchesBorder.Visibility = Visibility.Collapsed;
                 return;
@@ -5940,35 +6017,28 @@ public partial class MainWindow : Window
                 var targetDoc = item.Doc;
                 if (item.Lines.Count == 0)
                 {
-                    var fallbackText = new TextBlock
-                    {
-                        TextWrapping = TextWrapping.NoWrap
-                    };
+                    var fallbackText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
                     fallbackText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}): ")
                     {
                         Foreground = Brushes.DimGray,
                         FontWeight = FontWeights.SemiBold
                     });
                     fallbackText.Inlines.Add(new Run("jump to first match"));
-                    var fallbackRow = CreateResultRow(fallbackText, () => JumpToMatch(targetTab, item.FirstOffset, needle.Length));
-                    tabMatchesPanel.Children.Add(fallbackRow);
+                    AddUnifiedFindResultRow(fallbackText,
+                        () => JumpToMatch(targetTab, item.FirstOffset, needle.Length));
                     continue;
                 }
 
                 foreach (var line in item.Lines)
                 {
-                    var lineText = new TextBlock
-                    {
-                        TextWrapping = TextWrapping.NoWrap
-                    };
+                    var lineText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
                     lineText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}) - {line.LineNumber}: ")
                     {
                         Foreground = Brushes.DimGray
                     });
                     AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
                     int lineOffset = line.FirstOffset;
-                    var lineRow = CreateResultRow(lineText, () => JumpToMatch(targetTab, lineOffset, needle.Length));
-                    tabMatchesPanel.Children.Add(lineRow);
+                    AddUnifiedFindResultRow(lineText, () => JumpToMatch(targetTab, lineOffset, needle.Length));
                 }
             }
 
@@ -6010,154 +6080,27 @@ public partial class MainWindow : Window
                 return false;
             }
 
-            if (longTermNotebookScope)
+            if (unifiedAllScopeFindSteps.Count == 0)
             {
-                var orderedLt = GetLongTermOrderedPageDocuments();
-                if (orderedLt.Count == 0)
-                {
-                    status.Text = "No pages in this notebook.";
-                    return false;
-                }
+                status.Text = "No matches.";
+                return false;
+            }
 
-                TabDocument? activeLt = GetActiveLongTermTabDocument();
-                var selEditor = activeLt?.Editor ?? editor;
-                int startOffset = selEditor.SelectionStart + selEditor.SelectionLength;
-
-                int ltIndex = orderedLt.FindIndex(x => activeLt != null && x.Doc.StableTabId == activeLt.StableTabId);
-                if (ltIndex < 0)
-                    ltIndex = orderedLt.FindIndex(x => x.Doc.StableTabId == doc.StableTabId);
-                if (ltIndex < 0)
-                    ltIndex = 0;
-
-                for (int i = ltIndex; i < orderedLt.Count; i++)
-                {
-                    var (page, tabDoc) = orderedLt[i];
-                    int searchStart = i == ltIndex ? startOffset : 0;
-                    if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var foundLt))
-                        return JumpToLongTermMatch(page, foundLt, needle.Length);
-                }
-
+            unifiedAllScopeFindCursor++;
+            if (unifiedAllScopeFindCursor >= unifiedAllScopeFindSteps.Count)
+            {
                 if (!wrap)
                 {
+                    unifiedAllScopeFindCursor--;
                     status.Text = "No more matches.";
                     return false;
                 }
 
-                for (int i = 0; i <= ltIndex; i++)
-                {
-                    var (page, tabDoc) = orderedLt[i];
-                    string textToSearch = tabDoc.Editor.Text;
-                    int limit = i == ltIndex ? Math.Clamp(startOffset, 0, textToSearch.Length) : textToSearch.Length;
-                    if (limit <= 0)
-                        continue;
-
-                    string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
-                    if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundLt))
-                        return JumpToLongTermMatch(page, foundLt, needle.Length);
-                }
-
-                status.Text = "No matches in any page.";
-                return false;
+                unifiedAllScopeFindCursor = 0;
             }
 
-            if (documentationPackageScope)
-            {
-                var orderedDoc = GetAllDocumentationNotebookPageDocumentsOrdered();
-                if (orderedDoc.Count == 0)
-                {
-                    status.Text = "No pages in documentation.";
-                    return false;
-                }
-
-                TabDocument? activeDocPage = GetActiveDocumentationTabDocument();
-                var docSelEditor = activeDocPage?.Editor ?? editor;
-                int startOffsetDoc = docSelEditor.SelectionStart + docSelEditor.SelectionLength;
-
-                int docIndex = orderedDoc.FindIndex(x => activeDocPage != null && x.Doc.StableTabId == activeDocPage.StableTabId);
-                if (docIndex < 0)
-                    docIndex = orderedDoc.FindIndex(x => x.Doc.StableTabId == doc.StableTabId);
-                if (docIndex < 0)
-                    docIndex = 0;
-
-                for (int i = docIndex; i < orderedDoc.Count; i++)
-                {
-                    var (dPkg, dNode, tabDoc) = orderedDoc[i];
-                    int searchStart = i == docIndex ? startOffsetDoc : 0;
-                    if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var foundDocMatch))
-                        return JumpToDocumentationMatch(dPkg, dNode, foundDocMatch, needle.Length);
-                }
-
-                if (!wrap)
-                {
-                    status.Text = "No more matches.";
-                    return false;
-                }
-
-                for (int i = 0; i <= docIndex; i++)
-                {
-                    var (dPkg, dNode, tabDoc) = orderedDoc[i];
-                    string textToSearch = tabDoc.Editor.Text;
-                    int limit = i == docIndex ? Math.Clamp(startOffsetDoc, 0, textToSearch.Length) : textToSearch.Length;
-                    if (limit <= 0)
-                        continue;
-
-                    string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
-                    if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundDocWrap))
-                        return JumpToDocumentationMatch(dPkg, dNode, foundDocWrap, needle.Length);
-                }
-
-                status.Text = "No matches in any notebook.";
-                return false;
-            }
-
-            var orderedTabs = MainTabControl.Items.OfType<TabItem>().Where(tab => _docs.ContainsKey(tab)).ToList();
-            if (orderedTabs.Count == 0)
-            {
-                status.Text = "No open tabs.";
-                return false;
-            }
-
-            var currentTab = MainTabControl.SelectedItem as TabItem;
-            int currentIndex = currentTab == null ? 0 : orderedTabs.IndexOf(currentTab);
-            if (currentIndex < 0)
-                currentIndex = 0;
-
-            int startOffsetTabs = editor.SelectionStart + editor.SelectionLength;
-            for (int i = currentIndex; i < orderedTabs.Count; i++)
-            {
-                var tab = orderedTabs[i];
-                if (!_docs.TryGetValue(tab, out var tabDoc))
-                    continue;
-
-                int searchStart = i == currentIndex ? startOffsetTabs : 0;
-                if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var found))
-                    return JumpToMatch(tab, found, needle.Length);
-            }
-
-            if (!wrap)
-            {
-                status.Text = "No more matches.";
-                return false;
-            }
-
-            for (int i = 0; i <= currentIndex; i++)
-            {
-                var tab = orderedTabs[i];
-                if (!_docs.TryGetValue(tab, out var tabDoc))
-                    continue;
-
-                string textToSearch = tabDoc.Editor.Text;
-                int limit = i == currentIndex ? Math.Clamp(startOffsetTabs, 0, textToSearch.Length) : textToSearch.Length;
-                if (limit <= 0)
-                    continue;
-
-                string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
-                if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundWrap))
-                    return JumpToMatch(tab, foundWrap, needle.Length);
-            }
-
-            status.Text = "No matches in any tab.";
-            return false;
+            unifiedAllScopeFindSteps[unifiedAllScopeFindCursor].Invoke();
+            return true;
         }
 
         bool SelectionMatchesFindText()
