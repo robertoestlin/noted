@@ -370,7 +370,7 @@
                        Foreground="#666"
                        FontSize="11"
                        Visibility="Collapsed"/>
-            <TextBlock Text="0.13.0"
+            <TextBlock Text="0.13.1"
                        Foreground="#666"
                        FontSize="11"/>
         </StackPanel>
