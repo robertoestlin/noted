@@ -7813,10 +7813,13 @@ public partial class MainWindow : Window
 
     private void MenuRenderSpreadsheet_Click(object sender, RoutedEventArgs e)
     {
+        bool wasEnabled = _renderSpreadsheet;
         _renderSpreadsheet = MenuItemRenderSpreadsheet.IsChecked == true;
         UpdateViewMenuChecks();
         ApplyViewRenderingSettings();
         SaveWindowSettings();
+        if (_renderSpreadsheet && !wasEnabled)
+            NormalizeSpreadsheetBlocksInOpenDocuments();
     }
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuTags_Click(object sender, RoutedEventArgs e) => ShowTagsDialog();

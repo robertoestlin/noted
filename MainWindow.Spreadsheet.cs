@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
@@ -294,10 +297,38 @@ public partial class MainWindow
         return line.Substring(start, endExclusive - start).Trim();
     }
 
+    /// <summary>Indices of every <c>|</c> in the line (pipe-delimited tables).</summary>
+    private static List<int> CollectPipeDelimiterIndices(string rawLine)
+    {
+        var pipes = new List<int>(12);
+        for (int i = 0; i < rawLine.Length; i++)
+        {
+            if (rawLine[i] == '|')
+                pipes.Add(i);
+        }
+
+        return pipes;
+    }
+
     private static List<string> SplitSpreadsheetCells(string rawLine, SpreadsheetColumnBounds bounds)
     {
         if (bounds.IsPipeDelimited)
         {
+            // Pipe columns must be taken from *this* line's delimiter positions. Header-based
+            // character offsets are wrong when column widths differ per row (e.g. "4100" vs "Unit price").
+            var pipes = CollectPipeDelimiterIndices(rawLine);
+            if (pipes.Count >= 5)
+            {
+                return
+                [
+                    SliceSpreadsheetColumn(rawLine, pipes[0] + 1, pipes[1]),
+                    SliceSpreadsheetColumn(rawLine, pipes[1] + 1, pipes[2]),
+                    SliceSpreadsheetColumn(rawLine, pipes[2] + 1, pipes[3]),
+                    SliceSpreadsheetColumn(rawLine, pipes[3] + 1, pipes[4])
+                ];
+            }
+
+            // Pipe-less sum row or degenerate line: fall back to geometry taken from the header row.
             return
             [
                 SliceSpreadsheetColumn(rawLine, bounds.DescStart, bounds.Pipe1),
@@ -647,6 +678,249 @@ public partial class MainWindow
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// All <c>```spreadsheet```</c> fenced regions in document order (half-open offsets like
+    /// <see cref="TryGetSpreadsheetBlockSpanContainingOffset"/>).
+    /// </summary>
+    private static List<(int Start, int Length)> EnumerateSpreadsheetBlockSpans(TextDocument doc)
+    {
+        var result = new List<(int Start, int Length)>();
+        bool inside = false;
+        int openOffset = 0;
+        for (int lineNum = 1; lineNum <= doc.LineCount; lineNum++)
+        {
+            var line = doc.GetLineByNumber(lineNum);
+            if (inside)
+            {
+                if (IsBareMarkdownCloseFenceLine(doc, line))
+                {
+                    int closeEnd = line.Offset + line.TotalLength;
+                    result.Add((openOffset, closeEnd - openOffset));
+                    inside = false;
+                }
+            }
+            else if (IsSpreadsheetOpenFenceLine(doc, line))
+            {
+                inside = true;
+                openOffset = line.Offset;
+            }
+        }
+
+        return result;
+    }
+
+    private static string InferLineEndingForDocumentSegment(TextDocument doc, int start, int length)
+    {
+        int n = Math.Min(length, Math.Max(0, doc.TextLength - start));
+        if (n <= 0)
+            return Environment.NewLine;
+        string seg = doc.GetText(start, n);
+        return seg.IndexOf("\r\n", StringComparison.Ordinal) >= 0 ? "\r\n" : "\n";
+    }
+
+    private static bool SumLineHasParseableTotalAmount(string sumRaw, SpreadsheetColumnBounds bounds)
+    {
+        if (TryParseCurrencyFromSumLineText(sumRaw, out _))
+            return true;
+
+        var cells = SplitSpreadsheetCells(sumRaw, bounds);
+        if (cells.Count >= 4
+            && SpreadsheetAmountHelpers.TryParseDecimal(
+                SpreadsheetAmountHelpers.TrimTrailingCurrencyToken(cells[3].Trim()), out _))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// When false, automated spreadsheet repair must not run and the UI may label the block as corrupted.
+    /// </summary>
+    private static bool TryValidateSpreadsheetFencedContent(
+        TextDocument doc, int openFenceLineNum, int closeFenceLineNum)
+    {
+        if (openFenceLineNum < 1 || closeFenceLineNum <= openFenceLineNum)
+            return false;
+
+        int headerLineNum = -1;
+        SpreadsheetColumnBounds bounds = default;
+        for (int i = openFenceLineNum + 1; i < closeFenceLineNum; i++)
+        {
+            var ln = doc.GetLineByNumber(i);
+            var raw = doc.GetText(ln.Offset, ln.Length);
+            if (IsHeaderRowLine(raw, out var hb))
+            {
+                headerLineNum = i;
+                bounds = hb;
+                break;
+            }
+        }
+
+        if (headerLineNum < 0)
+            return false;
+
+        var headerLn = doc.GetLineByNumber(headerLineNum);
+        var headerRaw = doc.GetText(headerLn.Offset, headerLn.Length);
+        if (!TryGetSpreadsheetColumnBoundsFromHeader(headerRaw, out bounds))
+            return false;
+
+        int sumLineNum = -1;
+        for (int i = closeFenceLineNum - 1; i > headerLineNum; i--)
+        {
+            var ln = doc.GetLineByNumber(i);
+            var raw = doc.GetText(ln.Offset, ln.Length);
+            if (string.IsNullOrWhiteSpace(raw.Trim()))
+                continue;
+            if (IsSpreadsheetSumRowLineLoose(raw))
+            {
+                sumLineNum = i;
+                break;
+            }
+        }
+
+        if (sumLineNum < 0)
+            return false;
+
+        var sumLn = doc.GetLineByNumber(sumLineNum);
+        var sumRaw = doc.GetText(sumLn.Offset, sumLn.Length);
+        if (!IsSpreadsheetSumRowLine(sumRaw, bounds) && !IsSpreadsheetSumRowLineLoose(sumRaw))
+            return false;
+
+        if (!SumLineHasParseableTotalAmount(sumRaw, bounds))
+            return false;
+
+        for (int i = headerLineNum + 1; i < sumLineNum; i++)
+        {
+            var ln = doc.GetLineByNumber(i);
+            var raw = doc.GetText(ln.Offset, ln.Length);
+            if (string.IsNullOrWhiteSpace(raw.Trim()))
+                continue;
+
+            if (IsHeaderRowLine(raw))
+                return false;
+
+            if (bounds.IsPipeDelimited)
+            {
+                int pipeCount = CollectPipeDelimiterIndices(raw).Count;
+                if (pipeCount < 5)
+                    return false;
+            }
+
+            if (!RowLooksLikeSpreadsheetDataRow(raw, bounds))
+                return false;
+
+            var parts = SplitSpreadsheetCells(raw, bounds);
+            if (parts.Count < 4)
+                return false;
+
+            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[1], out _))
+                return false;
+            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[2], out _))
+                return false;
+            if (!SpreadsheetAmountHelpers.TryParseDecimal(
+                    SpreadsheetAmountHelpers.TrimTrailingCurrencyToken(parts[3].Trim()), out _))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryFindCloseFenceLineNum(TextDocument doc, int openFenceLineNum, out int closeFenceLineNum)
+    {
+        closeFenceLineNum = -1;
+        for (int j = openFenceLineNum + 1; j <= doc.LineCount; j++)
+        {
+            var jl = doc.GetLineByNumber(j);
+            if (IsBareMarkdownCloseFenceLine(doc, jl))
+            {
+                closeFenceLineNum = j;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSpreadsheetBlockCorruptForNameLine(TextDocument doc, DocumentLine nameLine)
+    {
+        if (!IsSpreadsheetNameLine(doc, nameLine))
+            return false;
+
+        int openNum = nameLine.LineNumber - 1;
+        var openLn = doc.GetLineByNumber(openNum);
+        if (!IsSpreadsheetOpenFenceLine(doc, openLn))
+            return false;
+
+        if (!TryFindCloseFenceLineNum(doc, openNum, out var closeNum))
+            return true;
+
+        return !TryValidateSpreadsheetFencedContent(doc, openNum, closeNum);
+    }
+
+    /// <summary>
+    /// Rewrites every spreadsheet fence to canonical layout (header line, spacing, aligned cells, sum from qty × unit).
+    /// Call when turning on spreadsheet rendering so minor markdown damage is repaired when viewing as a table.
+    /// </summary>
+    private void NormalizeSpreadsheetBlocksInOpenDocuments()
+    {
+        foreach (var tabDoc in _docs.Values)
+            NormalizeSpreadsheetBlocksInEditor(tabDoc.Editor);
+    }
+
+    private void NormalizeSpreadsheetBlocksInEditor(TextEditor editor)
+    {
+        if (editor.Document == null)
+            return;
+
+        var doc = editor.Document;
+        var spans = EnumerateSpreadsheetBlockSpans(doc);
+        if (spans.Count == 0)
+            return;
+
+        spans.Sort((a, b) => b.Start.CompareTo(a.Start));
+
+        bool any = false;
+        _spreadsheetSumSyncSuppress = true;
+        try
+        {
+            foreach (var (start, len) in spans)
+            {
+                var openLn = doc.GetLineByOffset(start);
+                var lastByte = Math.Min(start + Math.Max(0, len - 1), Math.Max(0, doc.TextLength - 1));
+                var closeLn = doc.GetLineByOffset(lastByte);
+                if (!TryValidateSpreadsheetFencedContent(doc, openLn.LineNumber, closeLn.LineNumber))
+                    continue;
+
+                if (!TryParseSpreadsheetBlockForEdit(doc, start, len, out var title, out var currency, out var rows))
+                    continue;
+
+                string nl = InferLineEndingForDocumentSegment(doc, start, len);
+                string rebuilt;
+                try
+                {
+                    rebuilt = BuildSpreadsheetSectionTextFromEdit(title, currency, rows, nl);
+                }
+                catch (OverflowException)
+                {
+                    continue;
+                }
+
+                string current = doc.GetText(start, len);
+                if (string.Equals(current, rebuilt, StringComparison.Ordinal))
+                    continue;
+
+                doc.Replace(start, len, rebuilt);
+                any = true;
+            }
+        }
+        finally
+        {
+            _spreadsheetSumSyncSuppress = false;
+        }
+
+        if (any)
+            editor.TextArea.TextView.Redraw();
     }
 
     private static bool IsHeaderCells(IReadOnlyList<string> parts)
@@ -1005,6 +1279,9 @@ public partial class MainWindow
             if (!SpreadsheetFencedBlockContainsCaretOffset(doc, b.openLine, b.closeLine, caretOffset))
                 continue;
 
+            if (!TryValidateSpreadsheetFencedContent(doc, b.openLine, b.closeLine))
+                continue;
+
             var openFence = doc.GetLineByNumber(b.openLine);
             var headerLineDoc = doc.GetLineByNumber(b.headerLine);
             var headerRaw = doc.GetText(headerLineDoc.Offset, headerLineDoc.Length);
@@ -1250,6 +1527,9 @@ public partial class MainWindow
     private static bool TryUpdateSumForClosedSpreadsheetBlock(
         TextDocument doc, DocumentLine openFence, DocumentLine closeFence)
     {
+        if (!TryValidateSpreadsheetFencedContent(doc, openFence.LineNumber, closeFence.LineNumber))
+            return false;
+
         int headerLineNum = -1;
         DocumentLine? sumLine = null;
 
@@ -1559,9 +1839,10 @@ public partial class MainWindow
     private static readonly string[] NewLineSplits = ["\r\n", "\r", "\n"];
 
     private static string BuildSpreadsheetSectionTextFromEdit(
-        string title, string currency, IReadOnlyList<SpreadsheetEditRowModel> rows)
+        string title, string currency, IReadOnlyList<SpreadsheetEditRowModel> rows,
+        string? lineEnding = null)
     {
-        string nl = Environment.NewLine;
+        string nl = lineEnding ?? Environment.NewLine;
         currency = string.IsNullOrWhiteSpace(currency)
             ? SpreadsheetAmountHelpers.DefaultCurrency
             : currency.Trim();
@@ -1628,6 +1909,61 @@ public partial class MainWindow
         sb.Append("```");
         sb.Append(nl);
         return sb.ToString();
+    }
+
+    private sealed class SpreadsheetCorruptedNameLineInlineGenerator : VisualLineElementGenerator
+    {
+        private readonly Func<TextView, bool> _chromeActive;
+
+        public SpreadsheetCorruptedNameLineInlineGenerator(Func<TextView, bool> chromeActive)
+            => _chromeActive = chromeActive;
+
+        public override int GetFirstInterestedOffset(int startOffset)
+        {
+            if (!_chromeActive(CurrentContext.TextView))
+                return -1;
+            var doc = CurrentContext.Document;
+            if (doc == null || doc.TextLength == 0)
+                return -1;
+
+            int safeStart = Math.Clamp(startOffset, 0, Math.Max(0, doc.TextLength - 1));
+            int lineNum = doc.GetLineByOffset(safeStart).LineNumber;
+            for (int i = lineNum; i <= doc.LineCount; i++)
+            {
+                var line = doc.GetLineByNumber(i);
+                if (line.Offset < startOffset)
+                    continue;
+                if (!IsSpreadsheetBlockCorruptForNameLine(doc, line))
+                    continue;
+                return line.Offset;
+            }
+
+            return -1;
+        }
+
+        public override VisualLineElement? ConstructElement(int offset)
+        {
+            if (!_chromeActive(CurrentContext.TextView))
+                return null;
+            var doc = CurrentContext.Document;
+            if (doc == null)
+                return null;
+
+            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
+            if (docLine.Offset != offset || docLine.Length <= 0)
+                return null;
+            if (!IsSpreadsheetBlockCorruptForNameLine(doc, docLine))
+                return null;
+
+            var tb = new TextBlock
+            {
+                Text = "Corrupted spreadsheet",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xB4, 0x28, 0x28)),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            return new InlineObjectElement(docLine.Length, tb);
+        }
     }
 
     private sealed class SpreadsheetFenceLineHiddenGenerator : VisualLineElementGenerator
@@ -2181,10 +2517,16 @@ public partial class MainWindow
                     || lineKind == SpreadsheetLineKind.NameLine
                     || DocumentLineIsSpreadsheetCurrencyLine(doc, docLine))
                     verticalAt = [];
-                else if (TryFindSpreadsheetHeaderBoundsForDocumentLine(doc, docLine, out var colBounds))
-                    verticalAt = FindSpreadsheetColumnBoundaryOffsetsInLine(string.Empty, colBounds);
                 else
-                    verticalAt = FindLegacyTabOrPipeSeparatorIndices(raw);
+                {
+                    var pipesHere = CollectPipeDelimiterIndices(raw);
+                    if (pipesHere.Count >= 5)
+                        verticalAt = pipesHere.Take(5).ToList();
+                    else if (TryFindSpreadsheetHeaderBoundsForDocumentLine(doc, docLine, out var colBounds))
+                        verticalAt = FindSpreadsheetColumnBoundaryOffsetsInLine(string.Empty, colBounds);
+                    else
+                        verticalAt = FindLegacyTabOrPipeSeparatorIndices(raw);
+                }
 
                 foreach (var idx in verticalAt)
                 {
@@ -2238,11 +2580,11 @@ public partial class MainWindow
             {
                 if (b.IsPipeDelimited)
                 {
-                    foreach (int pi in new[] { b.Pipe0, b.Pipe1, b.Pipe2, b.Pipe3, b.Pipe4 })
+                    for (int i = 0; i < raw.Length; i++)
                     {
-                        if (pi < 0 || pi >= raw.Length || raw[pi] != '|')
+                        if (raw[i] != '|')
                             continue;
-                        int absStart = line.Offset + pi;
+                        int absStart = line.Offset + i;
                         ChangeLinePart(absStart, absStart + 1, ve =>
                             ve.TextRunProperties.SetForegroundBrush(SepBrush));
                     }
@@ -2425,6 +2767,15 @@ public partial class MainWindow
             if (TryFindSpreadsheetHeaderBoundsForDocumentLine(doc, line, out var bounds))
             {
                 int totalEnd = bounds.IsPipeDelimited ? bounds.Pipe4 : raw.Length;
+                var pipes = CollectPipeDelimiterIndices(raw);
+                if (pipes.Count >= 5)
+                {
+                    PaintNumericCell(pipes[1] + 1, pipes[2]);
+                    PaintNumericCell(pipes[2] + 1, pipes[3]);
+                    PaintNumericCell(pipes[3] + 1, pipes[4]);
+                    return;
+                }
+
                 PaintNumericCell(bounds.QtyStart, bounds.UnitStart);
                 PaintNumericCell(bounds.UnitStart, bounds.TotalStart);
                 PaintNumericCell(bounds.TotalStart, totalEnd);
@@ -2446,6 +2797,7 @@ public partial class MainWindow
 
         editor.TextArea.TextView.ElementGenerators.Add(new SpreadsheetFenceLineHiddenGenerator(Chrome));
         editor.TextArea.TextView.ElementGenerators.Add(new SpreadsheetCurrencyLineHiddenGenerator(Chrome));
+        editor.TextArea.TextView.ElementGenerators.Add(new SpreadsheetCorruptedNameLineInlineGenerator(Chrome));
         editor.TextArea.TextView.BackgroundRenderers.Add(new SpreadsheetChromeBackgroundRenderer(Chrome));
         editor.TextArea.TextView.BackgroundRenderers.Add(new SpreadsheetGridLineRenderer(Chrome));
         editor.TextArea.TextView.LineTransformers.Add(new SpreadsheetMonospaceTransformer(Chrome));
