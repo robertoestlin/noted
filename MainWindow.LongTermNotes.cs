@@ -823,6 +823,97 @@ public partial class MainWindow
         return result == true ? input.Text?.Trim() : null;
     }
 
+    /// <summary>Used by Find dialog when scope is long-term pages (not main-window tabs).</summary>
+    private bool IsLongTermPageDocument(TabDocument doc)
+        => _ltPageDocs.Values.Any(d => ReferenceEquals(d, doc));
+
+    private TabDocument? GetActiveLongTermTabDocument()
+    {
+        if (_ltCurrentPage == null) return null;
+        return _ltPageDocs.TryGetValue(_ltCurrentPage.Id, out var d) ? d : null;
+    }
+
+    /// <summary>Notebook tree order: sections, then pages (with sub-pages after each parent), then sub-sections recursively.</summary>
+    private static void EnumerateLtPagesInSectionRecursive(LtSection section, List<LtPage> list)
+    {
+        foreach (var p in section.Pages)
+        {
+            list.Add(p);
+            foreach (var sp in p.SubPages)
+                list.Add(sp);
+        }
+
+        foreach (var sub in section.SubSections)
+            EnumerateLtPagesInSectionRecursive(sub, list);
+    }
+
+    private static List<LtPage> EnumerateLtPagesInNotebookOrdered(Notebook nb)
+    {
+        var list = new List<LtPage>();
+        foreach (var section in nb.Sections)
+            EnumerateLtPagesInSectionRecursive(section, list);
+        return list;
+    }
+
+    private List<(LtPage Page, TabDocument Doc)> GetLongTermOrderedPageDocuments()
+    {
+        if (_ltCurrentNotebook == null)
+            return [];
+
+        var list = new List<(LtPage, TabDocument)>();
+        foreach (var page in EnumerateLtPagesInNotebookOrdered(_ltCurrentNotebook))
+            list.Add((page, GetOrCreateLtPageDocument(page)));
+        return list;
+    }
+
+    private static LtSection? FindLtSectionOwningPageInSection(LtSection section, LtPage target)
+    {
+        foreach (var p in section.Pages)
+        {
+            if (ReferenceEquals(p, target)) return section;
+            foreach (var sp in p.SubPages)
+                if (ReferenceEquals(sp, target)) return section;
+        }
+
+        foreach (var sub in section.SubSections)
+        {
+            var inner = FindLtSectionOwningPageInSection(sub, target);
+            if (inner != null) return inner;
+        }
+
+        return null;
+    }
+
+    private static LtSection? FindLtSectionOwningPage(Notebook nb, LtPage target)
+    {
+        foreach (var s in nb.Sections)
+        {
+            var found = FindLtSectionOwningPageInSection(s, target);
+            if (found != null) return found;
+        }
+
+        return null;
+    }
+
+    /// <summary>Selects the section/pages tree for this page and shows its editor (used by Find across pages).</summary>
+    private void NavigateToLongTermPageForFind(LtPage targetPage)
+    {
+        if (_ltCurrentNotebook == null) return;
+
+        FlushActiveLongTermPageText();
+        var section = FindLtSectionOwningPage(_ltCurrentNotebook, targetPage);
+        if (section == null) return;
+
+        _ltCurrentSection = section;
+        _ltCurrentPage = targetPage;
+        _ltCurrentNotebook.CurrentSectionId = section.Id;
+        _ltCurrentNotebook.CurrentPageId = targetPage.Id;
+        MarkLongTermNotebookDirty(_ltCurrentNotebook);
+        RefreshLtSectionsTree();
+        RefreshLtPagesTree();
+        ShowActiveLongTermPageEditor();
+    }
+
     private void MarkLongTermNotebookDirty(Notebook nb) => _ltDirtyNotebookIds.Add(nb.Id);
     private void MarkLongTermIndexDirty() => _ltIndexDirty = true;
     private bool _ltIndexDirty;

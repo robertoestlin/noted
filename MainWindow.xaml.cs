@@ -4178,7 +4178,10 @@ public partial class MainWindow : Window
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && (e.Key == Key.F || e.Key == Key.H))
         {
-            ShowFindReplaceDialog();
+            if (_appMode == AppMode.LongTerm && IsLongTermPageDocument(doc))
+                ShowFindReplaceDialog(explicitDoc: doc, findOnly: true, longTermNotebookScope: true);
+            else
+                ShowFindReplaceDialog();
             e.Handled = true;
             return;
         }
@@ -5487,9 +5490,12 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private void ShowFindReplaceDialog()
+    private void ShowFindReplaceDialog(
+        TabDocument? explicitDoc = null,
+        bool findOnly = false,
+        bool longTermNotebookScope = false)
     {
-        var doc = CurrentDoc();
+        var doc = explicitDoc ?? CurrentDoc();
         if (doc == null)
             return;
 
@@ -5497,13 +5503,15 @@ public partial class MainWindow : Window
         const double compactFindDialogWidth = 520;
         const double expandedFindDialogWidth = 760;
         const double compactFindDialogHeight = 340;
+        const double compactFindOnlyDialogHeight = 280;
         const double expandedFindDialogHeight = 470;
+        const double expandedFindOnlyDialogHeight = 410;
 
         var dlg = new Window
         {
-            Title = "Find + Replace",
+            Title = findOnly ? "Find" : "Find + Replace",
             Width = compactFindDialogWidth,
-            Height = compactFindDialogHeight,
+            Height = findOnly ? compactFindOnlyDialogHeight : compactFindDialogHeight,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = this,
             ResizeMode = ResizeMode.NoResize
@@ -5511,7 +5519,7 @@ public partial class MainWindow : Window
 
         var root = new Grid { Margin = new Thickness(12) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = findOnly ? new GridLength(0) : GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -5540,11 +5548,16 @@ public partial class MainWindow : Window
         Grid.SetRow(txtReplace, 1);
         Grid.SetColumn(txtReplace, 1);
         root.Children.Add(txtReplace);
+        if (findOnly)
+        {
+            lblReplace.Visibility = Visibility.Collapsed;
+            txtReplace.Visibility = Visibility.Collapsed;
+        }
 
         var optionsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         var chkMatchCase = new CheckBox { Content = "Match case", Margin = new Thickness(0, 0, 16, 0) };
         var chkWholeWord = new CheckBox { Content = "Whole word" };
-        var chkAllTabs = new CheckBox { Content = "Find in all tabs", Margin = new Thickness(16, 0, 0, 0) };
+        var chkAllTabs = new CheckBox { Content = "Find in all pages", Margin = new Thickness(16, 0, 0, 0) };
         optionsPanel.Children.Add(chkMatchCase);
         optionsPanel.Children.Add(chkWholeWord);
         optionsPanel.Children.Add(chkAllTabs);
@@ -5595,8 +5608,12 @@ public partial class MainWindow : Window
         var btnReplaceAll = new Button { Content = "Replace All", Width = 95, Margin = new Thickness(0, 0, 8, 0) };
         var btnClose = new Button { Content = "Close", Width = 80, IsCancel = true };
         buttons.Children.Add(btnFindNext);
-        buttons.Children.Add(btnReplace);
-        buttons.Children.Add(btnReplaceAll);
+        if (!findOnly)
+        {
+            buttons.Children.Add(btnReplace);
+            buttons.Children.Add(btnReplaceAll);
+        }
+
         buttons.Children.Add(btnClose);
         Grid.SetRow(buttons, 5);
         Grid.SetColumn(buttons, 1);
@@ -5611,6 +5628,18 @@ public partial class MainWindow : Window
                 return false;
 
             MainTabControl.SelectedItem = tab;
+            if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
+                return false;
+
+            status.Text = $"Match found in \"{foundDoc.DisplayHeader}\".";
+            return true;
+        }
+
+        bool JumpToLongTermMatch(LtPage page, int foundOffset, int length)
+        {
+            NavigateToLongTermPageForFind(page);
+            if (!_ltPageDocs.TryGetValue(page.Id, out var foundDoc))
+                return false;
             if (!SelectMatchInEditor(foundDoc.Editor, foundOffset, length))
                 return false;
 
@@ -5697,6 +5726,79 @@ public partial class MainWindow : Window
             var comparison = GetComparison();
             bool wholeWord = chkWholeWord.IsChecked == true;
             bool supportsLinePreview = !needle.Contains('\n') && !needle.Contains('\r');
+
+            if (longTermNotebookScope)
+            {
+                var ltMatches = new List<(LtPage Page, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
+                foreach (var (page, tabDoc) in GetLongTermOrderedPageDocuments())
+                {
+                    var offsets = GetMatchOffsets(tabDoc.Editor.Text, needle, comparison, wholeWord);
+                    if (offsets.Count == 0)
+                        continue;
+
+                    var lineMatches = new List<(int LineNumber, string Text, int FirstOffset)>();
+                    var addedLines = new HashSet<int>();
+                    if (supportsLinePreview)
+                    {
+                        var document = tabDoc.Editor.Document;
+                        foreach (var offset in offsets)
+                        {
+                            var line = document.GetLineByOffset(offset);
+                            if (!addedLines.Add(line.LineNumber))
+                                continue;
+
+                            string lineText = document.GetText(line).TrimEnd('\r', '\n');
+                            lineMatches.Add((line.LineNumber, lineText, offset));
+                        }
+                    }
+
+                    ltMatches.Add((page, tabDoc, offsets.Count, offsets[0], lineMatches));
+                }
+
+                if (ltMatches.Count == 0)
+                {
+                    tabMatchesBorder.Visibility = Visibility.Collapsed;
+                    return;
+                }
+
+                tabMatchesBorder.Visibility = Visibility.Visible;
+                foreach (var item in ltMatches)
+                {
+                    var targetPage = item.Page;
+                    var targetDoc = item.Doc;
+                    if (item.Lines.Count == 0)
+                    {
+                        var fallbackText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                        fallbackText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}): ")
+                        {
+                            Foreground = Brushes.DimGray,
+                            FontWeight = FontWeights.SemiBold
+                        });
+                        fallbackText.Inlines.Add(new Run("jump to first match"));
+                        var fallbackRow = CreateResultRow(fallbackText, () => JumpToLongTermMatch(targetPage, item.FirstOffset, needle.Length));
+                        tabMatchesPanel.Children.Add(fallbackRow);
+                        continue;
+                    }
+
+                    foreach (var line in item.Lines)
+                    {
+                        var lineText = new TextBlock { TextWrapping = TextWrapping.NoWrap };
+                        lineText.Inlines.Add(new Run($"{targetDoc.DisplayHeader} ({item.Count}) - {line.LineNumber}: ")
+                        {
+                            Foreground = Brushes.DimGray
+                        });
+                        AppendHighlightedLineRuns(lineText.Inlines, line.Text, needle, comparison, wholeWord);
+                        int lineOffset = line.FirstOffset;
+                        var lineRow = CreateResultRow(lineText, () => JumpToLongTermMatch(targetPage, lineOffset, needle.Length));
+                        tabMatchesPanel.Children.Add(lineRow);
+                    }
+                }
+
+                if (!supportsLinePreview)
+                    status.Text = "Line previews are shown only for single-line find text.";
+                return;
+            }
+
             var matches = new List<(TabItem Tab, TabDocument Doc, int Count, int FirstOffset, List<(int LineNumber, string Text, int FirstOffset)> Lines)>();
             foreach (var tab in MainTabControl.Items.OfType<TabItem>())
             {
@@ -5809,10 +5911,60 @@ public partial class MainWindow : Window
                 return false;
             }
 
+            if (longTermNotebookScope)
+            {
+                var orderedLt = GetLongTermOrderedPageDocuments();
+                if (orderedLt.Count == 0)
+                {
+                    status.Text = "No pages in this notebook.";
+                    return false;
+                }
+
+                TabDocument? activeLt = GetActiveLongTermTabDocument();
+                var selEditor = activeLt?.Editor ?? editor;
+                int startOffset = selEditor.SelectionStart + selEditor.SelectionLength;
+
+                int ltIndex = orderedLt.FindIndex(x => activeLt != null && x.Doc.StableTabId == activeLt.StableTabId);
+                if (ltIndex < 0)
+                    ltIndex = orderedLt.FindIndex(x => x.Doc.StableTabId == doc.StableTabId);
+                if (ltIndex < 0)
+                    ltIndex = 0;
+
+                for (int i = ltIndex; i < orderedLt.Count; i++)
+                {
+                    var (page, tabDoc) = orderedLt[i];
+                    int searchStart = i == ltIndex ? startOffset : 0;
+                    if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var foundLt))
+                        return JumpToLongTermMatch(page, foundLt, needle.Length);
+                }
+
+                if (!wrap)
+                {
+                    status.Text = "No more matches.";
+                    return false;
+                }
+
+                for (int i = 0; i <= ltIndex; i++)
+                {
+                    var (page, tabDoc) = orderedLt[i];
+                    string textToSearch = tabDoc.Editor.Text;
+                    int limit = i == ltIndex ? Math.Clamp(startOffset, 0, textToSearch.Length) : textToSearch.Length;
+                    if (limit <= 0)
+                        continue;
+
+                    string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
+                    if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundLt))
+                        return JumpToLongTermMatch(page, foundLt, needle.Length);
+                }
+
+                status.Text = "No matches in any page.";
+                return false;
+            }
+
             var orderedTabs = MainTabControl.Items.OfType<TabItem>().Where(tab => _docs.ContainsKey(tab)).ToList();
             if (orderedTabs.Count == 0)
             {
-                status.Text = "No open tabs.";
+                status.Text = "No open pages.";
                 return false;
             }
 
@@ -5821,14 +5973,16 @@ public partial class MainWindow : Window
             if (currentIndex < 0)
                 currentIndex = 0;
 
-            int startOffset = editor.SelectionStart + editor.SelectionLength;
+            TabDocument? activeShortTerm = CurrentDoc();
+            var stSelEditor = activeShortTerm?.Editor ?? editor;
+            int startOffsetTabs = stSelEditor.SelectionStart + stSelEditor.SelectionLength;
             for (int i = currentIndex; i < orderedTabs.Count; i++)
             {
                 var tab = orderedTabs[i];
                 if (!_docs.TryGetValue(tab, out var tabDoc))
                     continue;
 
-                int searchStart = i == currentIndex ? startOffset : 0;
+                int searchStart = i == currentIndex ? startOffsetTabs : 0;
                 if (TryFindNextIndex(tabDoc.Editor.Text, needle, searchStart, comparison, wholeWord, out var found))
                     return JumpToMatch(tab, found, needle.Length);
             }
@@ -5846,16 +6000,16 @@ public partial class MainWindow : Window
                     continue;
 
                 string textToSearch = tabDoc.Editor.Text;
-                int limit = i == currentIndex ? Math.Clamp(startOffset, 0, textToSearch.Length) : textToSearch.Length;
+                int limit = i == currentIndex ? Math.Clamp(startOffsetTabs, 0, textToSearch.Length) : textToSearch.Length;
                 if (limit <= 0)
                     continue;
 
                 string segment = limit == textToSearch.Length ? textToSearch : textToSearch[..limit];
-                if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var found))
-                    return JumpToMatch(tab, found, needle.Length);
+                if (TryFindNextIndex(segment, needle, 0, comparison, wholeWord, out var foundWrap))
+                    return JumpToMatch(tab, foundWrap, needle.Length);
             }
 
-            status.Text = "No matches in any tab.";
+            status.Text = "No matches in any page.";
             return false;
         }
 
@@ -5931,18 +6085,22 @@ public partial class MainWindow : Window
         }
 
         btnFindNext.Click += (_, _) => FindNext(wrap: true);
-        btnReplace.Click += (_, _) => ReplaceCurrentSelection();
-        btnReplaceAll.Click += (_, _) => ReplaceAll();
+        if (!findOnly)
+        {
+            btnReplace.Click += (_, _) => ReplaceCurrentSelection();
+            btnReplaceAll.Click += (_, _) => ReplaceAll();
+        }
+
         chkAllTabs.Checked += (_, _) =>
         {
             dlg.Width = expandedFindDialogWidth;
-            dlg.Height = expandedFindDialogHeight;
+            dlg.Height = findOnly ? expandedFindOnlyDialogHeight : expandedFindDialogHeight;
             RefreshTabMatchButtons();
         };
         chkAllTabs.Unchecked += (_, _) =>
         {
             dlg.Width = compactFindDialogWidth;
-            dlg.Height = compactFindDialogHeight;
+            dlg.Height = findOnly ? compactFindOnlyDialogHeight : compactFindDialogHeight;
             RefreshTabMatchButtons();
         };
         chkMatchCase.Checked += (_, _) => RefreshTabMatchButtons();
@@ -7921,7 +8079,18 @@ public partial class MainWindow : Window
 
         ExecuteEditorPaste(doc);
     }
-    private void MenuFindReplace_Click(object sender, RoutedEventArgs e) => ShowFindReplaceDialog();
+    private void MenuFindReplace_Click(object sender, RoutedEventArgs e)
+    {
+        if (_appMode == AppMode.LongTerm)
+        {
+            var ltDoc = GetActiveLongTermTabDocument();
+            if (ltDoc != null)
+                ShowFindReplaceDialog(explicitDoc: ltDoc, findOnly: true, longTermNotebookScope: true);
+            return;
+        }
+
+        ShowFindReplaceDialog();
+    }
     private void MenuGoToLine_Click(object sender, RoutedEventArgs e) => ExecuteGoToLine();
     private void MenuGoToTab_Click(object sender, RoutedEventArgs e) => ExecuteGoToTab();
     private void MenuTrimTrailingEmptyLines_Click(object sender, RoutedEventArgs e) => ExecuteTrimTrailingEmptyLines();
