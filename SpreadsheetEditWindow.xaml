@@ -57,7 +57,18 @@
                   SelectionUnit="FullRow"
                   GridLinesVisibility="Horizontal"
                   AlternatingRowBackground="#F8FAFC"
-                  Margin="0,0,0,10">
+                  Margin="0,0,0,10"
+                  PreviewMouseRightButtonDown="RowsGrid_PreviewMouseRightButtonDown">
+            <DataGrid.ContextMenu>
+                <ContextMenu Opened="RowsGridContextMenu_Opened">
+                    <MenuItem x:Name="RowsContextMoveUpItem"
+                              Header="Move up"
+                              Click="MoveRowUp_Click"/>
+                    <MenuItem x:Name="RowsContextMoveDownItem"
+                              Header="Move down"
+                              Click="MoveRowDown_Click"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Description"
                                     Binding="{Binding Description, UpdateSourceTrigger=PropertyChanged}"

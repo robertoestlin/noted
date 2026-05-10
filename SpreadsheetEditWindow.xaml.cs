@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace Noted;
@@ -46,6 +47,23 @@ public partial class SpreadsheetEditWindow : Window
         Loaded += SpreadsheetEditWindow_Loaded;
     }
 
+    private void RowsGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        DependencyObject? dep = e.OriginalSource as DependencyObject;
+        while (dep != null && dep is not DataGridRow)
+            dep = VisualTreeHelper.GetParent(dep);
+        if (dep is DataGridRow gridRow && gridRow.Item is SpreadsheetEditRowModel model)
+            RowsGrid.SelectedItem = model;
+    }
+
+    private void RowsGridContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        int i = RowsGrid.SelectedIndex;
+        int n = _rows.Count;
+        RowsContextMoveUpItem.IsEnabled = i > 0;
+        RowsContextMoveDownItem.IsEnabled = i >= 0 && i < n - 1;
+    }
+
     private void SpreadsheetEditWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= SpreadsheetEditWindow_Loaded;
@@ -63,6 +81,12 @@ public partial class SpreadsheetEditWindow : Window
         if (!string.Equals(row.Description.Trim(), SpreadsheetEditRowModel.DefaultDescriptionLabel, StringComparison.Ordinal))
             return;
 
+        BeginEditDescriptionAndSelectAll(row);
+    }
+
+    /// <summary>Put keyboard focus on Description and select its text so the next keystroke replaces it.</summary>
+    private void BeginEditDescriptionAndSelectAll(SpreadsheetEditRowModel row)
+    {
         Dispatcher.BeginInvoke(
             DispatcherPriority.Loaded,
             new Action(() =>
@@ -92,24 +116,24 @@ public partial class SpreadsheetEditWindow : Window
             if (currentCol == null || RowsGrid.Columns.IndexOf(currentCol) != UnitPriceColumnIndex)
                 return;
 
+            var anchorRow = RowsGrid.CurrentCell.Item as SpreadsheetEditRowModel;
+
             e.Handled = true;
             RowsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
 
+            int insertIndex = _rows.Count;
+            if (anchorRow != null)
+            {
+                int idx = _rows.IndexOf(anchorRow);
+                if (idx >= 0)
+                    insertIndex = idx + 1;
+            }
             var newRow = SpreadsheetEditRowModel.CreateDefault(blankRowForTab: true);
-            newRow.PropertyChanged += Row_PropertyChanged;
-            _rows.Add(newRow);
+            _rows.Insert(insertIndex, newRow);
             RowsGrid.SelectedItem = newRow;
             RefreshSum();
 
-            Dispatcher.BeginInvoke(
-                DispatcherPriority.Loaded,
-                new Action(() =>
-                {
-                    RowsGrid.ScrollIntoView(newRow);
-                    RowsGrid.Focus();
-                    RowsGrid.CurrentCell = new DataGridCellInfo(newRow, RowsGrid.Columns[DescriptionColumnIndex]);
-                    RowsGrid.BeginEdit();
-                }));
+            BeginEditDescriptionAndSelectAll(newRow);
             return;
         }
     }
@@ -189,10 +213,29 @@ public partial class SpreadsheetEditWindow : Window
     private void AddRow_Click(object sender, RoutedEventArgs e)
     {
         var row = SpreadsheetEditRowModel.CreateDefault();
-        row.PropertyChanged += Row_PropertyChanged;
-        _rows.Add(row);
+        int insertAt = RowsGrid.SelectedItem is SpreadsheetEditRowModel sel
+            ? _rows.IndexOf(sel) + 1
+            : _rows.Count;
+        _rows.Insert(insertAt, row);
         RowsGrid.SelectedItem = row;
         RefreshSum();
+        BeginEditDescriptionAndSelectAll(row);
+    }
+
+    private void MoveRowUp_Click(object sender, RoutedEventArgs e)
+    {
+        int i = RowsGrid.SelectedIndex;
+        if (i <= 0)
+            return;
+        _rows.Move(i, i - 1);
+    }
+
+    private void MoveRowDown_Click(object sender, RoutedEventArgs e)
+    {
+        int i = RowsGrid.SelectedIndex;
+        if (i < 0 || i >= _rows.Count - 1)
+            return;
+        _rows.Move(i, i + 1);
     }
 
     private void RemoveRow_Click(object sender, RoutedEventArgs e)
