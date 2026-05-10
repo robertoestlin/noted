@@ -164,7 +164,8 @@ public partial class MainWindow
             StandupWindowTop = _standupWindowTop,
             StandupWindowWidth = _standupWindowWidth,
             StandupWindowHeight = _standupWindowHeight,
-            StandupWindowMaximized = _standupWindowMaximized
+            StandupWindowMaximized = _standupWindowMaximized,
+            CurrentDocPackageId = _docCurrentPackage?.Id ?? _pendingDocPackageId
         };
 
     private void SaveSessionState(JsonSerializerOptions options)
@@ -869,6 +870,7 @@ public partial class MainWindow
         }
         ApplyStandupWindowFromSession(s);
         _startMaximized = s.Maximized;
+        _pendingDocPackageId = string.IsNullOrEmpty(s.CurrentDocPackageId) ? null : s.CurrentDocPackageId;
     }
 
     private void SaveSearchFilesHistory(JsonSerializerOptions options)

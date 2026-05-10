@@ -2242,7 +2242,7 @@ public partial class MainWindow : Window
         try
         {
             var ownerPackage = _docPackages.FirstOrDefault(p => p.Id == packageId);
-            if (ownerPackage != null && !File.Exists(_documentationService.GetPackagePath(_backupFolder, packageId)))
+            if (ownerPackage != null && _documentationService.FindPackagePath(_backupFolder, packageId) == null)
                 _documentationService.SavePackage(_backupFolder, ownerPackage);
 
             var desiredFileName = BuildImageFileName(DateTime.Now);

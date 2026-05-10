@@ -353,6 +353,9 @@ public sealed class NotedSessionState
     public double? StandupWindowWidth { get; set; }
     public double? StandupWindowHeight { get; set; }
     public bool StandupWindowMaximized { get; set; }
+
+    /// <summary>Id of the last-selected DocPackage in Documentation mode (restored when re-entering the mode after a restart).</summary>
+    public string? CurrentDocPackageId { get; set; }
 }
 
 public sealed class StandupNoteEntry
@@ -625,12 +628,6 @@ public sealed class DocNode
     public List<DocNode> Children { get; set; } = new();
 }
 
-/// <summary>Persisted at <c>{BackupFolder}/doc-packages/_index.json</c>.</summary>
-public sealed class DocPackagesIndex
-{
-    public List<string> Order { get; set; } = new();
-    public string? CurrentId { get; set; }
-}
 
 // ---------------------------------------------------------------------------
 // Script packs (one file per pack, plain text format)

@@ -20,14 +20,16 @@ public partial class MainWindow
     private readonly DocumentationService _documentationService = new();
 
     private readonly List<DocPackage> _docPackages = new();
-    private DocPackagesIndex _docIndex = new();
     private readonly Dictionary<string, TabDocument> _docNodeDocs = new();
     private readonly Dictionary<TextEditor, string> _docEditorPackageIds = new();
     private readonly HashSet<string> _docDirtyPackageIds = new(StringComparer.Ordinal);
-    private bool _docIndexDirty;
 
     private DocPackage? _docCurrentPackage;
     private DocNode? _docCurrentNode;
+
+    /// <summary>Last-selected package id read from <c>session-state.json</c> at startup; consumed by
+    /// <see cref="LoadDocumentationFromDisk"/> the first time Documentation mode is opened.</summary>
+    private string? _pendingDocPackageId;
 
     private ComboBox? _docPackageCombo;
     private TreeView? _docTree;
@@ -38,22 +40,16 @@ public partial class MainWindow
     private void LoadDocumentationFromDisk()
     {
         _docPackages.Clear();
-        _docIndex = _documentationService.LoadIndex(_backupFolder);
         var loaded = _documentationService.LoadAllPackages(_backupFolder);
-        var byId = loaded.ToDictionary(p => p.Id, StringComparer.Ordinal);
-        foreach (var id in _docIndex.Order)
-        {
-            if (byId.TryGetValue(id, out var pkg))
-            {
-                _docPackages.Add(pkg);
-                byId.Remove(id);
-            }
-        }
-        foreach (var pkg in byId.Values)
+        foreach (var pkg in loaded.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(p => p.Id, StringComparer.Ordinal))
             _docPackages.Add(pkg);
 
-        if (_docIndex.CurrentId is { Length: > 0 } currentId)
-            _docCurrentPackage = _docPackages.FirstOrDefault(p => p.Id == currentId);
+        if (_docCurrentPackage == null && !string.IsNullOrEmpty(_pendingDocPackageId))
+        {
+            _docCurrentPackage = _docPackages.FirstOrDefault(p => p.Id == _pendingDocPackageId);
+            _pendingDocPackageId = null;
+        }
         if (_docCurrentPackage == null && _docPackages.Count > 0)
             _docCurrentPackage = _docPackages[0];
 
@@ -71,7 +67,7 @@ public partial class MainWindow
         var docBody = new Grid();
         Grid.SetRow(docBody, 0);
 
-        if (_docIndex.Order.Count == 0 && _docPackages.Count == 0)
+        if (_docPackages.Count == 0)
             LoadDocumentationFromDisk();
 
         // Empty state
@@ -219,8 +215,6 @@ public partial class MainWindow
         FlushActiveDocPageText();
 
         _docCurrentPackage = pkg;
-        _docIndex.CurrentId = pkg.Id;
-        MarkDocIndexDirty();
         SyncDocCurrentNodeFromPackage();
         RefreshDocTree();
         ShowActiveDocPageEditor();
@@ -522,8 +516,6 @@ public partial class MainWindow
         _docCurrentPackage = pkg;
         pkg.CurrentNodeId = targetNode.Id;
         MarkDocPackageDirty(pkg);
-        _docIndex.CurrentId = pkg.Id;
-        MarkDocIndexDirty();
         RefreshDocPackageCombo();
 
         _docCurrentNode = targetNode;
@@ -538,8 +530,6 @@ public partial class MainWindow
     {
         FlushActiveDocPageText();
         _docCurrentPackage = pkg;
-        _docIndex.CurrentId = pkg.Id;
-        MarkDocIndexDirty();
         RefreshDocPackageCombo();
         RefreshDocTree();
         ShowActiveDocPageEditor();
@@ -603,12 +593,9 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(name)) return;
         var pkg = new DocPackage { Id = Guid.NewGuid().ToString("N"), Name = name.Trim() };
         _docPackages.Add(pkg);
-        _docIndex.Order.Add(pkg.Id);
-        _docIndex.CurrentId = pkg.Id;
         _docCurrentPackage = pkg;
         _docCurrentNode = null;
         MarkDocPackageDirty(pkg);
-        MarkDocIndexDirty();
         RefreshDocumentationView();
     }
 
@@ -731,7 +718,6 @@ public partial class MainWindow
     }
 
     private void MarkDocPackageDirty(DocPackage pkg) => _docDirtyPackageIds.Add(pkg.Id);
-    private void MarkDocIndexDirty() => _docIndexDirty = true;
 
     /// <summary>True when the given editor belongs to a Documentation page; the package id routes inline image lookups
     /// to the package's <c>.docp</c> zip rather than the global <c>{BackupFolder}/images/</c> folder.</summary>
@@ -771,22 +757,15 @@ public partial class MainWindow
     private void SaveDirtyDocPackages()
     {
         FlushActiveDocPageText();
-        if (_docDirtyPackageIds.Count > 0)
+        if (_docDirtyPackageIds.Count == 0)
+            return;
+        foreach (var id in _docDirtyPackageIds)
         {
-            foreach (var id in _docDirtyPackageIds)
-            {
-                var pkg = _docPackages.FirstOrDefault(p => p.Id == id);
-                if (pkg == null) continue;
-                _documentationService.SavePackage(_backupFolder, pkg);
-            }
-            _docDirtyPackageIds.Clear();
+            var pkg = _docPackages.FirstOrDefault(p => p.Id == id);
+            if (pkg == null) continue;
+            _documentationService.SavePackage(_backupFolder, pkg);
         }
-        if (_docIndexDirty)
-        {
-            _docIndex.Order = _docPackages.Select(p => p.Id).ToList();
-            _documentationService.SaveIndex(_backupFolder, _docIndex);
-            _docIndexDirty = false;
-        }
+        _docDirtyPackageIds.Clear();
     }
 
     // ── Markdown transformers ───────────────────────────────────────────────

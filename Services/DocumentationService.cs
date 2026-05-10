@@ -8,22 +8,26 @@ using Noted.Models;
 namespace Noted.Services;
 
 /// <summary>
-/// Persists Documentation packages under <c>{BackupFolder}/doc-packages/</c> as <c>.docp</c> zip files.
+/// Persists Documentation packages under <c>{BackupFolder}/doc-packages/</c> as <c>.docp</c> zip files
+/// named <c>noted-{slug}.docp</c> (slug is derived from <see cref="DocPackage.Name"/>).
 /// Each <c>.docp</c> is a zip that contains:
 ///   <list type="bullet">
 ///     <item><c>package.json</c> — the <see cref="DocPackage"/> tree (page <see cref="DocNode.Content"/> emptied; stored separately).</item>
 ///     <item><c>pages/{nodeId}.md</c> — one plain-text file per Page/SubPage node.</item>
 ///     <item><c>images/{filename}.png</c> — pasted images referenced by <c>^&lt;name.png&gt;</c> markers in page text.</item>
 ///   </list>
-/// Legacy <c>doc-package-{Id}.json</c> files are still read; they are migrated to <c>.docp</c> on the next save.
+/// Legacy filenames (<c>doc-package-{Id}.docp</c>, <c>doc-package-{Id}.json</c>) are still read; they are
+/// migrated to <c>noted-{slug}.docp</c> on the next save. The legacy <c>_index.json</c> file is no longer
+/// written and is deleted opportunistically.
 /// </summary>
 public sealed class DocumentationService
 {
     public const string SubfolderName = "doc-packages";
-    public const string IndexFileName = "_index.json";
-    public const string PackageFilePrefix = "doc-package-";
+    public const string PackageFilePrefix = "noted-";
     public const string PackageFileExtension = ".docp";
     public const string LegacyPackageFileExtension = ".json";
+    public const string LegacyPackageFilePrefix = "doc-package-";
+    public const string LegacyIndexFileName = "_index.json";
 
     public const string ZipPackageEntryName = "package.json";
     public const string ZipPagesFolder = "pages/";
@@ -37,14 +41,53 @@ public sealed class DocumentationService
     public string GetSubfolderPath(string backupFolder)
         => Path.Combine(backupFolder, SubfolderName);
 
-    public string GetIndexPath(string backupFolder)
-        => Path.Combine(GetSubfolderPath(backupFolder), IndexFileName);
+    /// <summary>Resolves the canonical <c>noted-{slug}.docp</c> path for <paramref name="package"/>, picking a numeric
+    /// suffix if a different package already occupies the slug.</summary>
+    public string GetPackagePath(string backupFolder, DocPackage package)
+    {
+        var folder = GetSubfolderPath(backupFolder);
+        var slug = SlugifyPackageName(package.Name);
+        var defaultPath = Path.Combine(folder, PackageFilePrefix + slug + PackageFileExtension);
 
-    public string GetPackagePath(string backupFolder, string packageId)
-        => Path.Combine(GetSubfolderPath(backupFolder), PackageFilePrefix + packageId + PackageFileExtension);
+        if (!Directory.Exists(folder))
+            return defaultPath;
 
-    public string GetLegacyPackagePath(string backupFolder, string packageId)
-        => Path.Combine(GetSubfolderPath(backupFolder), PackageFilePrefix + packageId + LegacyPackageFileExtension);
+        if (!File.Exists(defaultPath) || PathOccupiedByPackage(defaultPath, package.Id))
+            return defaultPath;
+
+        for (int suffix = 2; suffix < 10000; suffix++)
+        {
+            var candidate = Path.Combine(folder, $"{PackageFilePrefix}{slug}-{suffix}{PackageFileExtension}");
+            if (!File.Exists(candidate) || PathOccupiedByPackage(candidate, package.Id))
+                return candidate;
+        }
+        return defaultPath;
+    }
+
+    /// <summary>Finds the existing <c>.docp</c> (or legacy <c>.json</c>) file whose <c>package.json</c> id matches
+    /// <paramref name="packageId"/>. Returns null when no file owns that id.</summary>
+    public string? FindPackagePath(string backupFolder, string packageId)
+    {
+        var folder = GetSubfolderPath(backupFolder);
+        if (string.IsNullOrEmpty(packageId) || !Directory.Exists(folder))
+            return null;
+
+        foreach (var file in Directory.EnumerateFiles(folder, "*" + PackageFileExtension))
+        {
+            if (string.Equals(TryReadPackageIdFromZip(file), packageId, StringComparison.OrdinalIgnoreCase))
+                return file;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(folder, "*" + LegacyPackageFileExtension))
+        {
+            if (IsLegacyIndexFile(file))
+                continue;
+            var pkg = TryLoadLegacyJsonPackage(file);
+            if (pkg != null && string.Equals(pkg.Id, packageId, StringComparison.OrdinalIgnoreCase))
+                return file;
+        }
+        return null;
+    }
 
     public void EnsureFolderExists(string backupFolder)
     {
@@ -74,7 +117,7 @@ public sealed class DocumentationService
         foreach (var file in Directory.EnumerateFiles(folder, "*" + LegacyPackageFileExtension)
                      .OrderBy(p => p, StringComparer.Ordinal))
         {
-            if (IsPackagesIndexFile(file))
+            if (IsLegacyIndexFile(file))
                 continue;
             var pkg = TryLoadLegacyJsonPackage(file);
             if (pkg is null || string.IsNullOrEmpty(pkg.Id))
@@ -88,79 +131,55 @@ public sealed class DocumentationService
         return result;
     }
 
-    public DocPackagesIndex LoadIndex(string backupFolder)
-    {
-        var path = GetIndexPath(backupFolder);
-        if (!File.Exists(path))
-            return new DocPackagesIndex();
-        try
-        {
-            return JsonSerializer.Deserialize<DocPackagesIndex>(File.ReadAllText(path)) ?? new DocPackagesIndex();
-        }
-        catch
-        {
-            return new DocPackagesIndex();
-        }
-    }
-
     public void SavePackage(string backupFolder, DocPackage package)
     {
         if (string.IsNullOrEmpty(package.Id))
             return;
         EnsureFolderExists(backupFolder);
-        var path = GetPackagePath(backupFolder, package.Id);
-        WritePackageZip(path, package);
 
-        var legacyPath = GetLegacyPackagePath(backupFolder, package.Id);
-        if (File.Exists(legacyPath))
+        var existingPath = FindPackagePath(backupFolder, package.Id);
+        var desiredPath = GetPackagePath(backupFolder, package);
+
+        bool isLegacyJsonExisting = existingPath != null
+            && existingPath.EndsWith(LegacyPackageFileExtension, StringComparison.OrdinalIgnoreCase);
+
+        if (existingPath != null
+            && !isLegacyJsonExisting
+            && !PathEquals(existingPath, desiredPath))
         {
-            try { File.Delete(legacyPath); }
+            try
+            {
+                File.Move(existingPath, desiredPath, overwrite: false);
+                existingPath = desiredPath;
+            }
+            catch
+            {
+                // Fall through; WritePackageZip will create at desiredPath and we'll delete existingPath after.
+            }
+        }
+
+        WritePackageZip(desiredPath, package);
+
+        if (existingPath != null
+            && !PathEquals(existingPath, desiredPath)
+            && File.Exists(existingPath))
+        {
+            try { File.Delete(existingPath); }
             catch { /* best effort */ }
         }
-    }
 
-    public void SaveIndex(string backupFolder, DocPackagesIndex index)
-    {
-        EnsureFolderExists(backupFolder);
-        var path = GetIndexPath(backupFolder);
-        var json = JsonSerializer.Serialize(index, WriteOptions);
-        WindowSettingsStore.WriteUtf8IfSemanticJsonChanged(path, json);
+        DeleteLegacyIndexFileIfPresent(backupFolder);
     }
 
     public void DeletePackage(string backupFolder, string packageId)
     {
         if (string.IsNullOrEmpty(packageId))
             return;
-        var folder = GetSubfolderPath(backupFolder);
-        if (!Directory.Exists(folder))
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null)
             return;
-
-        var docpPath = GetPackagePath(backupFolder, packageId);
-        if (File.Exists(docpPath))
-        {
-            try { File.Delete(docpPath); }
-            catch { /* best effort */ }
-        }
-
-        try
-        {
-            foreach (var file in Directory.EnumerateFiles(folder, "*" + LegacyPackageFileExtension))
-            {
-                if (IsPackagesIndexFile(file))
-                    continue;
-                var pkg = TryLoadLegacyJsonPackage(file);
-                if (pkg is null)
-                    continue;
-                if (!string.Equals(pkg.Id, packageId, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                try { File.Delete(file); }
-                catch { /* best effort */ }
-            }
-        }
-        catch
-        {
-            // Best effort.
-        }
+        try { File.Delete(path); }
+        catch { /* best effort */ }
     }
 
     /// <summary>Reads an image entry stored under <c>images/{fileName}</c> inside the package's <c>.docp</c> zip.</summary>
@@ -168,8 +187,8 @@ public sealed class DocumentationService
     {
         if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
             return null;
-        var path = GetPackagePath(backupFolder, packageId);
-        if (!File.Exists(path))
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
             return null;
         try
         {
@@ -194,8 +213,8 @@ public sealed class DocumentationService
     {
         if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
             return false;
-        var path = GetPackagePath(backupFolder, packageId);
-        if (!File.Exists(path))
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
             return false;
         try
         {
@@ -215,8 +234,8 @@ public sealed class DocumentationService
         if (string.IsNullOrEmpty(desiredFileName))
             return desiredFileName;
 
-        var path = GetPackagePath(backupFolder, packageId);
-        if (!File.Exists(path))
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
             return desiredFileName;
 
         try
@@ -232,33 +251,66 @@ public sealed class DocumentationService
     }
 
     /// <summary>Writes (or overwrites) <paramref name="bytes"/> as <c>images/{fileName}</c> inside the package zip.
-    /// Creates the zip if it doesn't exist yet (preserving any existing package state).</summary>
+    /// The zip must already exist (call <see cref="SavePackage"/> first if it doesn't).</summary>
     public void WriteImage(string backupFolder, string packageId, string fileName, byte[] bytes)
     {
         if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
             return;
-        EnsureFolderExists(backupFolder);
-        var path = GetPackagePath(backupFolder, packageId);
-
-        if (!File.Exists(path))
-        {
-            using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
-            using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
-            WriteZipEntryBytes(zip, ZipImagesFolder + fileName, bytes);
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
             return;
-        }
 
-        using (var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-        using (var zip = new ZipArchive(fs, ZipArchiveMode.Update))
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var zip = new ZipArchive(fs, ZipArchiveMode.Update);
+        zip.GetEntry(ZipImagesFolder + fileName)?.Delete();
+        WriteZipEntryBytes(zip, ZipImagesFolder + fileName, bytes);
+    }
+
+    static bool IsLegacyIndexFile(string filePath)
+        => string.Equals(Path.GetFileName(filePath), LegacyIndexFileName, StringComparison.OrdinalIgnoreCase);
+
+    static bool PathEquals(string a, string b)
+    {
+        try
         {
-            var existing = zip.GetEntry(ZipImagesFolder + fileName);
-            existing?.Delete();
-            WriteZipEntryBytes(zip, ZipImagesFolder + fileName, bytes);
+            return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
         }
     }
 
-    static bool IsPackagesIndexFile(string filePath)
-        => string.Equals(Path.GetFileName(filePath), IndexFileName, StringComparison.OrdinalIgnoreCase);
+    bool PathOccupiedByPackage(string filePath, string packageId)
+    {
+        var occupantId = TryReadPackageIdFromZip(filePath);
+        return string.Equals(occupantId, packageId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string? TryReadPackageIdFromZip(string filePath)
+    {
+        try
+        {
+            using var fs = File.OpenRead(filePath);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            var entry = zip.GetEntry(ZipPackageEntryName);
+            if (entry == null)
+                return null;
+            using var stream = entry.Open();
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            using var doc = JsonDocument.Parse(reader.ReadToEnd());
+            if (doc.RootElement.TryGetProperty("Id", out var idElement)
+                && idElement.ValueKind == JsonValueKind.String)
+            {
+                return idElement.GetString();
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     static DocPackage? TryLoadLegacyJsonPackage(string filePath)
     {
@@ -324,9 +376,6 @@ public sealed class DocumentationService
 
     static void WritePackageZip(string path, DocPackage package)
     {
-        var pageIds = new HashSet<string>(StringComparer.Ordinal);
-        CollectPageIds(package.Nodes, pageIds);
-
         var packageJson = JsonSerializer.Serialize(BuildSkeletonPackage(package), WriteOptions);
 
         var pageContents = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -401,16 +450,6 @@ public sealed class DocumentationService
         return desiredFileName;
     }
 
-    static void CollectPageIds(IEnumerable<DocNode> nodes, HashSet<string> ids)
-    {
-        foreach (var node in nodes)
-        {
-            if (node.Kind is DocNodeKind.Page or DocNodeKind.SubPage)
-                ids.Add(node.Id);
-            CollectPageIds(node.Children, ids);
-        }
-    }
-
     static void CollectPageContents(IEnumerable<DocNode> nodes, Dictionary<string, string> contents)
     {
         foreach (var node in nodes)
@@ -441,4 +480,36 @@ public sealed class DocumentationService
             Metadata = source.Metadata,
             Children = source.Children.Select(BuildSkeletonNode).ToList()
         };
+
+    /// <summary>Filename-safe lowercase slug: invalid characters and whitespace collapse to single dashes; empty → "untitled".</summary>
+    public static string SlugifyPackageName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "untitled";
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(name.Length);
+        foreach (var c in name.Trim().ToLowerInvariant())
+        {
+            if (Array.IndexOf(invalid, c) >= 0 || char.IsWhiteSpace(c) || c == '.')
+                sb.Append('-');
+            else
+                sb.Append(c);
+        }
+        var slug = sb.ToString();
+        while (slug.Contains("--"))
+            slug = slug.Replace("--", "-");
+        slug = slug.Trim('-');
+        return slug.Length == 0 ? "untitled" : slug;
+    }
+
+    void DeleteLegacyIndexFileIfPresent(string backupFolder)
+    {
+        var folder = GetSubfolderPath(backupFolder);
+        var indexPath = Path.Combine(folder, LegacyIndexFileName);
+        if (!File.Exists(indexPath))
+            return;
+        try { File.Delete(indexPath); }
+        catch { /* best effort */ }
+    }
 }
