@@ -392,13 +392,6 @@ public partial class MainWindow
         return 1 + currency.Length;
     }
 
-    private static string SpreadsheetFormatTotalHeaderCell(int numericWidth, int totalColumnWidth, string currency)
-    {
-        int minTail = SpreadsheetTotalCurrencySuffixWidth(currency);
-        int tail = Math.Max(minTail, totalColumnWidth - numericWidth);
-        return PadSpreadsheetNumericCell("Total", numericWidth) + new string(' ', tail);
-    }
-
     private static string SpreadsheetFormatTotalDataCell(
         string numericText, int numericWidth, int totalColumnWidth, string currency)
     {
@@ -421,11 +414,15 @@ public partial class MainWindow
         return PadSpreadsheetNumericCell(core, totalColumnWidth);
     }
 
-    /// <summary><c>|description|qty|unit|total|</c> — numeric columns right-aligned inside fixed widths.</summary>
+    /// <summary><c>|description|qty|unit|total|</c> — qty/unit/total values right-aligned; Total header uses <paramref name="leftAlignTotalColumn"/>.</summary>
     private static string FormatSpreadsheetPipeRow(
         string c0, string c1, string c2, string c3,
-        int w0, int w1, int w2, int w3)
+        int w0, int w1, int w2, int w3,
+        bool leftAlignTotalColumn = false)
     {
+        string c3Padded = leftAlignTotalColumn
+            ? PadSpreadsheetCellLeft(c3, w3)
+            : PadSpreadsheetNumericCell(c3, w3);
         return string.Concat(
             "|",
             PadSpreadsheetCellLeft(c0, w0),
@@ -434,7 +431,7 @@ public partial class MainWindow
             "|",
             PadSpreadsheetNumericCell(c2, w2),
             "|",
-            PadSpreadsheetNumericCell(c3, w3),
+            c3Padded,
             "|");
     }
 
@@ -814,12 +811,19 @@ public partial class MainWindow
             if (parts.Count < 4)
                 return false;
 
-            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[1], out _))
+            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[1], out var qty))
                 return false;
-            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[2], out _))
+            if (!SpreadsheetAmountHelpers.TryParseDecimal(parts[2], out var unit))
                 return false;
-            if (!SpreadsheetAmountHelpers.TryParseDecimal(
-                    SpreadsheetAmountHelpers.TrimTrailingCurrencyToken(parts[3].Trim()), out _))
+
+            string totalParsed = SpreadsheetAmountHelpers.TrimTrailingCurrencyToken(parts[3].Trim());
+            if (SpreadsheetAmountHelpers.TryParseDecimal(totalParsed, out _))
+                continue;
+
+            // Blank total: accept when qty × unit is defined (sync will fill the cell).
+            if (!string.IsNullOrWhiteSpace(parts[3]))
+                return false;
+            if (!SpreadsheetAmountHelpers.TrySafeMultiply(qty, unit, out _))
                 return false;
         }
 
@@ -1383,8 +1387,9 @@ public partial class MainWindow
         string tableMargin = ob.IsPipeDelimited ? "" : SpreadsheetPresentationLeftMargin;
         string newHeader = prefix + tableMargin + FormatSpreadsheetPipeRow(
             "Description", "Quantity", "Unit price",
-            SpreadsheetFormatTotalHeaderCell(totalNumericWidth, totalColumnWidth, currency),
-            w0, w1, w2, totalColumnWidth);
+            "Total",
+            w0, w1, w2, totalColumnWidth,
+            leftAlignTotalColumn: true);
         if (string.Equals(old, newHeader, StringComparison.Ordinal))
             return false;
 
@@ -1873,8 +1878,9 @@ public partial class MainWindow
         sb.Append(SpreadsheetPresentationLeftMargin);
         sb.Append(FormatSpreadsheetPipeRow(
             "Description", "Quantity", "Unit price",
-            SpreadsheetFormatTotalHeaderCell(w3Num, w3, currency),
-            w0, w1, w2, w3));
+            "Total",
+            w0, w1, w2, w3,
+            leftAlignTotalColumn: true));
         sb.Append(nl);
         sb.Append(nl);
 
