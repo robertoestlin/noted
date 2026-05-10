@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Threading;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.TextFormatting;
@@ -11,12 +12,44 @@ using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Rendering;
 using ICSharpCode.AvalonEdit.Utils;
+using Noted.Models;
+using System.Windows.Input;
 
 namespace Noted;
 
 public partial class MainWindow
 {
     private bool _spreadsheetSumSyncSuppress;
+    private readonly HashSet<TextEditor> _pendingSpreadsheetSumSyncEditors = [];
+    private bool _spreadsheetSumSyncDispatcherPosted;
+
+    /// <summary>
+    /// Runs spreadsheet sum/layout sync after AvalonEdit completes the current logical edit.
+    /// Enter applies newline + indentation in one <see cref="System.Windows.Input.InputManager"/> tick; synchronous
+    /// <see cref="ICSharpCode.AvalonEdit.TextEditor.TextChanged"/> would otherwise invoke sync mid-update and can freeze the UI.
+    /// </summary>
+    private void ScheduleTrySyncSpreadsheetSums(TextEditor editor)
+    {
+        if (_spreadsheetSumSyncSuppress)
+            return;
+        _pendingSpreadsheetSumSyncEditors.Add(editor);
+        if (_spreadsheetSumSyncDispatcherPosted)
+            return;
+        _spreadsheetSumSyncDispatcherPosted = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, FlushPendingSpreadsheetSumSyncs);
+    }
+
+    private void FlushPendingSpreadsheetSumSyncs()
+    {
+        _spreadsheetSumSyncDispatcherPosted = false;
+        if (_pendingSpreadsheetSumSyncEditors.Count == 0)
+            return;
+        var editors = new TextEditor[_pendingSpreadsheetSumSyncEditors.Count];
+        _pendingSpreadsheetSumSyncEditors.CopyTo(editors);
+        _pendingSpreadsheetSumSyncEditors.Clear();
+        foreach (var ed in editors)
+            TrySyncSpreadsheetSums(ed);
+    }
 
     /// <summary>Spaces between padded columns in legacy (non-pipe) rows.</summary>
     private const string SpreadsheetColumnGap = "  ";
@@ -824,6 +857,47 @@ public partial class MainWindow
         editor.TextArea.Caret.Offset = newCaret;
         editor.Select(newCaret, 0);
         editor.TextArea.TextView.Redraw();
+    }
+
+    /// <summary>
+    /// With spreadsheet rendering on, the fenced block is edited via Edit spreadsheet; Enter must not insert
+    /// newlines inside the fence (which would shift rows and confuse sum/layout sync). The only exception is
+    /// inserting a newline after the closing <c>```</c> fence — same rule as
+    /// <see cref="SpreadsheetReadOnlySectionProvider.CanInsert"/>.
+    /// </summary>
+    private bool TrySuppressEnterInRenderedSpreadsheet(TabDocument doc, KeyEventArgs e)
+    {
+        if (!_renderSpreadsheet)
+            return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is not (Key.Enter or Key.Return or Key.LineFeed))
+            return false;
+
+        // Match AvalonEdit newline bindings: plain Enter and Shift+Enter.
+        ModifierKeys mods = Keyboard.Modifiers;
+        if (mods != ModifierKeys.None && mods != ModifierKeys.Shift)
+            return false;
+
+        var editor = doc.Editor;
+        if (editor.Document == null)
+            return false;
+
+        var document = editor.Document;
+        int caret = editor.CaretOffset;
+        int caretForLineLookup = caret == document.TextLength ? Math.Max(0, document.TextLength - 1) : caret;
+        if (!TryGetSpreadsheetBlockSpanContainingOffset(document, caret, out _, out _))
+            return false;
+
+        var line = document.GetLineByOffset(caretForLineLookup);
+        if (IsBareMarkdownCloseFenceLine(document, line) && !IsSpreadsheetOpenFenceLine(document, line)
+            && caret >= line.Offset + line.Length)
+        {
+            return false;
+        }
+
+        e.Handled = true;
+        return true;
     }
 
     /// <param name="anchorOffsetForActiveBlock">
@@ -1979,6 +2053,15 @@ public partial class MainWindow
             var line = doc.GetLineByOffset(offset == doc.TextLength ? Math.Max(0, doc.TextLength - 1) : offset);
             if (!DocumentLineShowsSpreadsheetChrome(doc, line))
                 return true;
+
+            // The closing ``` line is still "chrome" for painting, but the caret at the end of that line
+            // (or EOF with no trailing newline) must accept Enter to open a new line after the block.
+            if (IsBareMarkdownCloseFenceLine(doc, line) && !IsSpreadsheetOpenFenceLine(doc, line)
+                && offset >= line.Offset + line.Length)
+            {
+                return true;
+            }
+
             return false;
         }
 

@@ -1457,7 +1457,7 @@ public partial class MainWindow : Window
             MarkDirty(doc);
             RedrawHighlight(doc);
             HideAssigneeHoverTooltip();
-            TrySyncSpreadsheetSums(editor);
+            ScheduleTrySyncSpreadsheetSums(editor);
         };
         editor.TextArea.Caret.PositionChanged += (_, _) =>
         {
@@ -4115,6 +4115,9 @@ public partial class MainWindow : Window
     private void HandleEditorPreviewKeyDown(TabDocument doc, KeyEventArgs e)
     {
         if (doc.TagFeaturesEnabled && TryInsertNewlineClosingTagCompletion(doc, e))
+            return;
+
+        if (TrySuppressEnterInRenderedSpreadsheet(doc, e))
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
