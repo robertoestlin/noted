@@ -62,6 +62,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _autoSaveTimer;
     private readonly DispatcherTimer _pluginAlarmTimer;
     private readonly DispatcherTimer _backupHeartbeatTimer;
+    private readonly DispatcherTimer _docSaveTimer;
+    private int _documentationSaveIntervalMinutes = DefaultDocumentationSaveIntervalMinutes;
     private DateTimeOffset _nextBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private DateTimeOffset _lastBackupHeartbeatAtLocal = DateTimeOffset.MinValue;
     private bool _uptimeHeartbeatStartupBeatWritten;
@@ -179,6 +181,9 @@ public partial class MainWindow : Window
     private static readonly Regex InlineAssigneeSuffixRegex =
         new(@"^(?<content>.*?)(?:\s*)\[(?<person>[^\[\]\r\n]+)\]\s*$", RegexOptions.Compiled);
     private const int DefaultAutoSaveSeconds = 30;
+    private const int DefaultDocumentationSaveIntervalMinutes = 1;
+    private const int MinDocumentationSaveIntervalMinutes = 1;
+    private const int MaxDocumentationSaveIntervalMinutes = 60;
     private const int DefaultUptimeHeartbeatSeconds = 300;
     private const int DefaultInitialLines = 50;
     private const int DefaultVisualLineWrapColumn = 150;
@@ -1304,12 +1309,17 @@ public partial class MainWindow : Window
         _autoSaveTimer.Tick += (_, _) => SaveSession();
         _autoSaveTimer.Tick += (_, _) => TickCoordinatedPlainTextTabSync();
         _autoSaveTimer.Tick += (_, _) => SaveDirtyLongTermNotebooks();
-        _autoSaveTimer.Tick += (_, _) => SaveDirtyDocPackages();
         _autoSaveTimer.Start();
         _pluginAlarmTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
         _pluginAlarmTimer.Tick += (_, _) => CheckPluginAlarms();
         _backupHeartbeatTimer = new DispatcherTimer();
         _backupHeartbeatTimer.Tick += (_, _) => HandleBackupHeartbeatTick();
+        _docSaveTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(_documentationSaveIntervalMinutes)
+        };
+        _docSaveTimer.Tick += (_, _) => SaveDirtyDocPackages();
+        _docSaveTimer.Start();
 
         // Restore window position/size, then session
         LoadWindowSettings();
@@ -1507,7 +1517,7 @@ public partial class MainWindow : Window
         editor.Options.HighlightCurrentLine = false;
         editor.TextArea.TextView.ElementGenerators.Add(new ImageLineElementGenerator(
             (line, marker) => CreateInlineImageElement(editor, line.LineNumber, marker),
-            marker => _showInlineImages && CanRenderInlineImageLine(marker)));
+            marker => _showInlineImages && CanRenderInlineImageLine(editor, marker)));
         editor.TextArea.TextView.LineTransformers.Add(new HorizontalRuleTextMaskingTransformer(() => _showHorizontalRuler));
         editor.TextArea.TextView.LineTransformers.Add(new FancyBulletTextMaskingTransformer(() => _fancyBulletsEnabled));
         editor.TextArea.TextView.LineTransformers.Add(new SmileyTextMaskingTransformer(() => _showSmileys));
@@ -1824,9 +1834,13 @@ public partial class MainWindow : Window
         };
     }
 
-    private bool TryGetInlineImageSource(string fileName, out BitmapSource imageSource)
+    private bool TryGetInlineImageSource(TextEditor editor, string fileName, out BitmapSource imageSource)
     {
         imageSource = null!;
+
+        if (TryGetDocPackageIdForEditor(editor, out var packageId))
+            return TryGetDocPackageInlineImageSource(packageId, fileName, out imageSource);
+
         if (_inlineImageCache.TryGetValue(fileName, out var cached))
         {
             imageSource = cached;
@@ -1859,6 +1873,42 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool TryGetDocPackageInlineImageSource(string packageId, string fileName, out BitmapSource imageSource)
+    {
+        imageSource = null!;
+        var cacheKey = BuildDocPackageImageCacheKey(packageId, fileName);
+        if (_inlineImageCache.TryGetValue(cacheKey, out var cached))
+        {
+            imageSource = cached;
+            return true;
+        }
+
+        var bytes = _documentationService.TryReadImage(_backupFolder, packageId, fileName);
+        if (bytes == null)
+            return false;
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.StreamSource = new MemoryStream(bytes);
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            _inlineImageCache[cacheKey] = bitmap;
+            imageSource = bitmap;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string BuildDocPackageImageCacheKey(string packageId, string fileName)
+        => "docp:" + packageId + ":" + fileName;
+
     private bool TryRestoreInlineImageFromDeleted(string fileName)
     {
         var imagePath = Path.Combine(GetBackupImagesFolderPath(), fileName);
@@ -1881,8 +1931,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool CanRenderInlineImageLine(InlineImageMarker marker)
+    private bool CanRenderInlineImageLine(TextEditor editor, InlineImageMarker marker)
     {
+        if (TryGetDocPackageIdForEditor(editor, out var packageId))
+        {
+            if (_inlineImageCache.ContainsKey(BuildDocPackageImageCacheKey(packageId, marker.FileName)))
+                return true;
+            return _documentationService.ImageExists(_backupFolder, packageId, marker.FileName);
+        }
+
         if (_inlineImageCache.ContainsKey(marker.FileName))
             return true;
         var imagePath = Path.Combine(GetBackupImagesFolderPath(), marker.FileName);
@@ -1894,7 +1951,7 @@ public partial class MainWindow : Window
 
     private UIElement? CreateInlineImageElement(TextEditor editor, int lineNumber, InlineImageMarker marker)
     {
-        if (!TryGetInlineImageSource(marker.FileName, out var imageSource))
+        if (!TryGetInlineImageSource(editor, marker.FileName, out var imageSource))
             return null;
 
         var baseWidth = Math.Max(1.0, imageSource.Width);
@@ -2149,6 +2206,9 @@ public partial class MainWindow : Window
         if (clipboardImage == null)
             return false;
 
+        if (TryGetDocPackageIdForEditor(doc.Editor, out var packageId))
+            return TryPasteClipboardImageIntoDocPackage(doc, packageId, clipboardImage);
+
         try
         {
             var imageFolder = GetBackupImagesFolderPath();
@@ -2165,6 +2225,40 @@ public partial class MainWindow : Window
                 encoder.Save(stream);
 
             _inlineImageCache.Remove(imageFileName);
+            InsertImageMarkerLine(doc.Editor, BuildInlineImageMarkerText(imageFileName, 100));
+            doc.Editor.TextArea.TextView.Redraw();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not save image from clipboard:\n{ex.Message}", "Paste image",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private bool TryPasteClipboardImageIntoDocPackage(TabDocument doc, string packageId, BitmapSource clipboardImage)
+    {
+        try
+        {
+            var ownerPackage = _docPackages.FirstOrDefault(p => p.Id == packageId);
+            if (ownerPackage != null && !File.Exists(_documentationService.GetPackagePath(_backupFolder, packageId)))
+                _documentationService.SavePackage(_backupFolder, ownerPackage);
+
+            var desiredFileName = BuildImageFileName(DateTime.Now);
+            var imageFileName = _documentationService.EnsureUniqueImageName(_backupFolder, packageId, desiredFileName);
+
+            byte[] pngBytes;
+            using (var ms = new MemoryStream())
+            {
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(clipboardImage));
+                encoder.Save(ms);
+                pngBytes = ms.ToArray();
+            }
+
+            _documentationService.WriteImage(_backupFolder, packageId, imageFileName, pngBytes);
+            _inlineImageCache.Remove(BuildDocPackageImageCacheKey(packageId, imageFileName));
             InsertImageMarkerLine(doc.Editor, BuildInlineImageMarkerText(imageFileName, 100));
             doc.Editor.TextArea.TextView.Redraw();
             return true;
@@ -8276,6 +8370,7 @@ public partial class MainWindow : Window
         _autoSaveTimer.Stop();
         _pluginAlarmTimer.Stop();
         _backupHeartbeatTimer.Stop();
+        _docSaveTimer.Stop();
         SaveWindowSettings();
         SaveStateConfigOnExit();
         if (!_sessionSaved)

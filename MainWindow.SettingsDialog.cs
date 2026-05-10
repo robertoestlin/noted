@@ -1219,6 +1219,44 @@ public partial class MainWindow
             Content = new ScrollViewer { Content = tabsSettingsPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
         });
 
+        // --- Documentation tab ---
+        var documentationPanel = new StackPanel { Margin = new Thickness(12) };
+        documentationPanel.Children.Add(new TextBlock
+        {
+            Text = "Documentation packages are written to the backup folder as .docp zip files (text + images). They are also saved when Noted exits; this interval controls how often dirty packages are flushed in between.",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12)
+        });
+        documentationPanel.Children.Add(new TextBlock
+        {
+            Text = $"Save dirty Documentation packages every (minutes, {MinDocumentationSaveIntervalMinutes}–{MaxDocumentationSaveIntervalMinutes}):",
+            Margin = new Thickness(0, 0, 0, 4)
+        });
+        var cmbDocSaveMinutes = new ComboBox
+        {
+            Width = 100,
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        for (int m = MinDocumentationSaveIntervalMinutes; m <= MaxDocumentationSaveIntervalMinutes; m++)
+            cmbDocSaveMinutes.Items.Add(new ComboBoxItem { Content = m.ToString(), Tag = m });
+        var currentDocSaveMinutes = _documentationSaveIntervalMinutes;
+        foreach (ComboBoxItem item in cmbDocSaveMinutes.Items)
+        {
+            if (item.Tag is int tag && tag == currentDocSaveMinutes)
+            {
+                cmbDocSaveMinutes.SelectedItem = item;
+                break;
+            }
+        }
+        if (cmbDocSaveMinutes.SelectedItem == null && cmbDocSaveMinutes.Items.Count > 0)
+            cmbDocSaveMinutes.SelectedIndex = 0;
+        documentationPanel.Children.Add(cmbDocSaveMinutes);
+        tabControl.Items.Add(new TabItem
+        {
+            Header = "Documentation",
+            Content = new ScrollViewer { Content = documentationPanel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }
+        });
+
         // --- Task Panel tab ---
         var workingTaskAreas = CloneTaskAreas(_taskAreas);
         if (workingTaskAreas.Count == 0)
@@ -2125,6 +2163,8 @@ public partial class MainWindow
                     && !string.IsNullOrWhiteSpace(_cloudSyncTabsPlainTextInFolder);
                 _lastCloudSaveUtc = GetLatestBackupWriteUtcOrMin(_cloudBackupFolder);
                 _autoSaveTimer.Interval = TimeSpan.FromSeconds(secs);
+                if (cmbDocSaveMinutes.SelectedItem is ComboBoxItem docSaveItem && docSaveItem.Tag is int docSaveMinutes)
+                    ApplyDocumentationSaveIntervalFromSettings(docSaveMinutes);
                 _uptimeHeartbeatSeconds = uptimeHeartbeatSeconds;
                 _writeUptimeHeartbeatInNoted = chkWriteUptimeHeartbeatInNoted.IsChecked == true;
                 _useStandaloneHeartbeatApp = chkUseStandaloneHeartbeatApp.IsChecked == true;

@@ -22,6 +22,7 @@ public partial class MainWindow
     private readonly List<DocPackage> _docPackages = new();
     private DocPackagesIndex _docIndex = new();
     private readonly Dictionary<string, TabDocument> _docNodeDocs = new();
+    private readonly Dictionary<TextEditor, string> _docEditorPackageIds = new();
     private readonly HashSet<string> _docDirtyPackageIds = new(StringComparer.Ordinal);
     private bool _docIndexDirty;
 
@@ -363,6 +364,10 @@ public partial class MainWindow
         var editor = CreateEditor(addTagTextMaskingTransformer: false);
         editor.Text = node.Content ?? string.Empty;
 
+        var owningPackage = FindDocPackageOwningNode(node);
+        if (owningPackage != null)
+            _docEditorPackageIds[editor] = owningPackage.Id;
+
         var doc = new TabDocument
         {
             Header = node.Name,
@@ -656,7 +661,11 @@ public partial class MainWindow
             RemoveDocNodeFromTree(_docCurrentPackage.Nodes, node);
 
         foreach (var id in CollectDocNodeIds(node))
+        {
+            if (_docNodeDocs.TryGetValue(id, out var docToRemove) && docToRemove.Editor != null)
+                _docEditorPackageIds.Remove(docToRemove.Editor);
             _docNodeDocs.Remove(id);
+        }
 
         if (_docCurrentNode != null && CollectDocNodeIds(node).Any(id => id == _docCurrentNode.Id))
             _docCurrentNode = FirstPageNode(_docCurrentPackage.Nodes);
@@ -723,6 +732,41 @@ public partial class MainWindow
 
     private void MarkDocPackageDirty(DocPackage pkg) => _docDirtyPackageIds.Add(pkg.Id);
     private void MarkDocIndexDirty() => _docIndexDirty = true;
+
+    /// <summary>True when the given editor belongs to a Documentation page; the package id routes inline image lookups
+    /// to the package's <c>.docp</c> zip rather than the global <c>{BackupFolder}/images/</c> folder.</summary>
+    private bool TryGetDocPackageIdForEditor(TextEditor? editor,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? packageId)
+    {
+        packageId = null;
+        if (editor == null) return false;
+        if (_docEditorPackageIds.TryGetValue(editor, out var id) && !string.IsNullOrEmpty(id))
+        {
+            packageId = id;
+            return true;
+        }
+        return false;
+    }
+
+    private DocPackage? FindDocPackageOwningNode(DocNode node)
+    {
+        foreach (var pkg in _docPackages)
+        {
+            if (DocPackageContainsNode(pkg.Nodes, node.Id))
+                return pkg;
+        }
+        return null;
+    }
+
+    private static bool DocPackageContainsNode(IEnumerable<DocNode> nodes, string nodeId)
+    {
+        foreach (var n in nodes)
+        {
+            if (n.Id == nodeId) return true;
+            if (DocPackageContainsNode(n.Children, nodeId)) return true;
+        }
+        return false;
+    }
 
     private void SaveDirtyDocPackages()
     {

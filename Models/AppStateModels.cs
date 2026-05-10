@@ -529,8 +529,11 @@ public sealed class WindowSettings
     /// <summary>Include all <c>notebooks/*.json</c> files in cloud backup bundles (default true).</summary>
     public bool? BackupAdditionalNotebooks { get; set; }
 
-    /// <summary>Include all <c>doc-packages/*.json</c> files in cloud backup bundles (default true).</summary>
+    /// <summary>Include all <c>doc-packages/*.docp</c> (and legacy <c>*.json</c>) files in cloud backup bundles (default true).</summary>
     public bool? BackupAdditionalDocPackages { get; set; }
+
+    /// <summary>How often (in minutes) to write dirty Documentation packages to the backup folder. Default 1; 0 disables interval saves (still saved on exit).</summary>
+    public int? DocumentationSaveIntervalMinutes { get; set; }
 }
 
 // ---------------------------------------------------------------------------
@@ -593,7 +596,9 @@ public enum DocNodeKind
     SubPage = 3
 }
 
-/// <summary>Serialized JSON under <c>{BackupFolder}/doc-packages/</c>; any <c>*.json</c> filename may be loaded as a package (except <c>_index.json</c>). Saves use <c>doc-package-{Id}.json</c>.</summary>
+/// <summary>Persisted as <c>{BackupFolder}/doc-packages/doc-package-{Id}.docp</c> — a zip containing
+/// <c>package.json</c> (this tree, with page <c>Content</c> emptied), <c>pages/{nodeId}.md</c> per page,
+/// and <c>images/{filename}.png</c> for inline images. Legacy <c>.json</c> files are still read and migrated on save.</summary>
 public sealed class DocPackage
 {
     public string Id { get; set; } = string.Empty;

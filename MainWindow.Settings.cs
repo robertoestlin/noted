@@ -63,6 +63,7 @@ public partial class MainWindow
         {
             LastNotedVersion = _persistedLastNotedVersionForJson,
             AutoSaveSeconds = (int)_autoSaveTimer.Interval.TotalSeconds,
+            DocumentationSaveIntervalMinutes = _documentationSaveIntervalMinutes,
             InitialLines = _initialLines,
             FontFamily = _fontFamily,
             FontSize = _fontSize,
@@ -1170,6 +1171,7 @@ public partial class MainWindow
     {
         if (state.AutoSaveSeconds > 0)
             _autoSaveTimer.Interval = TimeSpan.FromSeconds(state.AutoSaveSeconds);
+        ApplyDocumentationSaveIntervalFromSettings(state.DocumentationSaveIntervalMinutes);
         if (state.InitialLines >= 1)
             _initialLines = state.InitialLines;
         if (!string.IsNullOrWhiteSpace(state.FontFamily))
@@ -1272,6 +1274,18 @@ public partial class MainWindow
 
     private static ExternalBrowserChoice NormalizeExternalBrowserChoice(ExternalBrowserChoice value)
         => Enum.IsDefined(typeof(ExternalBrowserChoice), value) ? value : ExternalBrowserChoice.Default;
+
+    private static int NormalizeDocumentationSaveIntervalMinutes(int? minutes)
+    {
+        var value = minutes ?? DefaultDocumentationSaveIntervalMinutes;
+        return Math.Clamp(value, MinDocumentationSaveIntervalMinutes, MaxDocumentationSaveIntervalMinutes);
+    }
+
+    private void ApplyDocumentationSaveIntervalFromSettings(int? minutes)
+    {
+        _documentationSaveIntervalMinutes = NormalizeDocumentationSaveIntervalMinutes(minutes);
+        _docSaveTimer.Interval = TimeSpan.FromMinutes(_documentationSaveIntervalMinutes);
+    }
 
     private void SyncExternalBrowserLauncherPreference()
         => SafeHttpUriLauncher.GetPreferredExternalBrowser = () => _externalBrowserForLinks;
