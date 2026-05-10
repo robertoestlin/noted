@@ -3118,6 +3118,22 @@ public partial class MainWindow : Window
         return null;
     }
 
+    /// <summary>
+    /// After switching back to Short-Term mode, restore keyboard focus to the active tab editor so the caret stays where it was.
+    /// Otherwise the task panel steals focus when it is visible.
+    /// </summary>
+    private void FocusActiveShortTermTabEditor()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var doc = CurrentDoc();
+            if (doc?.Editor == null)
+                return;
+            doc.Editor.Focus();
+            Keyboard.Focus(doc.Editor);
+        }, DispatcherPriority.Input);
+    }
+
     /// <summary>Returns true if the text is empty or whitespace-only (all blank lines).</summary>
     private static bool IsEffectivelyEmpty(string text)
         => string.IsNullOrWhiteSpace(text);

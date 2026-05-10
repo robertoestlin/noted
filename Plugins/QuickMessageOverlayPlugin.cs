@@ -2209,6 +2209,16 @@ public partial class MainWindow
             return;
         }
 
+        // Short-Term: Find must work when the task panel (or other chrome) has focus — editors handle via PreviewKeyDown too.
+        if (_appMode == AppMode.ShortTerm
+            && (Keyboard.Modifiers & ModifierKeys.Control) != 0
+            && (key == Key.F || key == Key.H))
+        {
+            ShowFindReplaceDialog();
+            e.Handled = true;
+            return;
+        }
+
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0
             && key == Key.O
             && MessageOverlay.Visibility != Visibility.Visible)

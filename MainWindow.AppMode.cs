@@ -201,6 +201,8 @@ public partial class MainWindow
             FocusActiveLongTermPageEditor();
         else if (mode == AppMode.Documentation)
             FocusActiveDocPageEditor();
+        else if (mode == AppMode.ShortTerm)
+            FocusActiveShortTermTabEditor();
     }
 
     /// <summary>Enables/disables tab- and task-panel-specific menu entries based on current mode.</summary>
