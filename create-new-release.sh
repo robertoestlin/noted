@@ -97,7 +97,7 @@ if [ ! -f "${ROOT}/dist/win-x64/Noted.exe" ]; then
   exit 1
 fi
 
-git add MainWindow.xaml Noted.csproj dist/win-x64/Noted.exe
+git add MainWindow.xaml Noted.csproj dist/win-x64/Noted.exe dist/doc-packages/
 git commit -m "Publish binary for Noted ${NEW}"
 if [ "${FORCE_PUSH_TAG}" -eq 1 ]; then
   git tag -f "${TAG}"

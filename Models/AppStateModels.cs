@@ -593,7 +593,7 @@ public enum DocNodeKind
     SubPage = 3
 }
 
-/// <summary>Persisted under <c>{BackupFolder}/doc-packages/doc-package-{Id}.json</c>.</summary>
+/// <summary>Serialized JSON under <c>{BackupFolder}/doc-packages/</c>; any <c>*.json</c> filename may be loaded as a package (except <c>_index.json</c>). Saves use <c>doc-package-{Id}.json</c>.</summary>
 public sealed class DocPackage
 {
     public string Id { get; set; } = string.Empty;

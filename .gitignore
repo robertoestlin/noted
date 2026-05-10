@@ -483,8 +483,10 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# Publish artifacts: keep only distributable exe
+# Publish artifacts: keep only distributable exe + shipped doc packages JSON
 dist/*
 !dist/win-x64/
+!dist/doc-packages/
 dist/win-x64/*
 !dist/win-x64/*.exe
+!dist/doc-packages/**

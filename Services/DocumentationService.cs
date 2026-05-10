@@ -1,13 +1,14 @@
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Noted.Models;
 
 namespace Noted.Services;
 
 /// <summary>
-/// Persists Documentation packages to <c>{BackupFolder}/doc-packages/</c> as one
-/// JSON file per package plus an <c>_index.json</c> file holding ordering and the
-/// last-selected package id.
+/// Persists Documentation packages under <c>{BackupFolder}/doc-packages/</c>.
+/// Any <c>*.json</c> in that folder is attempted as a <see cref="DocPackage"/> except <c>_index.json</c>
+/// (package ordering). Saves still use <c>doc-package-{Id}.json</c>.
 /// </summary>
 public sealed class DocumentationService
 {
@@ -43,20 +44,20 @@ public sealed class DocumentationService
         if (!Directory.Exists(folder))
             return result;
 
-        foreach (var file in Directory.EnumerateFiles(folder, PackageFilePrefix + "*" + PackageFileSuffix))
+        var byId = new Dictionary<string, DocPackage>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(folder, "*.json").OrderBy(p => p, StringComparer.Ordinal))
         {
-            try
-            {
-                var pkg = JsonSerializer.Deserialize<DocPackage>(File.ReadAllText(file));
-                if (pkg is null || string.IsNullOrEmpty(pkg.Id))
-                    continue;
-                result.Add(pkg);
-            }
-            catch
-            {
-                // Skip unreadable file — best effort.
-            }
+            if (IsPackagesIndexFile(file))
+                continue;
+            var pkg = TryLoadDocPackage(file);
+            if (pkg is null)
+                continue;
+            if (!byId.ContainsKey(pkg.Id))
+                byId[pkg.Id] = pkg;
         }
+
+        foreach (var pkg in byId.Values)
+            result.Add(pkg);
         return result;
     }
 
@@ -83,6 +84,7 @@ public sealed class DocumentationService
         var path = GetPackagePath(backupFolder, package.Id);
         var json = JsonSerializer.Serialize(package, WriteOptions);
         WindowSettingsStore.WriteUtf8IfSemanticJsonChanged(path, json);
+        DeleteAlternatePackageJsonFiles(backupFolder, package.Id, path);
     }
 
     public void SaveIndex(string backupFolder, DocPackagesIndex index)
@@ -97,15 +99,67 @@ public sealed class DocumentationService
     {
         if (string.IsNullOrEmpty(packageId))
             return;
+        var folder = GetSubfolderPath(backupFolder);
+        if (!Directory.Exists(folder))
+            return;
         try
         {
-            var path = GetPackagePath(backupFolder, packageId);
-            if (File.Exists(path))
-                File.Delete(path);
+            foreach (var file in Directory.EnumerateFiles(folder, "*.json"))
+            {
+                if (IsPackagesIndexFile(file))
+                    continue;
+                var pkg = TryLoadDocPackage(file);
+                if (pkg is null)
+                    continue;
+                if (!string.Equals(pkg.Id, packageId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try { File.Delete(file); }
+                catch { /* best effort */ }
+            }
         }
         catch
         {
             // Best effort.
+        }
+    }
+
+    static bool IsPackagesIndexFile(string filePath)
+        => string.Equals(Path.GetFileName(filePath), IndexFileName, StringComparison.OrdinalIgnoreCase);
+
+    static DocPackage? TryLoadDocPackage(string filePath)
+    {
+        try
+        {
+            var pkg = JsonSerializer.Deserialize<DocPackage>(File.ReadAllText(filePath));
+            if (pkg is null || string.IsNullOrEmpty(pkg.Id))
+                return null;
+            return pkg;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    static void DeleteAlternatePackageJsonFiles(string backupFolder, string packageId, string canonicalPathFull)
+    {
+        var folder = Path.Combine(backupFolder, SubfolderName);
+        if (!Directory.Exists(folder))
+            return;
+        var canonicalFull = Path.GetFullPath(canonicalPathFull);
+        foreach (var file in Directory.EnumerateFiles(folder, "*.json"))
+        {
+            if (IsPackagesIndexFile(file))
+                continue;
+            if (string.Equals(Path.GetFullPath(file), canonicalFull, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var pkg = TryLoadDocPackage(file);
+            if (pkg is null)
+                continue;
+            if (!string.Equals(pkg.Id, packageId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            try { File.Delete(file); }
+            catch { /* best effort */ }
         }
     }
 }
