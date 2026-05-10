@@ -5557,7 +5557,11 @@ public partial class MainWindow : Window
         var optionsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         var chkMatchCase = new CheckBox { Content = "Match case", Margin = new Thickness(0, 0, 16, 0) };
         var chkWholeWord = new CheckBox { Content = "Whole word" };
-        var chkAllTabs = new CheckBox { Content = "Find in all pages", Margin = new Thickness(16, 0, 0, 0) };
+        var chkAllTabs = new CheckBox
+        {
+            Content = longTermNotebookScope ? "Find in all pages" : "Find in all tabs",
+            Margin = new Thickness(16, 0, 0, 0)
+        };
         optionsPanel.Children.Add(chkMatchCase);
         optionsPanel.Children.Add(chkWholeWord);
         optionsPanel.Children.Add(chkAllTabs);
@@ -5964,7 +5968,7 @@ public partial class MainWindow : Window
             var orderedTabs = MainTabControl.Items.OfType<TabItem>().Where(tab => _docs.ContainsKey(tab)).ToList();
             if (orderedTabs.Count == 0)
             {
-                status.Text = "No open pages.";
+                status.Text = "No open tabs.";
                 return false;
             }
 
@@ -5973,9 +5977,7 @@ public partial class MainWindow : Window
             if (currentIndex < 0)
                 currentIndex = 0;
 
-            TabDocument? activeShortTerm = CurrentDoc();
-            var stSelEditor = activeShortTerm?.Editor ?? editor;
-            int startOffsetTabs = stSelEditor.SelectionStart + stSelEditor.SelectionLength;
+            int startOffsetTabs = editor.SelectionStart + editor.SelectionLength;
             for (int i = currentIndex; i < orderedTabs.Count; i++)
             {
                 var tab = orderedTabs[i];
@@ -6009,7 +6011,7 @@ public partial class MainWindow : Window
                     return JumpToMatch(tab, foundWrap, needle.Length);
             }
 
-            status.Text = "No matches in any page.";
+            status.Text = "No matches in any tab.";
             return false;
         }
 
