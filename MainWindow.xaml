@@ -534,5 +534,49 @@
                 </Border>
             </Grid>
         </Border>
+
+        <Border x:Name="ClockOverlay"
+                Grid.RowSpan="2"
+                Visibility="Collapsed"
+                Panel.ZIndex="100"
+                Background="#E60A0F1C"
+                MouseDown="ClockOverlay_DismissByMouseDown"
+                PreviewKeyDown="ClockOverlay_DismissByKeyDown"
+                Focusable="True">
+            <Viewbox Stretch="Uniform" StretchDirection="Both" Margin="60">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock x:Name="ClockOverlayTime"
+                               Text="00:00:00.000"
+                               FontFamily="Consolas, Cascadia Mono, Lucida Console, Courier New"
+                               FontWeight="Bold"
+                               FontSize="140"
+                               Foreground="#62E5FF"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="ClockOverlayDate"
+                               Text="2026-05-11"
+                               FontFamily="Segoe UI, Arial"
+                               FontWeight="SemiBold"
+                               FontSize="64"
+                               Foreground="#EAF4FF"
+                               TextAlignment="Center"
+                               Margin="0,16,0,0"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="ClockOverlayMonthWeek"
+                               Text="May  ·  Week 20  ·  Sunday"
+                               FontFamily="Segoe UI, Arial"
+                               FontWeight="SemiBold"
+                               FontSize="34"
+                               Foreground="#8FB6D8"
+                               TextAlignment="Center"
+                               Margin="0,10,0,0"
+                               HorizontalAlignment="Center"/>
+                    <StackPanel x:Name="ClockOverlayDayStrip"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                Margin="0,34,0,0"/>
+                </StackPanel>
+            </Viewbox>
+        </Border>
     </Grid>
 </Window>

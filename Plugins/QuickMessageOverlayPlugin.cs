@@ -2200,6 +2200,13 @@ public partial class MainWindow
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (Keyboard.Modifiers == ModifierKeys.Alt && key == Key.W)
+        {
+            ToggleClockOverlay();
+            e.Handled = true;
+            return;
+        }
+
         if (_appMode == AppMode.Documentation
             && (Keyboard.Modifiers & ModifierKeys.Control) != 0
             && (key == Key.F || key == Key.H))
