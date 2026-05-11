@@ -6,6 +6,7 @@ RID="win-x64"
 CONFIG="Release"
 OUTDIR="../dist/${RID}"
 BASE_EXE="Heartbeat.exe"
+OUT_BIN="Heartbeat.bin"
 
 echo "Publishing ${PROJECT} to ${OUTDIR} ..."
 
@@ -25,9 +26,13 @@ dotnet publish "${PROJECT}" \
   -p:DebugSymbols=false \
   -o "${OUTDIR}"
 
+echo "Copying ${BASE_EXE} → ${OUT_BIN} ..."
+cp -f "${OUTDIR}/${BASE_EXE}" "${OUTDIR}/${OUT_BIN}"
+
 echo
 echo "Done. Folder output:"
 echo "  ${OUTDIR}"
 echo
-echo "Main executable:"
+echo "Executables:"
 echo "  ${OUTDIR}/${BASE_EXE}"
+echo "  ${OUTDIR}/${OUT_BIN}"
