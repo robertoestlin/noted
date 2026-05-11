@@ -83,6 +83,9 @@ public partial class MainWindow : Window
     private string _taskPanelTitle = DefaultTaskPanelTitle;
     private List<TaskAreaState> _taskAreas = [];
     private string _currentTaskAreaId = DefaultTaskAreaId;
+    private int _taskPanelMinWidthPx = DefaultTaskPanelMinWidthPx;
+    private int _taskPanelMaxWidthPx = DefaultTaskPanelMaxWidthPx;
+    private int _maxTodoTaskNameLength = DefaultMaxTodoTaskNameLength;
     private bool _pluginAlarmsEnabled = true;
     private DateTime? _pluginAlarmsSnoozedUntilLocal;
     private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
@@ -110,6 +113,15 @@ public partial class MainWindow : Window
     private const string StateConfigFileName = "state-config.json";
     private const string AppLogFileName = "noted.log";
     private const string DefaultTaskPanelTitle = "Task Panel";
+    private const int DefaultTaskPanelMinWidthPx = 300;
+    private const int DefaultTaskPanelMaxWidthPx = 1200;
+    private const int DefaultMaxTodoTaskNameLength = 50;
+    /// <summary>Lower bound for settings UI and persisted task panel min width.</summary>
+    private const int MinTaskPanelWidthSettingPx = 200;
+    /// <summary>Upper bound for settings UI and persisted task panel widths.</summary>
+    private const int MaxTaskPanelWidthSettingPx = 4000;
+    private const int MinTodoTaskNameLengthSetting = 5;
+    private const int MaxTodoTaskNameLengthSetting = 500;
     private const string DefaultTaskAreaId = "main";
     private const string DefaultTaskAreaName = "Main";
     private static readonly (string Id, string Name, string ShortcutKey, int CompletedRetentionDays, int CompletedRetentionHours)[] DefaultTaskGroups =

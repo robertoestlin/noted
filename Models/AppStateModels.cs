@@ -219,6 +219,12 @@ public sealed class TaskPanelPluginState
     public string? TaskPanelTitle { get; set; }
     public List<TaskAreaState>? TaskAreas { get; set; }
     public string? CurrentTaskAreaId { get; set; }
+    /// <summary>Minimum task panel width in pixels when open.</summary>
+    public int? TaskPanelMinWidthPx { get; set; }
+    /// <summary>Maximum task panel width in pixels when open.</summary>
+    public int? TaskPanelMaxWidthPx { get; set; }
+    /// <summary>Maximum length for a task name (title).</summary>
+    public int? MaxTodoTaskNameLength { get; set; }
 }
 
 /// <summary>Alarms plugin configuration in <c>plugin-alarms.json</c>.</summary>

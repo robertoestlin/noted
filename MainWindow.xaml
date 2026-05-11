@@ -154,6 +154,7 @@
                     </Grid>
 
                     <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto"
                                   Margin="-4,0,-4,0"
                                   Padding="4,0,4,0">
                         <StackPanel x:Name="TodoGroupsContainer"/>

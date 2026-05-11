@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -1262,15 +1263,45 @@ public partial class MainWindow
         if (workingTaskAreas.Count == 0)
             workingTaskAreas = BuildDefaultTaskAreas();
 
+        var workingTaskPanelMinWidthPx = _taskPanelMinWidthPx;
+        var workingTaskPanelMaxWidthPx = _taskPanelMaxWidthPx;
+        var workingMaxTodoTaskNameLength = _maxTodoTaskNameLength;
+
         var taskPanelTab = new Grid { Margin = new Thickness(12) };
         taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         taskPanelTab.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        var titleRow = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
-        titleRow.Children.Add(new TextBlock { Text = "Task Panel title:", Margin = new Thickness(0, 0, 0, 4) });
+        var titleRow = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
         var txtTaskPanelTitle = new TextBox { Text = _taskPanelTitle };
-        titleRow.Children.Add(txtTaskPanelTitle);
+        var btnTaskPanelLayout = new Button
+        {
+            Width = 30,
+            Height = 30,
+            Padding = new Thickness(0),
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            ToolTip = "Panel width and task name length limits",
+            Cursor = System.Windows.Input.Cursors.Hand,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Content = new TextBlock
+            {
+                Text = "\u2699",
+                FontSize = 18,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x57, 0x60, 0x6A))
+            }
+        };
+        DockPanel.SetDock(btnTaskPanelLayout, Dock.Right);
+        titleRow.Children.Add(btnTaskPanelLayout);
+        var titleStack = new StackPanel();
+        titleStack.Children.Add(new TextBlock { Text = "Task Panel title:", Margin = new Thickness(0, 0, 0, 4) });
+        titleStack.Children.Add(txtTaskPanelTitle);
+        titleRow.Children.Add(titleStack);
+        btnTaskPanelLayout.Click += (_, _) =>
+            TryEditTaskPanelLayoutLimits(dlg, ref workingTaskPanelMinWidthPx, ref workingTaskPanelMaxWidthPx, ref workingMaxTodoTaskNameLength);
         Grid.SetRow(titleRow, 0);
         taskPanelTab.Children.Add(titleRow);
 
@@ -2206,12 +2237,17 @@ public partial class MainWindow
                 // Task Panel settings
                 var newTitle = (txtTaskPanelTitle.Text ?? string.Empty).Trim();
                 _taskPanelTitle = string.IsNullOrWhiteSpace(newTitle) ? DefaultTaskPanelTitle : newTitle;
+                _taskPanelMinWidthPx = NormalizeTaskPanelMinWidthPx(workingTaskPanelMinWidthPx);
+                _taskPanelMaxWidthPx = NormalizeTaskPanelMaxWidthPx(_taskPanelMinWidthPx, workingTaskPanelMaxWidthPx);
+                _maxTodoTaskNameLength = NormalizeMaxTodoTaskNameLength(workingMaxTodoTaskNameLength);
                 _taskAreas = workingTaskAreas;
                 if (!_taskAreas.Any(a => string.Equals(a.Id, _currentTaskAreaId, StringComparison.OrdinalIgnoreCase)))
                     _currentTaskAreaId = _taskAreas.Count > 0 ? _taskAreas[0].Id : DefaultTaskAreaId;
                 MigrateLegacyTodoItemsToGroups();
+                ClampAllTodoItemTextsToMaxLength();
                 UpdateTodoPanelTitleText();
                 RefreshTodoAreaSelector();
+                UpdateTodoPanelVisibility();
                 RenderTodoLists();
 
                 _tabCleanupStaleDays = staleDays;
@@ -2271,5 +2307,106 @@ public partial class MainWindow
             ApplyFridayFeelingToOpenEditors();
             ApplyViewRenderingSettings();
         }
+    }
+
+    private bool TryEditTaskPanelLayoutLimits(Window owner, ref int minWidthPx, ref int maxWidthPx, ref int maxTodoNameLength)
+    {
+        var localMin = minWidthPx;
+        var localMax = maxWidthPx;
+        var localNameLen = maxTodoNameLength;
+
+        var w = new Window
+        {
+            Title = "Task panel layout",
+            Width = 400,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = owner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false
+        };
+
+        var root = new StackPanel { Margin = new Thickness(14) };
+        root.Children.Add(new TextBlock { Text = "Minimum panel width (pixels)", Margin = new Thickness(0, 0, 0, 4) });
+        var txtMin = new TextBox
+        {
+            Text = localMin.ToString(CultureInfo.InvariantCulture),
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        root.Children.Add(txtMin);
+
+        root.Children.Add(new TextBlock { Text = "Maximum panel width (pixels)", Margin = new Thickness(0, 0, 0, 4) });
+        var txtMax = new TextBox
+        {
+            Text = localMax.ToString(CultureInfo.InvariantCulture),
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        root.Children.Add(txtMax);
+
+        root.Children.Add(new TextBlock { Text = "Maximum task name length (characters)", Margin = new Thickness(0, 0, 0, 4) });
+        var txtName = new TextBox
+        {
+            Text = localNameLen.ToString(CultureInfo.InvariantCulture),
+            Margin = new Thickness(0, 0, 0, 14)
+        };
+        root.Children.Add(txtName);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        root.Children.Add(buttons);
+        w.Content = root;
+
+        ok.Click += (_, _) =>
+        {
+            if (!int.TryParse((txtMin.Text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pMin)
+                || pMin < MinTaskPanelWidthSettingPx
+                || pMin > MaxTaskPanelWidthSettingPx)
+            {
+                MessageBox.Show($"Minimum width must be {MinTaskPanelWidthSettingPx}–{MaxTaskPanelWidthSettingPx}.", "Task panel layout",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!int.TryParse((txtMax.Text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pMax)
+                || pMax < MinTaskPanelWidthSettingPx
+                || pMax > MaxTaskPanelWidthSettingPx)
+            {
+                MessageBox.Show($"Maximum width must be {MinTaskPanelWidthSettingPx}–{MaxTaskPanelWidthSettingPx}.", "Task panel layout",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (pMax < pMin)
+            {
+                MessageBox.Show("Maximum width must be greater than or equal to minimum width.", "Task panel layout",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!int.TryParse((txtName.Text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pName)
+                || pName < MinTodoTaskNameLengthSetting
+                || pName > MaxTodoTaskNameLengthSetting)
+            {
+                MessageBox.Show($"Task name length must be {MinTodoTaskNameLengthSetting}–{MaxTodoTaskNameLengthSetting}.", "Task panel layout",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            localMin = pMin;
+            localMax = pMax;
+            localNameLen = pName;
+            w.DialogResult = true;
+        };
+
+        if (w.ShowDialog() != true)
+            return false;
+
+        minWidthPx = localMin;
+        maxWidthPx = localMax;
+        maxTodoNameLength = localNameLen;
+        return true;
     }
 }

@@ -13,7 +13,6 @@ namespace Noted;
 public partial class MainWindow
 {
     private const string DefaultShortcutToggleTodoPanel = "F3";
-    private const double TodoPanelOpenWidth = 330;
     private const string TodoDragDataFormat = "Noted.TodoItemId";
     private const string TodoClosedAreaId = "__closed__";
     private const string TodoClosedGroupId = "__closed__";
@@ -22,6 +21,20 @@ public partial class MainWindow
     private Point _todoDragStartPoint;
     private string? _todoDragSourceItemId;
     private bool _suppressTaskAreaSelectionChanged;
+
+    private string ClampTodoTaskName(string text)
+    {
+        int max = _maxTodoTaskNameLength;
+        if (text.Length <= max)
+            return text;
+        return text[..max];
+    }
+
+    private void ClampAllTodoItemTextsToMaxLength()
+    {
+        foreach (var item in _todoItems)
+            item.Text = ClampTodoTaskName(item.Text ?? string.Empty);
+    }
 
     private void InitializeTodoPanel()
     {
@@ -57,7 +70,7 @@ public partial class MainWindow
         {
             foreach (var rawItem in items)
             {
-                var text = (rawItem.Text ?? string.Empty).Trim();
+                var text = ClampTodoTaskName((rawItem.Text ?? string.Empty).Trim());
                 if (text.Length == 0)
                     continue;
 
@@ -357,7 +370,9 @@ public partial class MainWindow
 
         bool show = _todoPanelVisible && IsTabModeActive();
 
-        TodoPanelColumn.Width = show ? new GridLength(TodoPanelOpenWidth) : new GridLength(0);
+        TodoPanelColumn.Width = show ? new GridLength(1, GridUnitType.Auto) : new GridLength(0);
+        TodoPanelBorder.MinWidth = show ? _taskPanelMinWidthPx : 0;
+        TodoPanelBorder.MaxWidth = show ? _taskPanelMaxWidthPx : double.PositiveInfinity;
         TodoPanelBorder.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         if (show)
         {
@@ -1327,13 +1342,14 @@ public partial class MainWindow
         var textBox = new TextBox
         {
             Height = 30,
-            VerticalContentAlignment = VerticalAlignment.Center
+            VerticalContentAlignment = VerticalAlignment.Center,
+            MaxLength = _maxTodoTaskNameLength
         };
         root.Children.Add(textBox);
 
         addButton.Click += (_, _) =>
         {
-            var text = (textBox.Text ?? string.Empty).Trim();
+            var text = ClampTodoTaskName((textBox.Text ?? string.Empty).Trim());
             if (text.Length == 0)
                 return;
 
@@ -1376,7 +1392,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(renamedText))
             return;
 
-        item.Text = renamedText.Trim();
+        item.Text = ClampTodoTaskName(renamedText.Trim());
         RenderTodoLists();
         SaveWindowSettings();
         TodoPanelBorder?.Focus();
@@ -1414,14 +1430,15 @@ public partial class MainWindow
         {
             Height = 30,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Text = currentText
+            Text = currentText,
+            MaxLength = _maxTodoTaskNameLength
         };
         root.Children.Add(textBox);
 
         string? updatedText = null;
         renameButton.Click += (_, _) =>
         {
-            var text = (textBox.Text ?? string.Empty).Trim();
+            var text = ClampTodoTaskName((textBox.Text ?? string.Empty).Trim());
             if (text.Length == 0)
             {
                 MessageBox.Show("Todo text cannot be empty.", "Rename Todo Item", MessageBoxButton.OK, MessageBoxImage.Warning);

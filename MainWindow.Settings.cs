@@ -193,7 +193,10 @@ public partial class MainWindow
         {
             TaskPanelTitle = _taskPanelTitle,
             TaskAreas = BuildTaskAreasSnapshot(),
-            CurrentTaskAreaId = _currentTaskAreaId
+            CurrentTaskAreaId = _currentTaskAreaId,
+            TaskPanelMinWidthPx = _taskPanelMinWidthPx,
+            TaskPanelMaxWidthPx = _taskPanelMaxWidthPx,
+            MaxTodoTaskNameLength = _maxTodoTaskNameLength
         };
         _windowSettingsStore.Save(path, payload, options);
     }
@@ -1081,6 +1084,9 @@ public partial class MainWindow
         _saveBulletsAsMarker = '-';
         _todoItems.Clear();
         _taskPanelTitle = DefaultTaskPanelTitle;
+        _taskPanelMinWidthPx = DefaultTaskPanelMinWidthPx;
+        _taskPanelMaxWidthPx = DefaultTaskPanelMaxWidthPx;
+        _maxTodoTaskNameLength = DefaultMaxTodoTaskNameLength;
         _taskAreas = BuildDefaultTaskAreas();
         _currentTaskAreaId = DefaultTaskAreaId;
         _safePasteSavedEntries.Clear();
@@ -1430,11 +1436,34 @@ public partial class MainWindow
             })
             .ToList();
 
+    private static int NormalizeTaskPanelMinWidthPx(int? value)
+    {
+        var v = value ?? DefaultTaskPanelMinWidthPx;
+        return Math.Clamp(v, MinTaskPanelWidthSettingPx, MaxTaskPanelWidthSettingPx);
+    }
+
+    private static int NormalizeTaskPanelMaxWidthPx(int minWidthPx, int? value)
+    {
+        var v = value ?? DefaultTaskPanelMaxWidthPx;
+        v = Math.Clamp(v, MinTaskPanelWidthSettingPx, MaxTaskPanelWidthSettingPx);
+        return Math.Max(v, minWidthPx);
+    }
+
+    private static int NormalizeMaxTodoTaskNameLength(int? value)
+    {
+        var v = value ?? DefaultMaxTodoTaskNameLength;
+        return Math.Clamp(v, MinTodoTaskNameLengthSetting, MaxTodoTaskNameLengthSetting);
+    }
+
     private void ApplyTaskPanelSettings(TaskPanelPluginState state)
     {
         _taskPanelTitle = string.IsNullOrWhiteSpace(state.TaskPanelTitle)
             ? DefaultTaskPanelTitle
             : state.TaskPanelTitle!.Trim();
+
+        _taskPanelMinWidthPx = NormalizeTaskPanelMinWidthPx(state.TaskPanelMinWidthPx);
+        _taskPanelMaxWidthPx = NormalizeTaskPanelMaxWidthPx(_taskPanelMinWidthPx, state.TaskPanelMaxWidthPx);
+        _maxTodoTaskNameLength = NormalizeMaxTodoTaskNameLength(state.MaxTodoTaskNameLength);
 
         var areas = (state.TaskAreas ?? [])
             .Where(area => area != null && !string.IsNullOrWhiteSpace(area.Id))
