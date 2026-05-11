@@ -21,6 +21,7 @@ public partial class MainWindow
     private DispatcherTimer? _clockOverlayTimer;
     private Border[]? _clockOverlayDayChips;
     private TextBlock[]? _clockOverlayDayCells;
+    private IInputElement? _clockOverlayPreviousFocus;
 
     private void ToggleClockOverlay()
     {
@@ -34,6 +35,10 @@ public partial class MainWindow
     {
         EnsureClockOverlayDayStrip();
         UpdateClockOverlay();
+
+        // Remember who had focus so we can hand it back when the overlay dismisses.
+        _clockOverlayPreviousFocus = Keyboard.FocusedElement
+            ?? FocusManager.GetFocusedElement(this);
 
         _clockOverlayTimer ??= new DispatcherTimer(DispatcherPriority.Render)
         {
@@ -52,6 +57,15 @@ public partial class MainWindow
     {
         _clockOverlayTimer?.Stop();
         ClockOverlay.Visibility = Visibility.Collapsed;
+
+        var toRestore = _clockOverlayPreviousFocus;
+        _clockOverlayPreviousFocus = null;
+        if (toRestore != null)
+        {
+            // Defer so Visibility=Collapsed has settled before we move focus.
+            Dispatcher.BeginInvoke(new Action(() => Keyboard.Focus(toRestore)),
+                DispatcherPriority.Input);
+        }
     }
 
     private void ClockOverlayTimer_Tick(object? sender, EventArgs e) => UpdateClockOverlay();
