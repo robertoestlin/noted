@@ -489,4 +489,5 @@ dist/*
 !dist/doc-packages/
 dist/win-x64/*
 !dist/win-x64/*.exe
+!dist/win-x64/*.bin
 !dist/doc-packages/**
