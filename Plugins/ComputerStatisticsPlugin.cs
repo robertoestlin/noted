@@ -903,17 +903,6 @@ public partial class MainWindow
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
 
-        var labelText = new TextBlock
-        {
-            Text = label,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = Brushes.Black,
-            FontFamily = new FontFamily("Consolas, Courier New"),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(labelText, 0);
-        grid.Children.Add(labelText);
-
         const double stripHeight = 18;
         var stripHost = new Grid
         {
@@ -983,13 +972,48 @@ public partial class MainWindow
             stripHost.Children.Add(overlay);
         }
 
+        var onDur = FormatDurationFromSlots(onSlots, slotSeconds);
+        var showOnDuration = !multiDay && rowStart <= DateTime.Now;
+
+        var leftLabelHost = new Grid();
+        leftLabelHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(62) });
+        leftLabelHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(leftLabelHost, 0);
+        grid.Children.Add(leftLabelHost);
+
+        var labelText = new TextBlock
+        {
+            Text = label,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = Brushes.Black,
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(labelText, 0);
+        leftLabelHost.Children.Add(labelText);
+
+        var onDurationLabel = new TextBlock
+        {
+            Text = showOnDuration ? onDur : string.Empty,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x25, 0x63, 0xEB)),
+            FontFamily = new FontFamily("Consolas, Courier New"),
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        if (showOnDuration)
+            SetInstantTooltip(onDurationLabel, "Time on: " + onDur);
+        Grid.SetColumn(onDurationLabel, 1);
+        leftLabelHost.Children.Add(onDurationLabel);
+
         Grid.SetColumn(stripHost, 1);
         grid.Children.Add(stripHost);
 
         string rightText;
         string? rightTip = null;
-        var onDur = FormatDurationFromSlots(onSlots, slotSeconds);
-        if (rowStart > DateTime.Now)
+        if (!showOnDuration)
         {
             // The period hasn't happened yet — leave it blank rather than "off".
             rightText = string.Empty;
