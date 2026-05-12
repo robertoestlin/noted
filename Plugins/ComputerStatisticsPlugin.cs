@@ -20,7 +20,24 @@ public partial class MainWindow
     private const int MaxComputerStatisticsIdleThresholdSeconds = 24 * 3600;
     private const int ComputerStatisticsProgramDiscoveryDays = 30;
 
+    private const int DefaultComputerStatisticsAwakeStartHour = 8;
+    private const int DefaultComputerStatisticsAwakeEndHour = 0; // 0 == midnight
+
+    // A "day" in this view runs from 04:00 to 04:00 the next morning, so late-night
+    // sessions are counted under the day they started on.
+    private const int ComputerStatisticsDayStartHour = 4;
+
+    /// <summary>The logical day that a timestamp belongs to (its date at 00:00).</summary>
+    private static DateTime ComputerStatisticsDayOf(DateTime t)
+        => t.AddHours(-ComputerStatisticsDayStartHour).Date;
+
+    /// <summary>The instant a logical day begins (its date + the day-start hour).</summary>
+    private static DateTime ComputerStatisticsDayStart(DateTime dayDate)
+        => dayDate.Date.AddHours(ComputerStatisticsDayStartHour);
+
     private int _computerStatisticsIdleThresholdSeconds = DefaultComputerStatisticsIdleThresholdSeconds;
+    private int _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
+    private int _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
     private readonly HashSet<string> _computerStatisticsPassiveProgramKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Color ComputerStatisticsActiveColor = Color.FromRgb(0x4C, 0xAF, 0x50);
@@ -47,6 +64,8 @@ public partial class MainWindow
     private void ResetComputerStatisticsSettingsToDefaults()
     {
         _computerStatisticsIdleThresholdSeconds = DefaultComputerStatisticsIdleThresholdSeconds;
+        _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
+        _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
         _computerStatisticsPassiveProgramKeys.Clear();
     }
 
@@ -57,6 +76,11 @@ public partial class MainWindow
             idle,
             MinComputerStatisticsIdleThresholdSeconds,
             MaxComputerStatisticsIdleThresholdSeconds);
+
+        _computerStatisticsAwakeStartHour = Math.Clamp(
+            state?.AwakeStartHour ?? DefaultComputerStatisticsAwakeStartHour, 0, 24);
+        _computerStatisticsAwakeEndHour = Math.Clamp(
+            state?.AwakeEndHour ?? DefaultComputerStatisticsAwakeEndHour, 0, 24);
 
         _computerStatisticsPassiveProgramKeys.Clear();
         if (state?.PassiveProgramKeys == null)
@@ -257,7 +281,7 @@ public partial class MainWindow
 
     private List<string> DiscoverRecentAudioPrograms()
     {
-        var to = DateTime.Now.Date.AddDays(1);
+        var to = ComputerStatisticsDayStart(ComputerStatisticsDayOf(DateTime.Now).AddDays(1));
         var from = to.AddDays(-ComputerStatisticsProgramDiscoveryDays);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -485,7 +509,7 @@ public partial class MainWindow
         dialog.Content = root;
 
         var view = ComputerStatisticsView.Month;
-        var anchor = DateTime.Today;
+        var anchor = ComputerStatisticsDayOf(DateTime.Now);
 
         void Render()
         {
@@ -523,10 +547,13 @@ public partial class MainWindow
 
                 statusText.Text = string.Format(
                     CultureInfo.CurrentCulture,
-                    "Slot size: {0:N0}s. Idle threshold: {1}s. Tracked passive programs: {2}.",
+                    "Slot size: {0:N0}s. Idle threshold: {1}s. Tracked passive programs: {2}. Day boundary: {3:D2}:00. Dashed lines = waking hours {4:D2}:00–{5:D2}:00.",
                     slotSeconds,
                     _computerStatisticsIdleThresholdSeconds,
-                    _computerStatisticsPassiveProgramKeys.Count);
+                    _computerStatisticsPassiveProgramKeys.Count,
+                    ComputerStatisticsDayStartHour,
+                    _computerStatisticsAwakeStartHour % 24,
+                    _computerStatisticsAwakeEndHour % 24);
             }
             catch (Exception ex)
             {
@@ -541,7 +568,7 @@ public partial class MainWindow
         btnDay.Checked += (_, _) => { view = ComputerStatisticsView.Day; Render(); };
         btnPrev.Click += (_, _) => { anchor = ShiftAnchor(view, anchor, -1); Render(); };
         btnNext.Click += (_, _) => { anchor = ShiftAnchor(view, anchor, +1); Render(); };
-        btnToday.Click += (_, _) => { anchor = DateTime.Today; Render(); };
+        btnToday.Click += (_, _) => { anchor = ComputerStatisticsDayOf(DateTime.Now); Render(); };
         btnSettings.Click += (_, _) =>
         {
             if (ShowComputerStatisticsSettingsDialog(dialog))
@@ -559,20 +586,21 @@ public partial class MainWindow
         {
             case ComputerStatisticsView.Year:
             {
-                var start = new DateTime(date.Year, 1, 1);
+                var start = ComputerStatisticsDayStart(new DateTime(date.Year, 1, 1));
                 var end = start.AddYears(1);
-                return (start, end, start.Year.ToString(CultureInfo.CurrentCulture));
+                return (start, end, date.Year.ToString(CultureInfo.CurrentCulture));
             }
             case ComputerStatisticsView.Month:
             {
-                var start = new DateTime(date.Year, date.Month, 1);
+                var start = ComputerStatisticsDayStart(new DateTime(date.Year, date.Month, 1));
                 var end = start.AddMonths(1);
-                return (start, end, start.ToString("MMMM yyyy", CultureInfo.CurrentCulture));
+                return (start, end, date.ToString("MMMM yyyy", CultureInfo.CurrentCulture));
             }
             case ComputerStatisticsView.Week:
             {
                 int delta = ((int)date.DayOfWeek + 6) % 7; // Monday=0
-                var start = date.AddDays(-delta);
+                var monday = date.AddDays(-delta);
+                var start = ComputerStatisticsDayStart(monday);
                 var end = start.AddDays(7);
                 return (
                     start,
@@ -580,16 +608,16 @@ public partial class MainWindow
                     string.Format(
                         CultureInfo.CurrentCulture,
                         "Week {0}, {1:dd MMM} – {2:dd MMM yyyy}",
-                        ISOWeek.GetWeekOfYear(start),
-                        start,
-                        end.AddDays(-1)));
+                        ISOWeek.GetWeekOfYear(monday),
+                        monday,
+                        monday.AddDays(6)));
             }
             case ComputerStatisticsView.Day:
             default:
             {
-                var start = date;
-                var end = date.AddDays(1);
-                return (start, end, start.ToString("dddd, d MMMM yyyy", CultureInfo.CurrentCulture));
+                var start = ComputerStatisticsDayStart(date);
+                var end = start.AddDays(1);
+                return (start, end, date.ToString("dddd, d MMMM yyyy", CultureInfo.CurrentCulture));
             }
         }
     }
@@ -668,46 +696,43 @@ public partial class MainWindow
 
     private void RenderYearView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
     {
-        var start = new DateTime(anchor.Year, 1, 1);
+        var start = ComputerStatisticsDayStart(new DateTime(anchor.Year, 1, 1));
         var end = start.AddYears(1);
-        var monthBuckets = new int[12, 4]; // [month][state]
-        var slotsPerMonth = new int[12];
+
+        var perMonth = new List<ComputerStatisticsSlotState>[12];
+        var monthStarts = new DateTime[12];
+        for (int m = 0; m < 12; m++)
+        {
+            perMonth[m] = new List<ComputerStatisticsSlotState>();
+            monthStarts[m] = ComputerStatisticsDayStart(new DateTime(anchor.Year, m + 1, 1));
+        }
 
         for (int i = 0; i < states.Length; i++)
         {
             var ts = start.AddSeconds((long)i * slotSeconds);
             if (ts >= end) break;
-            int month = ts.Month - 1;
-            monthBuckets[month, (int)states[i]]++;
-            slotsPerMonth[month]++;
+            int month = ComputerStatisticsDayOf(ts).Month - 1;
+            if (month < 0 || month >= 12) continue;
+            perMonth[month].Add(states[i]);
         }
 
         host.Children.Add(BuildSectionHeader("Monthly breakdown"));
         for (int m = 0; m < 12; m++)
         {
-            var monthDate = new DateTime(anchor.Year, m + 1, 1);
-            var label = string.Format(
-                CultureInfo.CurrentCulture,
-                "{0:MMM yyyy}",
-                monthDate);
-            host.Children.Add(BuildStackedBarRow(
-                label,
-                monthBuckets[m, (int)ComputerStatisticsSlotState.Active],
-                monthBuckets[m, (int)ComputerStatisticsSlotState.Passive],
-                monthBuckets[m, (int)ComputerStatisticsSlotState.Away],
-                monthBuckets[m, (int)ComputerStatisticsSlotState.Offline],
-                slotsPerMonth[m],
-                slotSeconds));
+            var label = string.Format(CultureInfo.CurrentCulture, "{0:MMM yyyy}", monthStarts[m]);
+            host.Children.Add(BuildPeriodRow(label, perMonth[m], monthStarts[m], slotSeconds, multiDay: true));
         }
     }
 
     private void RenderMonthView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
     {
-        var start = new DateTime(anchor.Year, anchor.Month, 1);
+        var start = ComputerStatisticsDayStart(new DateTime(anchor.Year, anchor.Month, 1));
         var end = start.AddMonths(1);
         int days = (end - start).Days;
-        var dayBuckets = new int[days, 4];
-        var slotsPerDay = new int[days];
+
+        var perDay = new List<ComputerStatisticsSlotState>[days];
+        for (int d = 0; d < days; d++)
+            perDay[d] = new List<ComputerStatisticsSlotState>();
 
         for (int i = 0; i < states.Length; i++)
         {
@@ -715,37 +740,29 @@ public partial class MainWindow
             if (ts >= end) break;
             int day = (ts - start).Days;
             if (day < 0 || day >= days) continue;
-            dayBuckets[day, (int)states[i]]++;
-            slotsPerDay[day]++;
+            perDay[day].Add(states[i]);
         }
 
         host.Children.Add(BuildSectionHeader("Daily breakdown"));
         for (int d = 0; d < days; d++)
         {
-            var dayDate = start.AddDays(d);
-            var label = string.Format(
-                CultureInfo.CurrentCulture,
-                "{0:ddd}  {1:dd}",
-                dayDate,
-                dayDate);
-            host.Children.Add(BuildStackedBarRow(
-                label,
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Active],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Passive],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Away],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Offline],
-                slotsPerDay[d],
-                slotSeconds));
+            var dayStart = start.AddDays(d);
+            var label = string.Format(CultureInfo.CurrentCulture, "{0:ddd}  {1:dd}", dayStart, dayStart);
+            host.Children.Add(BuildPeriodRow(
+                label, perDay[d], dayStart, slotSeconds, multiDay: false,
+                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour));
         }
     }
 
     private void RenderWeekView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
     {
         int delta = ((int)anchor.Date.DayOfWeek + 6) % 7;
-        var start = anchor.Date.AddDays(-delta);
+        var start = ComputerStatisticsDayStart(anchor.Date.AddDays(-delta));
         var end = start.AddDays(7);
-        var dayBuckets = new int[7, 4];
-        var slotsPerDay = new int[7];
+
+        var perDay = new List<ComputerStatisticsSlotState>[7];
+        for (int d = 0; d < 7; d++)
+            perDay[d] = new List<ComputerStatisticsSlotState>();
 
         for (int i = 0; i < states.Length; i++)
         {
@@ -753,81 +770,106 @@ public partial class MainWindow
             if (ts >= end) break;
             int day = (ts - start).Days;
             if (day < 0 || day >= 7) continue;
-            dayBuckets[day, (int)states[i]]++;
-            slotsPerDay[day]++;
+            perDay[day].Add(states[i]);
         }
 
         host.Children.Add(BuildSectionHeader("Daily breakdown"));
         for (int d = 0; d < 7; d++)
         {
-            var dayDate = start.AddDays(d);
-            var label = string.Format(
-                CultureInfo.CurrentCulture,
-                "{0:dddd}  {1:dd MMM}",
-                dayDate,
-                dayDate);
-            host.Children.Add(BuildStackedBarRow(
-                label,
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Active],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Passive],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Away],
-                dayBuckets[d, (int)ComputerStatisticsSlotState.Offline],
-                slotsPerDay[d],
-                slotSeconds));
-        }
-
-        host.Children.Add(BuildSectionHeader("Day timelines (5-min slots)", topSpacing: 12));
-        for (int d = 0; d < 7; d++)
-        {
             var dayStart = start.AddDays(d);
-            var dayEnd = dayStart.AddDays(1);
-            var slotsForDay = new List<ComputerStatisticsSlotState>(288);
-            for (int i = 0; i < states.Length; i++)
-            {
-                var ts = start.AddSeconds((long)i * slotSeconds);
-                if (ts < dayStart) continue;
-                if (ts >= dayEnd) break;
-                slotsForDay.Add(states[i]);
-            }
-            host.Children.Add(BuildTimelineRow(
-                dayStart.ToString("ddd dd MMM", CultureInfo.CurrentCulture),
-                slotsForDay));
+            var label = string.Format(CultureInfo.CurrentCulture, "{0:dddd}  {1:dd MMM}", dayStart, dayStart);
+            host.Children.Add(BuildPeriodRow(
+                label, perDay[d], dayStart, slotSeconds, multiDay: false,
+                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour));
         }
     }
 
     private void RenderDayView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
     {
-        var start = anchor.Date;
+        var dayDate = anchor.Date;
+        var start = ComputerStatisticsDayStart(dayDate);
         var end = start.AddDays(1);
 
-        // Hourly stacked bars.
-        var hourBuckets = new int[24, 4];
-        var slotsPerHour = new int[24];
+        var perHour = new List<ComputerStatisticsSlotState>[24];
+        for (int k = 0; k < 24; k++)
+            perHour[k] = new List<ComputerStatisticsSlotState>();
+
+        DateTime? firstOn = null;
+        DateTime? lastOnEnd = null;
+        int onSlots = 0;
         for (int i = 0; i < states.Length; i++)
         {
             var ts = start.AddSeconds((long)i * slotSeconds);
             if (ts >= end) break;
-            int hour = ts.Hour;
-            hourBuckets[hour, (int)states[i]]++;
-            slotsPerHour[hour]++;
+            int k = (int)Math.Floor((ts - start).TotalHours);
+            if (k >= 0 && k < 24)
+                perHour[k].Add(states[i]);
+            if (states[i] != ComputerStatisticsSlotState.Offline)
+            {
+                firstOn ??= ts;
+                lastOnEnd = ts.AddSeconds(slotSeconds);
+                onSlots++;
+            }
         }
 
-        host.Children.Add(BuildSectionHeader("Hourly breakdown"));
-        for (int h = 0; h < 24; h++)
+        host.Children.Add(BuildDaySummaryRow(firstOn, lastOnEnd, onSlots, slotSeconds));
+
+        host.Children.Add(BuildSectionHeader("Timeline"));
+        host.Children.Add(BuildPeriodRow(
+            dayDate.ToString("ddd dd MMM", CultureInfo.CurrentCulture),
+            states,
+            start,
+            slotSeconds,
+            multiDay: false,
+            _computerStatisticsAwakeStartHour,
+            _computerStatisticsAwakeEndHour));
+
+        host.Children.Add(BuildSectionHeader("Hourly breakdown", topSpacing: 12));
+        for (int k = 0; k < 24; k++)
         {
-            var label = string.Format(CultureInfo.InvariantCulture, "{0:D2}:00", h);
-            host.Children.Add(BuildStackedBarRow(
-                label,
-                hourBuckets[h, (int)ComputerStatisticsSlotState.Active],
-                hourBuckets[h, (int)ComputerStatisticsSlotState.Passive],
-                hourBuckets[h, (int)ComputerStatisticsSlotState.Away],
-                hourBuckets[h, (int)ComputerStatisticsSlotState.Offline],
-                slotsPerHour[h],
-                slotSeconds));
+            var hourStart = start.AddHours(k);
+            host.Children.Add(BuildPeriodRow(
+                hourStart.ToString("HH:mm", CultureInfo.CurrentCulture),
+                perHour[k],
+                hourStart,
+                slotSeconds,
+                multiDay: false));
+        }
+    }
+
+    private static UIElement BuildDaySummaryRow(DateTime? firstOn, DateTime? lastOnEnd, int onSlots, int slotSeconds)
+    {
+        string text;
+        if (firstOn.HasValue && lastOnEnd.HasValue)
+        {
+            var span = lastOnEnd.Value - firstOn.Value;
+            text = string.Format(
+                CultureInfo.CurrentCulture,
+                "Started {0:HH:mm}  ·  Ended {1:HH:mm}  ·  Span {2:D2}h {3:D2}m  ·  Time on {4}",
+                firstOn.Value,
+                lastOnEnd.Value,
+                (int)span.TotalHours,
+                span.Minutes,
+                FormatDurationFromSlots(onSlots, slotSeconds));
+        }
+        else
+        {
+            text = "No computer activity recorded for this day.";
         }
 
-        host.Children.Add(BuildSectionHeader("Timeline (each block is one slot)", topSpacing: 12));
-        host.Children.Add(BuildTimelineRow(start.ToString("ddd dd MMM", CultureInfo.CurrentCulture), states));
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xF0, 0xF4, 0xF8)),
+            Padding = new Thickness(10, 6, 10, 6),
+            Margin = new Thickness(0, 0, 0, 10),
+            CornerRadius = new CornerRadius(2),
+            Child = new TextBlock
+            {
+                Text = text,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = Brushes.Black
+            }
+        };
     }
 
     private static UIElement BuildSectionHeader(string text, double topSpacing = 0)
@@ -839,19 +881,27 @@ public partial class MainWindow
             Margin = new Thickness(0, topSpacing, 0, 6)
         };
 
-    private static UIElement BuildStackedBarRow(
+    /// <summary>
+    /// A chronological strip for one period: each slot keeps its real position in
+    /// time, so a gap (Offline) in the middle shows where it actually happened.
+    /// Hovering a block shows its time range. The right-hand label is the on-window
+    /// (first activity – last activity) or, for multi-day rows, the total time on.
+    /// When <paramref name="dayGuideStartHour"/>/<paramref name="dayGuideEndHour"/>
+    /// are set (>= 0) the strip gets dashed vertical lines marking the waking day.
+    /// </summary>
+    private static UIElement BuildPeriodRow(
         string label,
-        int active,
-        int passive,
-        int away,
-        int offline,
-        int totalSlots,
-        int slotSeconds)
+        IList<ComputerStatisticsSlotState> slots,
+        DateTime rowStart,
+        int slotSeconds,
+        bool multiDay,
+        int dayGuideStartHour = -1,
+        int dayGuideEndHour = -1)
     {
         var grid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
 
         var labelText = new TextBlock
         {
@@ -864,114 +914,167 @@ public partial class MainWindow
         Grid.SetColumn(labelText, 0);
         grid.Children.Add(labelText);
 
-        var bar = new Grid
+        const double stripHeight = 18;
+        var stripHost = new Grid
         {
-            Height = 18,
-            Background = new SolidColorBrush(Color.FromRgb(0xF5, 0xF5, 0xF5)),
+            Height = stripHeight,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0)
-        };
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(active, GridUnitType.Star) });
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(passive, GridUnitType.Star) });
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(away, GridUnitType.Star) });
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(offline, GridUnitType.Star) });
-
-        if (active + passive + away + offline == 0)
-        {
-            // No data at all (e.g., future date or empty heartbeat file). Show a placeholder.
-            var empty = new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA))
-            };
-            Grid.SetColumn(empty, 0);
-            Grid.SetColumnSpan(empty, 4);
-            bar.Children.Add(empty);
-        }
-        else
-        {
-            void AddSegment(int col, int weight, Color color, string segLabel)
-            {
-                if (weight <= 0) return;
-                var seg = new Border
-                {
-                    Background = new SolidColorBrush(color),
-                    ToolTip = string.Format(
-                        CultureInfo.CurrentCulture,
-                        "{0}: {1}",
-                        segLabel,
-                        FormatDurationFromSlots(weight, slotSeconds))
-                };
-                Grid.SetColumn(seg, col);
-                bar.Children.Add(seg);
-            }
-            AddSegment(0, active, ComputerStatisticsActiveColor, "Active");
-            AddSegment(1, passive, ComputerStatisticsPassiveColor, "Passive");
-            AddSegment(2, away, ComputerStatisticsAwayColor, "Away");
-            AddSegment(3, offline, ComputerStatisticsOfflineColor, "Offline");
-        }
-
-        Grid.SetColumn(bar, 1);
-        grid.Children.Add(bar);
-
-        var totalLabel = new TextBlock
-        {
-            Text = string.Format(
-                CultureInfo.CurrentCulture,
-                "On: {0}",
-                FormatDurationFromSlots(active + passive + away, slotSeconds)),
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = Brushes.DimGray,
-            FontFamily = new FontFamily("Consolas, Courier New")
-        };
-        Grid.SetColumn(totalLabel, 2);
-        grid.Children.Add(totalLabel);
-
-        return grid;
-    }
-
-    private static UIElement BuildTimelineRow(string label, IList<ComputerStatisticsSlotState> slots)
-    {
-        var grid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-        var labelText = new TextBlock
-        {
-            Text = label,
-            VerticalAlignment = VerticalAlignment.Center,
-            FontFamily = new FontFamily("Consolas, Courier New")
-        };
-        Grid.SetColumn(labelText, 0);
-        grid.Children.Add(labelText);
-
-        var stripGrid = new Grid
-        {
-            Height = 18,
-            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
             Background = new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA))
         };
-        for (int i = 0; i < slots.Count; i++)
-            stripGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        for (int i = 0; i < slots.Count; i++)
+        var strip = new Grid();
+
+        int n = slots.Count;
+        int onSlots = 0;
+        int firstOnSlot = -1, lastOnSlot = -1;
+        int colIndex = 0;
+
+        // Collapse contiguous same-state slots into runs; one strip column per run,
+        // weighted by run length so positions stay proportional to real time.
+        int p = 0;
+        while (p < n)
         {
-            var color = slots[i] switch
+            int q = p;
+            while (q + 1 < n && slots[q + 1] == slots[p]) q++;
+            var state = slots[p];
+            int len = q - p + 1;
+
+            if (state != ComputerStatisticsSlotState.Offline)
+            {
+                onSlots += len;
+                if (firstOnSlot < 0) firstOnSlot = p;
+                lastOnSlot = q;
+            }
+
+            strip.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(len, GridUnitType.Star) });
+            var color = state switch
             {
                 ComputerStatisticsSlotState.Active => ComputerStatisticsActiveColor,
                 ComputerStatisticsSlotState.Passive => ComputerStatisticsPassiveColor,
                 ComputerStatisticsSlotState.Away => ComputerStatisticsAwayColor,
                 _ => ComputerStatisticsOfflineColor
             };
+            var segStart = rowStart.AddSeconds((long)p * slotSeconds);
+            var segEnd = rowStart.AddSeconds((long)(q + 1) * slotSeconds);
             var seg = new Border { Background = new SolidColorBrush(color) };
-            Grid.SetColumn(seg, i);
-            stripGrid.Children.Add(seg);
+            SetInstantTooltip(seg, string.Format(
+                CultureInfo.CurrentCulture,
+                "{0} – {1}  ·  {2} ({3})",
+                FormatRowTime(segStart, multiDay),
+                FormatRowTime(segEnd, multiDay),
+                StateDisplayName(state),
+                FormatDurationFromSlots(len, slotSeconds)));
+            Grid.SetColumn(seg, colIndex++);
+            strip.Children.Add(seg);
+
+            p = q + 1;
         }
 
-        Grid.SetColumn(stripGrid, 1);
-        grid.Children.Add(stripGrid);
+        stripHost.Children.Add(strip);
+
+        if (dayGuideStartHour >= 0 && dayGuideEndHour >= 0)
+        {
+            var overlay = new Grid { IsHitTestVisible = false };
+            for (int c = 0; c < 24; c++)
+                overlay.ColumnDefinitions.Add(new ColumnDefinition());
+            AddDayGuideLine(overlay, dayGuideStartHour, stripHeight);
+            AddDayGuideLine(overlay, dayGuideEndHour, stripHeight);
+            stripHost.Children.Add(overlay);
+        }
+
+        Grid.SetColumn(stripHost, 1);
+        grid.Children.Add(stripHost);
+
+        string rightText;
+        string? rightTip = null;
+        var onDur = FormatDurationFromSlots(onSlots, slotSeconds);
+        if (rowStart > DateTime.Now)
+        {
+            // The period hasn't happened yet — leave it blank rather than "off".
+            rightText = string.Empty;
+        }
+        else if (multiDay)
+        {
+            rightText = "On: " + onDur;
+        }
+        else if (firstOnSlot >= 0)
+        {
+            var ws = rowStart.AddSeconds((long)firstOnSlot * slotSeconds);
+            var we = rowStart.AddSeconds((long)(lastOnSlot + 1) * slotSeconds);
+            rightText = string.Format(CultureInfo.CurrentCulture, "{0:HH:mm} – {1:HH:mm}", ws, we);
+            rightTip = string.Format(
+                CultureInfo.CurrentCulture,
+                "On from {0:HH:mm} to {1:HH:mm}. Time on (excluding gaps): {2}.",
+                ws, we, onDur);
+        }
+        else
+        {
+            rightText = n == 0 ? "—" : "off";
+        }
+
+        var rightLabel = new TextBlock
+        {
+            Text = rightText,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = Brushes.DimGray,
+            FontFamily = new FontFamily("Consolas, Courier New")
+        };
+        if (rightTip != null)
+            SetInstantTooltip(rightLabel, rightTip);
+        Grid.SetColumn(rightLabel, 2);
+        grid.Children.Add(rightLabel);
 
         return grid;
     }
+
+    private static void AddDayGuideLine(Grid overlay24, int clockHour, double height)
+    {
+        int h = ((clockHour % 24) + 24) % 24;
+        int offset = h >= ComputerStatisticsDayStartHour
+            ? h - ComputerStatisticsDayStartHour
+            : h + (24 - ComputerStatisticsDayStartHour);
+        if (offset < 0 || offset > 23)
+            return;
+
+        var line = new System.Windows.Shapes.Line
+        {
+            X1 = 0,
+            X2 = 0,
+            Y1 = 0,
+            Y2 = height,
+            Stroke = new SolidColorBrush(Color.FromRgb(0x55, 0x55, 0x55)),
+            StrokeThickness = 1,
+            StrokeDashArray = new DoubleCollection { 2, 2 },
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            SnapsToDevicePixels = true,
+            IsHitTestVisible = false
+        };
+        Grid.SetColumn(line, offset);
+        overlay24.Children.Add(line);
+    }
+
+    private static void SetInstantTooltip(FrameworkElement element, object tip)
+    {
+        element.ToolTip = tip;
+        ToolTipService.SetInitialShowDelay(element, 0);
+        ToolTipService.SetBetweenShowDelay(element, 0);
+        ToolTipService.SetShowDuration(element, 30000);
+    }
+
+    private static string FormatRowTime(DateTime t, bool withDate)
+        => withDate
+            ? t.ToString("d MMM HH:mm", CultureInfo.CurrentCulture)
+            : t.ToString("HH:mm", CultureInfo.CurrentCulture);
+
+    private static string StateDisplayName(ComputerStatisticsSlotState state) => state switch
+    {
+        ComputerStatisticsSlotState.Active => "Active",
+        ComputerStatisticsSlotState.Passive => "Passive",
+        ComputerStatisticsSlotState.Away => "Away",
+        _ => "Offline"
+    };
 
     private bool ShowComputerStatisticsSettingsDialog(Window owner)
     {
@@ -979,7 +1082,7 @@ public partial class MainWindow
         {
             Title = "Computer Statistics Settings",
             Width = 460,
-            Height = 560,
+            Height = 660,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = owner,
             ResizeMode = ResizeMode.NoResize
@@ -1025,6 +1128,58 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 12)
         };
         topStack.Children.Add(idleBox);
+
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "Waking hours",
+            FontWeight = FontWeights.SemiBold
+        });
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "Dashed guide lines on the timelines mark your typical waking day — the hour it usually starts and the hour it ends (e.g. 8 to 0 for 08:00 until midnight). Use 0 (or 24) for midnight.",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var awakeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        awakeRow.Children.Add(new TextBlock
+        {
+            Text = "Awake from hour",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0)
+        });
+        var awakeStartBox = new TextBox
+        {
+            Width = 44,
+            VerticalAlignment = VerticalAlignment.Center,
+            Text = _computerStatisticsAwakeStartHour.ToString(CultureInfo.InvariantCulture)
+        };
+        awakeRow.Children.Add(awakeStartBox);
+        awakeRow.Children.Add(new TextBlock
+        {
+            Text = "to hour",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 6, 0)
+        });
+        var awakeEndBox = new TextBox
+        {
+            Width = 44,
+            VerticalAlignment = VerticalAlignment.Center,
+            Text = _computerStatisticsAwakeEndHour.ToString(CultureInfo.InvariantCulture)
+        };
+        awakeRow.Children.Add(awakeEndBox);
+        awakeRow.Children.Add(new TextBlock
+        {
+            Text = "  (0–24)",
+            Foreground = Brushes.DimGray,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        topStack.Children.Add(awakeRow);
 
         topStack.Children.Add(new TextBlock
         {
@@ -1116,7 +1271,25 @@ public partial class MainWindow
                 return;
             }
 
+            if (!int.TryParse((awakeStartBox.Text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var awakeStart)
+                || awakeStart < 0 || awakeStart > 24
+                || !int.TryParse((awakeEndBox.Text ?? string.Empty).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var awakeEnd)
+                || awakeEnd < 0 || awakeEnd > 24)
+            {
+                MessageBox.Show(
+                    dialog,
+                    "Waking hours must each be a whole number from 0 to 24.",
+                    "Computer Statistics Settings",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                awakeStartBox.Focus();
+                awakeStartBox.SelectAll();
+                return;
+            }
+
             _computerStatisticsIdleThresholdSeconds = idle;
+            _computerStatisticsAwakeStartHour = awakeStart;
+            _computerStatisticsAwakeEndHour = awakeEnd;
             _computerStatisticsPassiveProgramKeys.Clear();
             foreach (var cb in checkboxes)
             {

@@ -335,6 +335,12 @@ public sealed class ComputerStatisticsPluginState
 
     /// <summary>Process-name keys (case-insensitive) whose audio counts as "Passive" sound.</summary>
     public List<string>? PassiveProgramKeys { get; set; }
+
+    /// <summary>Clock hour (0-24) a typical waking day starts — drawn as a guide line on the timelines.</summary>
+    public int? AwakeStartHour { get; set; }
+
+    /// <summary>Clock hour (0-24) a typical waking day ends — drawn as a guide line on the timelines.</summary>
+    public int? AwakeEndHour { get; set; }
 }
 
 /// <summary>Session-only UI state in <c>session-state.json</c>.</summary>

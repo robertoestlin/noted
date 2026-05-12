@@ -230,7 +230,9 @@ public partial class MainWindow
         var payload = new ComputerStatisticsPluginState
         {
             IdleThresholdSeconds = _computerStatisticsIdleThresholdSeconds,
-            PassiveProgramKeys = _computerStatisticsPassiveProgramKeys.ToList()
+            PassiveProgramKeys = _computerStatisticsPassiveProgramKeys.ToList(),
+            AwakeStartHour = _computerStatisticsAwakeStartHour,
+            AwakeEndHour = _computerStatisticsAwakeEndHour
         };
         _windowSettingsStore.Save(path, payload, options);
     }
