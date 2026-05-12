@@ -42,7 +42,7 @@ public partial class MainWindow
 
         _clockOverlayTimer ??= new DispatcherTimer(DispatcherPriority.Render)
         {
-            Interval = TimeSpan.FromMilliseconds(33)
+            Interval = TimeSpan.FromSeconds(1)
         };
         _clockOverlayTimer.Tick -= ClockOverlayTimer_Tick;
         _clockOverlayTimer.Tick += ClockOverlayTimer_Tick;
@@ -115,7 +115,7 @@ public partial class MainWindow
     {
         var now = DateTime.Now;
 
-        ClockOverlayTime.Text = now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
+        ClockOverlayTime.Text = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         ClockOverlayDate.Text = now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         var monthName = now.ToString("MMMM", CultureInfo.InvariantCulture);
