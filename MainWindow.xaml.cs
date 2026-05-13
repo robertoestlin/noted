@@ -2201,6 +2201,30 @@ public partial class MainWindow : Window
         editor.TextArea.TextView.Redraw();
     }
 
+    private static bool TryInsertTimestampAtCaret(TextEditor editor)
+    {
+        if (editor.Document == null)
+            return false;
+
+        var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        int replaceStart = editor.SelectionStart;
+        int replaceLength = editor.SelectionLength;
+
+        try
+        {
+            editor.Document.Replace(replaceStart, replaceLength, stamp);
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+
+        editor.TextArea.Caret.Offset = replaceStart + stamp.Length;
+        editor.Select(editor.TextArea.Caret.Offset, 0);
+        editor.TextArea.TextView.Redraw();
+        return true;
+    }
+
     private bool TryPasteClipboardImage(TabDocument doc)
     {
         BitmapSource? clipboardImage;
@@ -4251,6 +4275,15 @@ public partial class MainWindow : Window
             return;
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (Keyboard.Modifiers == ModifierKeys.None && key == Key.F5)
+        {
+            if (TryInsertTimestampAtCaret(doc.Editor))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
 
         if (key == Key.Back
             && Keyboard.Modifiers == ModifierKeys.None
