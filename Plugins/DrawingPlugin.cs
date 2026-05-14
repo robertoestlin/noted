@@ -20,9 +20,8 @@ public partial class MainWindow
     }
 }
 
-internal sealed class DrawingTheme
+internal sealed class ThemeToolStyle
 {
-    public string Name { get; set; } = "Default";
     public string Fill { get; set; } = "Transparent";
     public string Stroke { get; set; } = "#000000";
     public string TextColor { get; set; } = "#000000";
@@ -32,6 +31,83 @@ internal sealed class DrawingTheme
     public double CornerRadius { get; set; } = 14;
     public string ArrowHead { get; set; } = "Simple";
     public double FreeThickness { get; set; } = 6;
+
+    public ThemeToolStyle Clone() => new()
+    {
+        Fill = Fill,
+        Stroke = Stroke,
+        TextColor = TextColor,
+        FontFamilyName = FontFamilyName,
+        FontSize = FontSize,
+        Thickness = Thickness,
+        CornerRadius = CornerRadius,
+        ArrowHead = ArrowHead,
+        FreeThickness = FreeThickness,
+    };
+
+    public static ThemeToolStyle FromLegacyRoot(DrawingTheme t) => new()
+    {
+        Fill = t.Fill,
+        Stroke = t.Stroke,
+        TextColor = t.TextColor,
+        FontFamilyName = t.FontFamilyName,
+        FontSize = t.FontSize,
+        Thickness = t.Thickness,
+        CornerRadius = t.CornerRadius,
+        ArrowHead = t.ArrowHead,
+        FreeThickness = t.FreeThickness,
+    };
+}
+
+internal sealed class DrawingTheme
+{
+    public string Name { get; set; } = "Default";
+
+    /// <summary>Per-tool defaults. Null in JSON means "use legacy root fields" until <see cref="EnsureToolStyles"/> runs.</summary>
+    public ThemeToolStyle? Rectangle { get; set; }
+    public ThemeToolStyle? Ellipse { get; set; }
+    public ThemeToolStyle? Arrow { get; set; }
+    public ThemeToolStyle? Text { get; set; }
+    public ThemeToolStyle? Freehand { get; set; }
+
+    // Legacy root fields (still read from older theme files; mirrored on save for compatibility).
+    public string Fill { get; set; } = "Transparent";
+    public string Stroke { get; set; } = "#000000";
+    public string TextColor { get; set; } = "#000000";
+    public string FontFamilyName { get; set; } = "Segoe UI";
+    public double FontSize { get; set; } = 22;
+    public double Thickness { get; set; } = 2;
+    public double CornerRadius { get; set; } = 14;
+    public string ArrowHead { get; set; } = "Simple";
+    public double FreeThickness { get; set; } = 6;
+
+    public void EnsureToolStyles()
+    {
+        if (Rectangle != null && Ellipse != null && Arrow != null && Text != null && Freehand != null)
+            return;
+        var seed = ThemeToolStyle.FromLegacyRoot(this);
+        Rectangle ??= seed.Clone();
+        Ellipse ??= seed.Clone();
+        Arrow ??= seed.Clone();
+        Text ??= seed.Clone();
+        Freehand ??= seed.Clone();
+    }
+
+    /// <summary>Copies per-tool values back to legacy root properties for JSON consumers that only read flat fields.</summary>
+    public void MirrorLegacyFromProfiles()
+    {
+        EnsureToolStyles();
+        var r = Rectangle!;
+        Fill = r.Fill;
+        Stroke = r.Stroke;
+        TextColor = r.TextColor;
+        FontFamilyName = r.FontFamilyName;
+        FontSize = r.FontSize;
+        Thickness = r.Thickness;
+        CornerRadius = r.CornerRadius;
+        ArrowHead = Arrow!.ArrowHead;
+        FreeThickness = Freehand!.FreeThickness;
+    }
 
     public DrawingTheme Clone() => new()
     {
@@ -45,6 +121,11 @@ internal sealed class DrawingTheme
         CornerRadius = CornerRadius,
         ArrowHead = ArrowHead,
         FreeThickness = FreeThickness,
+        Rectangle = Rectangle?.Clone(),
+        Ellipse = Ellipse?.Clone(),
+        Arrow = Arrow?.Clone(),
+        Text = Text?.Clone(),
+        Freehand = Freehand?.Clone(),
     };
 }
 
@@ -65,6 +146,8 @@ internal static class DrawingThemeStore
             var loaded = JsonSerializer.Deserialize<List<DrawingTheme>>(File.ReadAllText(FilePath));
             if (loaded == null || loaded.Count == 0)
                 return CreateDefaults();
+            foreach (var t in loaded)
+                t.EnsureToolStyles();
             return loaded;
         }
         catch
@@ -77,6 +160,11 @@ internal static class DrawingThemeStore
     {
         try
         {
+            foreach (var t in themes)
+            {
+                t.EnsureToolStyles();
+                t.MirrorLegacyFromProfiles();
+            }
             Directory.CreateDirectory(FolderName);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(themes, Options));
         }
@@ -363,12 +451,12 @@ internal sealed class DrawingWindow : Window
         root.Children.Add(_leftScroll);
 
         // ---- Center canvas ----
-        var center = new Grid { Background = Brushes.LightGray };
+        var center = new Grid { Background = Brushes.White };
         var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Background = Brushes.LightGray,
+            Background = Brushes.White,
         };
         var canvasHost = new Grid();
         _canvas = new Canvas
@@ -422,18 +510,51 @@ internal sealed class DrawingWindow : Window
 
     private void ApplyTheme(DrawingTheme theme, bool syncUiOnly)
     {
-        _fill = ParseBrush(theme.Fill);
-        _stroke = ParseBrush(theme.Stroke);
-        _textColor = ParseBrush(theme.TextColor);
-        _fontFamily = new FontFamily(theme.FontFamilyName);
-        _fontSize = theme.FontSize;
-        _thickness = theme.Thickness;
-        _cornerRadius = theme.CornerRadius;
-        _freeThickness = theme.FreeThickness;
-        _arrowHead = Enum.TryParse<ArrowHeadStyle>(theme.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
-
+        ApplyToolProfileFromTheme(theme, ThemeToolSource());
         if (_propertyPanel != null)
             SyncPropertyControlsFromCurrent();
+    }
+
+    private Tool MapDrawKindToTool(string kind) => kind switch
+    {
+        "rect" => Tool.Rectangle,
+        "ellipse" => Tool.Ellipse,
+        "arrow" => Tool.Arrow,
+        "text" => Tool.Text,
+        "freehand" => Tool.Freehand,
+        _ => Tool.Rectangle,
+    };
+
+    private Tool ThemeToolSource()
+    {
+        if (_tool == Tool.Select && _selected != null)
+            return MapDrawKindToTool(_selected.Kind);
+        if (_tool == Tool.Select)
+            return Tool.Rectangle;
+        return _tool;
+    }
+
+    private void ApplyToolProfileFromTheme(DrawingTheme theme, Tool profileTool)
+    {
+        theme.EnsureToolStyles();
+        var st = profileTool switch
+        {
+            Tool.Rectangle => theme.Rectangle!,
+            Tool.Ellipse => theme.Ellipse!,
+            Tool.Arrow => theme.Arrow!,
+            Tool.Text => theme.Text!,
+            Tool.Freehand => theme.Freehand!,
+            _ => theme.Rectangle!,
+        };
+        _fill = ParseBrush(st.Fill);
+        _stroke = ParseBrush(st.Stroke);
+        _textColor = ParseBrush(st.TextColor);
+        _fontFamily = new FontFamily(st.FontFamilyName);
+        _fontSize = st.FontSize;
+        _thickness = st.Thickness;
+        _cornerRadius = st.CornerRadius;
+        _freeThickness = st.FreeThickness;
+        _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
     }
 
     private void ShowThemeSettings()
@@ -673,6 +794,10 @@ internal sealed class DrawingWindow : Window
         _btnText.Background = tool == Tool.Text ? brushOn : brushOff;
         _btnFreehand.Background = tool == Tool.Freehand ? brushOn : brushOff;
         Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
+        if (_tool == Tool.Select && _selected != null)
+            SyncFromSelected();
+        else
+            ApplyToolProfileFromTheme(_activeTheme, _tool == Tool.Select ? Tool.Rectangle : _tool);
         UpdateStatus();
     }
 
@@ -1788,15 +1913,21 @@ internal sealed class ThemeSettingsWindow : Window
     private bool _suppressUpdate;
 
     private TextBox? _nameBox;
-    private ComboBox? _fillCombo;
-    private ComboBox? _strokeCombo;
-    private ComboBox? _textColorCombo;
-    private ComboBox? _fontCombo;
-    private TextBox? _fontSizeBox;
-    private TextBox? _thicknessBox;
-    private TextBox? _cornerBox;
-    private ComboBox? _arrowCombo;
-    private TextBox? _freeBox;
+
+    private ComboBox? _rFill, _rStroke, _rTextColor, _rFont;
+    private TextBox? _rFontSize, _rThickness, _rCorner;
+
+    private ComboBox? _eFill, _eStroke;
+    private TextBox? _eThickness;
+
+    private ComboBox? _aStroke, _aArrow;
+    private TextBox? _aThickness;
+
+    private ComboBox? _tTextColor, _tFont;
+    private TextBox? _tFontSize, _tThickness;
+
+    private ComboBox? _fStroke;
+    private TextBox? _fFreeThickness;
 
     private static readonly string[] ColorChoices =
     {
@@ -1872,6 +2003,7 @@ internal sealed class ThemeSettingsWindow : Window
         {
             CommitEditor();
             var theme = new DrawingTheme { Name = "New theme" };
+            theme.EnsureToolStyles();
             Themes.Add(theme);
             _list.ItemsSource = null;
             _list.ItemsSource = Themes;
@@ -1924,63 +2056,149 @@ internal sealed class ThemeSettingsWindow : Window
         {
             if (_suppressUpdate || _editing == null) return;
             _editing.Name = _nameBox.Text;
-            var sel = _list.SelectedIndex;
-            _list.ItemsSource = null;
-            _list.ItemsSource = Themes;
-            _list.SelectedIndex = sel;
+            _list.Items.Refresh();
         };
         _editor.Children.Add(_nameBox);
 
-        _editor.Children.Add(EditorLabel("Fill color"));
-        _fillCombo = MakeColorCombo(); _editor.Children.Add(_fillCombo);
-        _editor.Children.Add(EditorLabel("Stroke / frame color"));
-        _strokeCombo = MakeColorCombo(); _editor.Children.Add(_strokeCombo);
-        _editor.Children.Add(EditorLabel("Text color"));
-        _textColorCombo = MakeColorCombo(); _editor.Children.Add(_textColorCombo);
+        var tabs = new TabControl { MinHeight = 380, Margin = new Thickness(0, 4, 0, 0) };
 
-        _editor.Children.Add(EditorLabel("Font family"));
-        _fontCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var n in FontChoices) _fontCombo.Items.Add(n);
-        _editor.Children.Add(_fontCombo);
+        var spR = new StackPanel { Margin = new Thickness(8) };
+        spR.Children.Add(EditorLabel("Fill"));
+        _rFill = MakeColorCombo();
+        spR.Children.Add(_rFill);
+        spR.Children.Add(EditorLabel("Stroke / frame"));
+        _rStroke = MakeColorCombo();
+        spR.Children.Add(_rStroke);
+        spR.Children.Add(EditorLabel("Text color (rectangle label)"));
+        _rTextColor = MakeColorCombo();
+        spR.Children.Add(_rTextColor);
+        spR.Children.Add(EditorLabel("Font family"));
+        _rFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        foreach (var n in FontChoices) _rFont.Items.Add(n);
+        spR.Children.Add(_rFont);
+        spR.Children.Add(EditorLabel("Font size"));
+        _rFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spR.Children.Add(_rFontSize);
+        spR.Children.Add(EditorLabel("Stroke thickness"));
+        _rThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spR.Children.Add(_rThickness);
+        spR.Children.Add(EditorLabel("Corner radius"));
+        _rCorner = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spR.Children.Add(_rCorner);
+        tabs.Items.Add(new TabItem { Header = "Rectangle", Content = spR });
 
-        _editor.Children.Add(EditorLabel("Font size"));
-        _fontSizeBox = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        _editor.Children.Add(_fontSizeBox);
+        var spE = new StackPanel { Margin = new Thickness(8) };
+        spE.Children.Add(EditorLabel("Fill"));
+        _eFill = MakeColorCombo();
+        spE.Children.Add(_eFill);
+        spE.Children.Add(EditorLabel("Stroke / frame"));
+        _eStroke = MakeColorCombo();
+        spE.Children.Add(_eStroke);
+        spE.Children.Add(EditorLabel("Stroke thickness"));
+        _eThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spE.Children.Add(_eThickness);
+        tabs.Items.Add(new TabItem { Header = "Circle", Content = spE });
 
-        _editor.Children.Add(EditorLabel("Stroke thickness"));
-        _thicknessBox = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        _editor.Children.Add(_thicknessBox);
+        var spA = new StackPanel { Margin = new Thickness(8) };
+        spA.Children.Add(EditorLabel("Stroke"));
+        _aStroke = MakeColorCombo();
+        spA.Children.Add(_aStroke);
+        spA.Children.Add(EditorLabel("Thickness"));
+        _aThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spA.Children.Add(_aThickness);
+        spA.Children.Add(EditorLabel("Arrow head"));
+        _aArrow = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        _aArrow.Items.Add("None");
+        _aArrow.Items.Add("Simple");
+        _aArrow.Items.Add("Double");
+        spA.Children.Add(_aArrow);
+        tabs.Items.Add(new TabItem { Header = "Arrow", Content = spA });
 
-        _editor.Children.Add(EditorLabel("Free draw thickness"));
-        _freeBox = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        _editor.Children.Add(_freeBox);
+        var spT = new StackPanel { Margin = new Thickness(8) };
+        spT.Children.Add(EditorLabel("Text color"));
+        _tTextColor = MakeColorCombo();
+        spT.Children.Add(_tTextColor);
+        spT.Children.Add(EditorLabel("Font family"));
+        _tFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        foreach (var n in FontChoices) _tFont.Items.Add(n);
+        spT.Children.Add(_tFont);
+        spT.Children.Add(EditorLabel("Font size"));
+        _tFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spT.Children.Add(_tFontSize);
+        spT.Children.Add(EditorLabel("Thickness (outline)"));
+        _tThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spT.Children.Add(_tThickness);
+        tabs.Items.Add(new TabItem { Header = "Text", Content = spT });
 
-        _editor.Children.Add(EditorLabel("Rectangle corner radius"));
-        _cornerBox = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        _editor.Children.Add(_cornerBox);
+        var spF = new StackPanel { Margin = new Thickness(8) };
+        spF.Children.Add(EditorLabel("Stroke"));
+        _fStroke = MakeColorCombo();
+        spF.Children.Add(_fStroke);
+        spF.Children.Add(EditorLabel("Free draw thickness"));
+        _fFreeThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spF.Children.Add(_fFreeThickness);
+        tabs.Items.Add(new TabItem { Header = "Freeform", Content = spF });
 
-        _editor.Children.Add(EditorLabel("Arrow head"));
-        _arrowCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        _arrowCombo.Items.Add("None");
-        _arrowCombo.Items.Add("Simple");
-        _arrowCombo.Items.Add("Double");
-        _editor.Children.Add(_arrowCombo);
+        _editor.Children.Add(tabs);
 
-        _fillCombo.SelectionChanged += (_, _) => Sync(c => c.Fill = ColorString(_fillCombo!));
-        _strokeCombo.SelectionChanged += (_, _) => Sync(c => c.Stroke = ColorString(_strokeCombo!));
-        _textColorCombo.SelectionChanged += (_, _) => Sync(c => c.TextColor = ColorString(_textColorCombo!));
-        _fontCombo.SelectionChanged += (_, _) => Sync(c => c.FontFamilyName = _fontCombo!.SelectedItem as string ?? c.FontFamilyName);
-        _fontSizeBox.TextChanged += (_, _) => Sync(c => { if (double.TryParse(_fontSizeBox!.Text, out var v)) c.FontSize = Math.Max(4, v); });
-        _thicknessBox.TextChanged += (_, _) => Sync(c => { if (double.TryParse(_thicknessBox!.Text, out var v)) c.Thickness = Math.Max(0.5, v); });
-        _freeBox.TextChanged += (_, _) => Sync(c => { if (double.TryParse(_freeBox!.Text, out var v)) c.FreeThickness = Math.Max(1, v); });
-        _cornerBox.TextChanged += (_, _) => Sync(c => { if (double.TryParse(_cornerBox!.Text, out var v)) c.CornerRadius = Math.Max(0, v); });
-        _arrowCombo.SelectionChanged += (_, _) => Sync(c => c.ArrowHead = _arrowCombo!.SelectedItem as string ?? "Simple");
-    }
+        void R(Action<ThemeToolStyle> set)
+        {
+            if (_suppressUpdate || _editing == null) return;
+            _editing.EnsureToolStyles();
+            set(_editing.Rectangle!);
+        }
 
-    private void Sync(Action<DrawingTheme> apply)
-    {
-        if (_suppressUpdate || _editing == null) return;
-        apply(_editing);
+        void E(Action<ThemeToolStyle> set)
+        {
+            if (_suppressUpdate || _editing == null) return;
+            _editing.EnsureToolStyles();
+            set(_editing.Ellipse!);
+        }
+
+        void A(Action<ThemeToolStyle> set)
+        {
+            if (_suppressUpdate || _editing == null) return;
+            _editing.EnsureToolStyles();
+            set(_editing.Arrow!);
+        }
+
+        void Tx(Action<ThemeToolStyle> set)
+        {
+            if (_suppressUpdate || _editing == null) return;
+            _editing.EnsureToolStyles();
+            set(_editing.Text!);
+        }
+
+        void F(Action<ThemeToolStyle> set)
+        {
+            if (_suppressUpdate || _editing == null) return;
+            _editing.EnsureToolStyles();
+            set(_editing.Freehand!);
+        }
+
+        _rFill!.SelectionChanged += (_, _) => R(s => s.Fill = ColorString(_rFill));
+        _rStroke!.SelectionChanged += (_, _) => R(s => s.Stroke = ColorString(_rStroke));
+        _rTextColor!.SelectionChanged += (_, _) => R(s => s.TextColor = ColorString(_rTextColor));
+        _rFont!.SelectionChanged += (_, _) => R(s => s.FontFamilyName = _rFont.SelectedItem as string ?? s.FontFamilyName);
+        _rFontSize!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
+        _rThickness!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+        _rCorner!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rCorner.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
+
+        _eFill!.SelectionChanged += (_, _) => E(s => s.Fill = ColorString(_eFill));
+        _eStroke!.SelectionChanged += (_, _) => E(s => s.Stroke = ColorString(_eStroke));
+        _eThickness!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+
+        _aStroke!.SelectionChanged += (_, _) => A(s => s.Stroke = ColorString(_aStroke));
+        _aThickness!.TextChanged += (_, _) => A(s => { if (double.TryParse(_aThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+        _aArrow!.SelectionChanged += (_, _) => A(s => s.ArrowHead = _aArrow.SelectedItem as string ?? "Simple");
+
+        _tTextColor!.SelectionChanged += (_, _) => Tx(s => s.TextColor = ColorString(_tTextColor));
+        _tFont!.SelectionChanged += (_, _) => Tx(s => s.FontFamilyName = _tFont.SelectedItem as string ?? s.FontFamilyName);
+        _tFontSize!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
+        _tThickness!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+
+        _fStroke!.SelectionChanged += (_, _) => F(s => s.Stroke = ColorString(_fStroke));
+        _fFreeThickness!.TextChanged += (_, _) => F(s => { if (double.TryParse(_fFreeThickness.Text, out var v)) s.FreeThickness = Math.Max(1, v); });
     }
 
     private static string ColorString(ComboBox cb)
@@ -2025,17 +2243,38 @@ internal sealed class ThemeSettingsWindow : Window
                 return;
             }
             _nameBox!.Text = _editing.Name;
-            SelectColor(_fillCombo!, _editing.Fill);
-            SelectColor(_strokeCombo!, _editing.Stroke);
-            SelectColor(_textColorCombo!, _editing.TextColor);
-            _fontCombo!.SelectedItem = _editing.FontFamilyName;
-            if (_fontCombo.SelectedItem == null) _fontCombo.SelectedIndex = 0;
-            _fontSizeBox!.Text = _editing.FontSize.ToString();
-            _thicknessBox!.Text = _editing.Thickness.ToString();
-            _freeBox!.Text = _editing.FreeThickness.ToString();
-            _cornerBox!.Text = _editing.CornerRadius.ToString();
-            _arrowCombo!.SelectedItem = _editing.ArrowHead;
-            if (_arrowCombo.SelectedItem == null) _arrowCombo.SelectedIndex = 1;
+            _editing.EnsureToolStyles();
+            var r = _editing.Rectangle!;
+            var e = _editing.Ellipse!;
+            var a = _editing.Arrow!;
+            var tx = _editing.Text!;
+            var fh = _editing.Freehand!;
+            SelectColor(_rFill!, r.Fill);
+            SelectColor(_rStroke!, r.Stroke);
+            SelectColor(_rTextColor!, r.TextColor);
+            _rFont!.SelectedItem = r.FontFamilyName;
+            if (_rFont.SelectedItem == null) _rFont.SelectedIndex = 0;
+            _rFontSize!.Text = r.FontSize.ToString();
+            _rThickness!.Text = r.Thickness.ToString();
+            _rCorner!.Text = r.CornerRadius.ToString();
+
+            SelectColor(_eFill!, e.Fill);
+            SelectColor(_eStroke!, e.Stroke);
+            _eThickness!.Text = e.Thickness.ToString();
+
+            SelectColor(_aStroke!, a.Stroke);
+            _aThickness!.Text = a.Thickness.ToString();
+            _aArrow!.SelectedItem = a.ArrowHead;
+            if (_aArrow.SelectedItem == null) _aArrow.SelectedIndex = 1;
+
+            SelectColor(_tTextColor!, tx.TextColor);
+            _tFont!.SelectedItem = tx.FontFamilyName;
+            if (_tFont.SelectedItem == null) _tFont.SelectedIndex = 0;
+            _tFontSize!.Text = tx.FontSize.ToString();
+            _tThickness!.Text = tx.Thickness.ToString();
+
+            SelectColor(_fStroke!, fh.Stroke);
+            _fFreeThickness!.Text = fh.FreeThickness.ToString();
         }
         finally
         {
