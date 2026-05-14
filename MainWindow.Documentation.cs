@@ -381,6 +381,15 @@ public partial class MainWindow
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownFencedCodeBlockTransformer());
         editor.TextArea.TextView.BackgroundRenderers.Add(new MarkdownFencedCodeBackgroundRenderer());
 
+        // Fence state for a line depends on backticks elsewhere; AvalonEdit only invalidates the
+        // line whose text changed, so a ``` typed near an existing "# heading" leaves the cached
+        // heading styling on that line. Force a full redraw on backtick changes.
+        editor.Document.Changed += (_, e) =>
+        {
+            if (e.InsertedText.Text.IndexOf('`') >= 0 || e.RemovedText.Text.IndexOf('`') >= 0)
+                editor.TextArea.TextView.Redraw();
+        };
+
         editor.TextChanged += (_, _) =>
         {
             if (_docCurrentPackage != null)
