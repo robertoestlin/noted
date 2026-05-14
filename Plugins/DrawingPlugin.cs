@@ -1927,6 +1927,8 @@ internal sealed class ThemeSettingsWindow : Window
     private ComboBox? _fStroke;
     private TextBox? _fFreeThickness;
 
+    private Canvas? _previewCanvas;
+
     private static readonly string[] ColorChoices =
     {
         "Transparent",
@@ -1948,8 +1950,8 @@ internal sealed class ThemeSettingsWindow : Window
     {
         Themes = existing.Select(t => t.Clone()).ToList();
         Title = "Drawing Themes";
-        Width = 720;
-        Height = 520;
+        Width = 1000;
+        Height = 560;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var root = new DockPanel { Margin = new Thickness(10) };
@@ -2032,11 +2034,48 @@ internal sealed class ThemeSettingsWindow : Window
             }
         };
 
-        // Right: editor
+        // Center: editor + live preview
+        var centerGrid = new Grid();
+        centerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        centerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(248) });
+
         var editorScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         _editor = new StackPanel();
         editorScroll.Content = _editor;
-        root.Children.Add(editorScroll);
+        Grid.SetColumn(editorScroll, 0);
+        centerGrid.Children.Add(editorScroll);
+
+        var previewWrap = new Border
+        {
+            Margin = new Thickness(12, 0, 0, 0),
+            Padding = new Thickness(10, 8, 10, 10),
+            Background = new SolidColorBrush(Color.FromRgb(0xFA, 0xFA, 0xFA)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+        };
+        var previewStack = new StackPanel();
+        previewStack.Children.Add(EditorLabel("Live preview"));
+        previewStack.Children.Add(new TextBlock
+        {
+            Text = "All tools use the values on the left.",
+            FontSize = 11,
+            Foreground = Brushes.Gray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+        _previewCanvas = new Canvas
+        {
+            Width = 220,
+            Height = 286,
+            Background = Brushes.White,
+        };
+        previewStack.Children.Add(_previewCanvas);
+        previewWrap.Child = previewStack;
+        Grid.SetColumn(previewWrap, 1);
+        centerGrid.Children.Add(previewWrap);
+
+        root.Children.Add(centerGrid);
 
         BuildEditor();
         if (Themes.Count > 0)
@@ -2145,6 +2184,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_suppressUpdate || _editing == null) return;
             _editing.EnsureToolStyles();
             set(_editing.Rectangle!);
+            RebuildThemePreview();
         }
 
         void E(Action<ThemeToolStyle> set)
@@ -2152,6 +2192,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_suppressUpdate || _editing == null) return;
             _editing.EnsureToolStyles();
             set(_editing.Ellipse!);
+            RebuildThemePreview();
         }
 
         void A(Action<ThemeToolStyle> set)
@@ -2159,6 +2200,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_suppressUpdate || _editing == null) return;
             _editing.EnsureToolStyles();
             set(_editing.Arrow!);
+            RebuildThemePreview();
         }
 
         void Tx(Action<ThemeToolStyle> set)
@@ -2166,6 +2208,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_suppressUpdate || _editing == null) return;
             _editing.EnsureToolStyles();
             set(_editing.Text!);
+            RebuildThemePreview();
         }
 
         void F(Action<ThemeToolStyle> set)
@@ -2173,6 +2216,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_suppressUpdate || _editing == null) return;
             _editing.EnsureToolStyles();
             set(_editing.Freehand!);
+            RebuildThemePreview();
         }
 
         _rFill!.SelectionChanged += (_, _) => R(s => s.Fill = ColorString(_rFill));
@@ -2248,6 +2292,7 @@ internal sealed class ThemeSettingsWindow : Window
             if (_editing == null)
             {
                 _nameBox!.Text = "";
+                RebuildThemePreview();
                 return;
             }
             _nameBox!.Text = _editing.Name;
@@ -2291,6 +2336,7 @@ internal sealed class ThemeSettingsWindow : Window
 
             SelectColor(_fStroke!, fh.Stroke);
             _fFreeThickness!.Text = fh.FreeThickness.ToString();
+            RebuildThemePreview();
         }
         finally
         {
@@ -2314,6 +2360,216 @@ internal sealed class ThemeSettingsWindow : Window
         var extra = MakeColorChoiceItem(key);
         cb.Items.Add(extra);
         cb.SelectedItem = extra;
+    }
+
+    private void RebuildThemePreview()
+    {
+        if (_previewCanvas == null) return;
+        _previewCanvas.Children.Clear();
+        if (_editing == null) return;
+        _editing.EnsureToolStyles();
+        var r = _editing.Rectangle!;
+        var e = _editing.Ellipse!;
+        var a = _editing.Arrow!;
+        var tx = _editing.Text!;
+        var f = _editing.Freehand!;
+
+        PreviewAppendCaption(_previewCanvas, 0, "Rectangle");
+        PreviewAppendRect(_previewCanvas, r, 4, 14, 208, 40);
+
+        PreviewAppendCaption(_previewCanvas, 58, "Circle");
+        PreviewAppendEllipse(_previewCanvas, e, 4, 72, 208, 38);
+
+        PreviewAppendCaption(_previewCanvas, 116, "Arrow");
+        PreviewAppendArrow(_previewCanvas, a, new Point(18, 148), new Point(202, 134));
+
+        PreviewAppendCaption(_previewCanvas, 168, "Text");
+        PreviewAppendText(_previewCanvas, tx, 6, 184, "Sample text");
+
+        PreviewAppendCaption(_previewCanvas, 218, "Freeform");
+        PreviewAppendFreehand(_previewCanvas, f, 4, 234, 210);
+    }
+
+    private static void PreviewAppendCaption(Canvas c, double top, string text)
+    {
+        var tb = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            Foreground = Brushes.DimGray,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(tb, 4);
+        Canvas.SetTop(tb, top);
+        c.Children.Add(tb);
+    }
+
+    private static FontFamily PreviewSafeFont(string name)
+    {
+        try
+        {
+            return new FontFamily(name);
+        }
+        catch
+        {
+            return new FontFamily("Segoe UI");
+        }
+    }
+
+    private static void PreviewAppendRect(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
+    {
+        var fill = DrawingWindow.ParseBrush(st.Fill);
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var radius = Math.Min(Math.Max(0, st.CornerRadius), Math.Min(w, h) / 2);
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Width = w,
+            Height = h,
+            Fill = fill,
+            Stroke = stroke,
+            StrokeThickness = st.Thickness,
+            RadiusX = radius,
+            RadiusY = radius,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(rect, x);
+        Canvas.SetTop(rect, y);
+        c.Children.Add(rect);
+        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
+        var label = new TextBlock
+        {
+            Text = "Aa",
+            FontSize = fs,
+            FontFamily = PreviewSafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            TextAlignment = TextAlignment.Center,
+            IsHitTestVisible = false,
+        };
+        label.Measure(new Size(w - 8, h - 8));
+        Canvas.SetLeft(label, x + 4);
+        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
+        c.Children.Add(label);
+    }
+
+    private static void PreviewAppendEllipse(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
+    {
+        var el = new Ellipse
+        {
+            Width = w,
+            Height = h,
+            Fill = DrawingWindow.ParseBrush(st.Fill),
+            Stroke = DrawingWindow.ParseBrush(st.Stroke),
+            StrokeThickness = st.Thickness,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(el, x);
+        Canvas.SetTop(el, y);
+        c.Children.Add(el);
+    }
+
+    private static void PreviewAppendArrow(Canvas c, ThemeToolStyle st, Point p1, Point p2)
+    {
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var th = Math.Max(1.5, st.Thickness);
+        c.Children.Add(new Line
+        {
+            X1 = p1.X,
+            Y1 = p1.Y,
+            X2 = p2.X,
+            Y2 = p2.Y,
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        });
+        PreviewAddArrowHeads(c, p1, p2, stroke, th, st.ArrowHead);
+    }
+
+    private static void PreviewAddArrowHeads(Canvas c, Point p1, Point p2, Brush stroke, double thickness, string arrowHead)
+    {
+        if (string.Equals(arrowHead, "None", StringComparison.OrdinalIgnoreCase)) return;
+        var headSize = Math.Max(8, thickness * 3.5);
+        if (string.Equals(arrowHead, "Double", StringComparison.OrdinalIgnoreCase))
+        {
+            PreviewDrawArrowHead(c, p2, p1, stroke, thickness, headSize);
+            PreviewDrawArrowHead(c, p1, p2, stroke, thickness, headSize);
+            return;
+        }
+        PreviewDrawArrowHead(c, p1, p2, stroke, thickness, headSize);
+    }
+
+    private static void PreviewDrawArrowHead(Canvas c, Point from, Point to, Brush stroke, double thickness, double size)
+    {
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        if (len <= 0.001) return;
+        var ux = dx / len;
+        var uy = dy / len;
+        var angle = Math.PI / 7;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var leftX = to.X - size * (ux * cos + uy * sin);
+        var leftY = to.Y - size * (uy * cos - ux * sin);
+        var rightX = to.X - size * (ux * cos - uy * sin);
+        var rightY = to.Y - size * (uy * cos + ux * sin);
+        PreviewAddHeadLine(c, to.X, to.Y, leftX, leftY, stroke, thickness);
+        PreviewAddHeadLine(c, to.X, to.Y, rightX, rightY, stroke, thickness);
+    }
+
+    private static void PreviewAddHeadLine(Canvas c, double x1, double y1, double x2, double y2, Brush stroke, double th)
+    {
+        c.Children.Add(new Line
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        });
+    }
+
+    private static void PreviewAppendText(Canvas c, ThemeToolStyle st, double x, double y, string sample)
+    {
+        var tb = new TextBlock
+        {
+            Text = sample,
+            FontSize = Math.Clamp(st.FontSize * 0.55, 8, 28),
+            FontFamily = PreviewSafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(tb, x);
+        Canvas.SetTop(tb, y);
+        c.Children.Add(tb);
+    }
+
+    private static void PreviewAppendFreehand(Canvas c, ThemeToolStyle st, double x, double yTop, double width)
+    {
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var th = Math.Max(2, st.FreeThickness);
+        var poly = new Polyline
+        {
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        };
+        const int steps = 26;
+        var amp = Math.Clamp(th * 1.8, 5, 14);
+        for (var i = 0; i <= steps; i++)
+        {
+            var t = (double)i / steps;
+            poly.Points.Add(new Point(x + t * width, yTop + amp * Math.Sin(t * Math.PI * 3)));
+        }
+        c.Children.Add(poly);
     }
 
     private void CommitEditor()
