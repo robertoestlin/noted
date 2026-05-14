@@ -315,6 +315,9 @@
                     <MenuItem Header="_Base64" Click="MenuBase64_Click"/>
                     <MenuItem Header="Computer _Statistics" Click="MenuComputerStatistics_Click"/>
                     <MenuItem Header="_Drawing" Click="MenuDrawing_Click"/>
+                    <MenuItem Header="_Image">
+                        <MenuItem Header="Image to _Color" Click="MenuImageToColor_Click"/>
+                    </MenuItem>
                     <MenuItem Header="JS_ON Pretty" Click="MenuJsonPretty_Click"/>
                     <MenuItem Header="_JWT Decoder" Click="MenuJwtDecoder_Click"/>
                     <MenuItem Header="_Message Overlay" InputGestureText="Ctrl+O" Click="MenuQuickMessageOverlay_Click"/>
