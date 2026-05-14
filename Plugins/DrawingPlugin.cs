@@ -139,6 +139,9 @@ internal static class DrawingThemeStore
 
     public static string FilePath => System.IO.Path.Combine(FolderName, FileName);
 
+    /// <summary>Folder for drawing-themes.json and drawing-named-colors.json.</summary>
+    public static string NotedDataDirectory => FolderName;
+
     public static List<DrawingTheme> Load()
     {
         try
@@ -205,6 +208,520 @@ internal static class DrawingThemeStore
     };
 }
 
+internal sealed class DrawingNamedColor
+{
+    public string Name { get; set; } = "";
+    public string Hex { get; set; } = "#000000";
+
+    public override string ToString() => $"{Name}    {Hex}";
+}
+
+internal static class DrawingColorUtilities
+{
+    public static bool TryParseColorString(string? s, out Color color)
+    {
+        color = Colors.Black;
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        s = s.Trim();
+        if (string.Equals(s, "Transparent", StringComparison.OrdinalIgnoreCase))
+        {
+            color = Colors.Transparent;
+            return true;
+        }
+        try
+        {
+            var o = ColorConverter.ConvertFromString(s);
+            if (o is Color c)
+            {
+                color = Color.FromArgb(c.A, c.R, c.G, c.B);
+                return true;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return false;
+    }
+
+    public static string FormatHexForTheme(Color c)
+    {
+        if (c.A == 0) return "Transparent";
+        if (c.A == 255) return $"#{c.R:X2}{c.G:X2}{c.B:X2}";
+        return $"#{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+    }
+
+    public static Color ColorFromHsv(double hueDegrees, double sat, double val)
+    {
+        sat = Math.Clamp(sat, 0, 1);
+        val = Math.Clamp(val, 0, 1);
+        while (hueDegrees >= 360) hueDegrees -= 360;
+        while (hueDegrees < 0) hueDegrees += 360;
+
+        var c = val * sat;
+        var x = c * (1 - Math.Abs(hueDegrees / 60 % 2 - 1));
+        var m = val - c;
+
+        double rp = 0, gp = 0, bp = 0;
+        if (hueDegrees < 60) { rp = c; gp = x; bp = 0; }
+        else if (hueDegrees < 120) { rp = x; gp = c; bp = 0; }
+        else if (hueDegrees < 180) { rp = 0; gp = c; bp = x; }
+        else if (hueDegrees < 240) { rp = 0; gp = x; bp = c; }
+        else if (hueDegrees < 300) { rp = x; gp = 0; bp = c; }
+        else { rp = c; gp = 0; bp = x; }
+
+        return Color.FromRgb(
+            (byte)Math.Round((rp + m) * 255),
+            (byte)Math.Round((gp + m) * 255),
+            (byte)Math.Round((bp + m) * 255));
+    }
+
+    public static void RgbToHsv(Color color, out double hueDegrees, out double s, out double v)
+    {
+        var r = color.R / 255.0;
+        var g = color.G / 255.0;
+        var b = color.B / 255.0;
+
+        var max = Math.Max(r, Math.Max(g, b));
+        var min = Math.Min(r, Math.Min(g, b));
+        var delta = max - min;
+
+        v = max;
+        s = max < 1e-10 ? 0 : delta / max;
+
+        if (delta < 1e-10)
+        {
+            hueDegrees = 0;
+            return;
+        }
+
+        double hh;
+        if (Math.Abs(max - r) < 1e-10)
+            hh = (g - b) / delta + (g < b ? 6 : 0);
+        else if (Math.Abs(max - g) < 1e-10)
+            hh = (b - r) / delta + 2;
+        else
+            hh = (r - g) / delta + 4;
+
+        hueDegrees = hh * 60;
+    }
+
+    public static Color ParseOrDefault(string? hex, Color fallback)
+        => TryParseColorString(hex, out var c) ? c : fallback;
+}
+
+internal static class DrawingNamedColorStore
+{
+    private const string NamedColorsFileName = "drawing-named-colors.json";
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    public static string NamedColorsFilePath => System.IO.Path.Combine(DrawingThemeStore.NotedDataDirectory, NamedColorsFileName);
+
+    public static List<DrawingNamedColor> Load()
+    {
+        try
+        {
+            if (!File.Exists(NamedColorsFilePath))
+                return new List<DrawingNamedColor>();
+            var list = JsonSerializer.Deserialize<List<DrawingNamedColor>>(File.ReadAllText(NamedColorsFilePath), JsonOptions);
+            return list ?? new List<DrawingNamedColor>();
+        }
+        catch
+        {
+            return new List<DrawingNamedColor>();
+        }
+    }
+
+    public static void Save(List<DrawingNamedColor> colors)
+    {
+        try
+        {
+            Directory.CreateDirectory(DrawingThemeStore.NotedDataDirectory);
+            File.WriteAllText(NamedColorsFilePath, JsonSerializer.Serialize(colors, JsonOptions));
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    public static Color[] MergeWithBasePalette(Color[] baseColors)
+    {
+        var list = new List<Color>();
+        foreach (var c in baseColors)
+            list.Add(c);
+        foreach (var n in Load())
+        {
+            if (!DrawingColorUtilities.TryParseColorString(n.Hex, out var c) || c.A == 0)
+                continue;
+            var exists = false;
+            foreach (var x in list)
+            {
+                if (x == c) { exists = true; break; }
+            }
+            if (!exists) list.Add(c);
+        }
+        return list.ToArray();
+    }
+}
+
+internal sealed class DrawingColorPickerWindow : Window
+{
+    public string? ResultHex { get; private set; }
+
+    private const int SpecW = 240;
+    private const int SpecH = 160;
+    private const int StripW = 22;
+
+    private readonly WriteableBitmap _spectrumBmp;
+    private readonly WriteableBitmap _stripBmp;
+    private readonly Image _spectrumImg;
+    private readonly Image _stripImg;
+    private readonly Grid _spectrumGrid;
+    private readonly Grid _stripGrid;
+    private readonly Canvas _markerCanvas;
+    private readonly Ellipse _markerRing;
+    private readonly Polygon _stripThumb;
+    private readonly TextBox _hex;
+    private bool _suppress;
+
+    private double _selH;
+    private double _selS;
+    private double _selV;
+
+    public DrawingColorPickerWindow(string? initialHex)
+    {
+        Title = "Color picker";
+        Width = 340;
+        Height = 380;
+        ResizeMode = ResizeMode.NoResize;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+        var start = DrawingColorUtilities.ParseOrDefault(initialHex, Color.FromRgb(0x21, 0x96, 0xF3));
+        if (start.A == 0) start = Colors.White;
+        DrawingColorUtilities.RgbToHsv(start, out _selH, out _selS, out _selV);
+
+        var root = new DockPanel { Margin = new Thickness(14) };
+
+        var form = new StackPanel();
+
+        form.Children.Add(new TextBlock
+        {
+            Text = "Click the field to choose hue and saturation. Use the strip for brightness.",
+            Foreground = Brushes.DimGray,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+
+        var pickerRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
+
+        _spectrumBmp = new WriteableBitmap(SpecW, SpecH, 96, 96, PixelFormats.Pbgra32, null);
+        _spectrumImg = new Image { Width = SpecW, Height = SpecH, Stretch = Stretch.Fill };
+        _spectrumImg.Source = _spectrumBmp;
+        _markerRing = new Ellipse
+        {
+            Width = 12,
+            Height = 12,
+            Stroke = Brushes.White,
+            StrokeThickness = 2,
+            Fill = Brushes.Transparent,
+            IsHitTestVisible = false,
+        };
+        _markerCanvas = new Canvas { Width = SpecW, Height = SpecH, Background = Brushes.Transparent };
+        _markerCanvas.Children.Add(_markerRing);
+
+        _spectrumGrid = new Grid { Width = SpecW, Height = SpecH, ClipToBounds = true };
+        _spectrumGrid.Children.Add(_spectrumImg);
+        _spectrumGrid.Children.Add(_markerCanvas);
+        _spectrumGrid.MouseLeftButtonDown += (_, e) =>
+        {
+            _spectrumGrid.CaptureMouse();
+            ApplySpectrumPoint(e.GetPosition(_spectrumGrid));
+        };
+        _spectrumGrid.MouseLeftButtonUp += (_, _) => _spectrumGrid.ReleaseMouseCapture();
+        _spectrumGrid.MouseMove += (_, e) =>
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && _spectrumGrid.IsMouseCaptured)
+                ApplySpectrumPoint(e.GetPosition(_spectrumGrid));
+        };
+
+        pickerRow.Children.Add(_spectrumGrid);
+
+        _stripBmp = new WriteableBitmap(StripW, SpecH, 96, 96, PixelFormats.Pbgra32, null);
+        _stripImg = new Image { Width = StripW, Height = SpecH, Stretch = Stretch.Fill };
+        _stripImg.Source = _stripBmp;
+        _stripThumb = new Polygon
+        {
+            Fill = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33)),
+            Stroke = Brushes.White,
+            StrokeThickness = 1,
+            Points = new PointCollection { new(0, 0), new(7, 5), new(0, 10) },
+            IsHitTestVisible = false,
+        };
+        _stripGrid = new Grid { Width = StripW, Height = SpecH, Margin = new Thickness(10, 0, 0, 0), ClipToBounds = true };
+        _stripGrid.Children.Add(_stripImg);
+        var stripOverlay = new Canvas { Width = StripW, Height = SpecH, Background = Brushes.Transparent };
+        stripOverlay.Children.Add(_stripThumb);
+        _stripGrid.Children.Add(stripOverlay);
+        _stripGrid.MouseLeftButtonDown += (_, e) =>
+        {
+            _stripGrid.CaptureMouse();
+            ApplyStripPoint(e.GetPosition(_stripGrid));
+        };
+        _stripGrid.MouseLeftButtonUp += (_, _) => _stripGrid.ReleaseMouseCapture();
+        _stripGrid.MouseMove += (_, e) =>
+        {
+            if (e.LeftButton == MouseButtonState.Pressed && _stripGrid.IsMouseCaptured)
+                ApplyStripPoint(e.GetPosition(_stripGrid));
+        };
+
+        pickerRow.Children.Add(_stripGrid);
+        form.Children.Add(pickerRow);
+
+        form.Children.Add(new TextBlock { Text = "Hex", FontWeight = FontWeights.SemiBold, Foreground = Brushes.DimGray, Margin = new Thickness(0, 4, 0, 4) });
+        _hex = new TextBox { Margin = new Thickness(0, 0, 0, 0) };
+        form.Children.Add(_hex);
+
+        _hex.TextChanged += (_, _) =>
+        {
+            if (_suppress) return;
+            if (!DrawingColorUtilities.TryParseColorString(_hex.Text, out var c) || c.A == 0) return;
+            DrawingColorUtilities.RgbToHsv(c, out _selH, out _selS, out _selV);
+            RegenerateSpectrum();
+            RegenerateStrip();
+            UpdateMarkerAndThumb();
+        };
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        var btnSelect = new Button { Content = "Select", Width = 88, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var btnCancel = new Button { Content = "Cancel", Width = 88, IsCancel = true };
+        btnSelect.Click += (_, _) =>
+        {
+            if (!DrawingColorUtilities.TryParseColorString(_hex.Text, out var c))
+            {
+                MessageBox.Show(this, "Could not parse the hex color.", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            ResultHex = DrawingColorUtilities.FormatHexForTheme(c);
+            DialogResult = true;
+            Close();
+        };
+        btnCancel.Click += (_, _) => { DialogResult = false; Close(); };
+        buttons.Children.Add(btnSelect);
+        buttons.Children.Add(btnCancel);
+        root.Children.Add(buttons);
+
+        root.Children.Add(form);
+        Content = root;
+
+        RegenerateSpectrum();
+        RegenerateStrip();
+        _suppress = true;
+        _hex.Text = DrawingColorUtilities.FormatHexForTheme(start);
+        _suppress = false;
+        UpdateMarkerAndThumb();
+    }
+
+    private void ApplySpectrumPoint(Point p)
+    {
+        var x = Math.Clamp(p.X, 0, SpecW - 1);
+        var y = Math.Clamp(p.Y, 0, SpecH - 1);
+        _selH = x / Math.Max(SpecW - 1, 1) * 360.0;
+        _selS = 1.0 - y / Math.Max(SpecH - 1, 1);
+        RegenerateStrip();
+        PushHexFromHsv();
+        UpdateMarkerAndThumb();
+    }
+
+    private void ApplyStripPoint(Point p)
+    {
+        var y = Math.Clamp(p.Y, 0, SpecH - 1);
+        _selV = 1.0 - y / Math.Max(SpecH - 1, 1);
+        RegenerateSpectrum();
+        PushHexFromHsv();
+        UpdateMarkerAndThumb();
+    }
+
+    private void PushHexFromHsv()
+    {
+        var c = DrawingColorUtilities.ColorFromHsv(_selH, _selS, _selV);
+        _suppress = true;
+        _hex.Text = DrawingColorUtilities.FormatHexForTheme(c);
+        _suppress = false;
+    }
+
+    private void RegenerateSpectrum()
+    {
+        var stride = SpecW * 4;
+        var pixels = new byte[stride * SpecH];
+        for (var y = 0; y < SpecH; y++)
+        {
+            var sat = 1.0 - y / (double)Math.Max(SpecH - 1, 1);
+            for (var x = 0; x < SpecW; x++)
+            {
+                var hue = x / (double)Math.Max(SpecW - 1, 1) * 360.0;
+                var col = DrawingColorUtilities.ColorFromHsv(hue, sat, _selV);
+                var i = y * stride + x * 4;
+                pixels[i] = col.B;
+                pixels[i + 1] = col.G;
+                pixels[i + 2] = col.R;
+                pixels[i + 3] = 255;
+            }
+        }
+        _spectrumBmp.WritePixels(new Int32Rect(0, 0, SpecW, SpecH), pixels, stride, 0);
+    }
+
+    private void RegenerateStrip()
+    {
+        var stride = StripW * 4;
+        var pixels = new byte[stride * SpecH];
+        for (var y = 0; y < SpecH; y++)
+        {
+            var v = 1.0 - y / (double)Math.Max(SpecH - 1, 1);
+            var col = DrawingColorUtilities.ColorFromHsv(_selH, _selS, v);
+            for (var x = 0; x < StripW; x++)
+            {
+                var i = y * stride + x * 4;
+                pixels[i] = col.B;
+                pixels[i + 1] = col.G;
+                pixels[i + 2] = col.R;
+                pixels[i + 3] = 255;
+            }
+        }
+        _stripBmp.WritePixels(new Int32Rect(0, 0, StripW, SpecH), pixels, stride, 0);
+    }
+
+    private void UpdateMarkerAndThumb()
+    {
+        var mx = _selH / 360.0 * (SpecW - 1);
+        var my = (1.0 - _selS) * (SpecH - 1);
+        Canvas.SetLeft(_markerRing, mx - _markerRing.Width / 2);
+        Canvas.SetTop(_markerRing, my - _markerRing.Height / 2);
+
+        var ty = (1.0 - _selV) * (SpecH - 1) - 5;
+        Canvas.SetLeft(_stripThumb, StripW - 9);
+        Canvas.SetTop(_stripThumb, Math.Clamp(ty, 0, SpecH - 11));
+    }
+}
+
+internal sealed class DrawingNamedColorsWindow : Window
+{
+    private readonly ListBox _list;
+    private List<DrawingNamedColor> _working = new();
+    private bool _dirty;
+
+    public DrawingNamedColorsWindow()
+    {
+        Title = "Custom colors";
+        Width = 420;
+        Height = 420;
+        ResizeMode = ResizeMode.NoResize;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+        _working = DrawingNamedColorStore.Load();
+
+        var root = new DockPanel { Margin = new Thickness(12) };
+
+        var bottom = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+        DockPanel.SetDock(bottom, Dock.Bottom);
+        var btnClose = new Button { Content = "Close", Width = 90, IsCancel = true };
+        btnClose.Click += (_, _) =>
+        {
+            DialogResult = _dirty;
+            Close();
+        };
+        bottom.Children.Add(btnClose);
+        root.Children.Add(bottom);
+
+        var center = new DockPanel();
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        DockPanel.SetDock(actions, Dock.Top);
+        var btnAdd = new Button { Content = "Pick & add…", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 4, 10, 4) };
+        var btnEdit = new Button { Content = "Edit…", Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(10, 4, 10, 4) };
+        var btnRemove = new Button { Content = "Remove", Padding = new Thickness(10, 4, 10, 4) };
+        actions.Children.Add(btnAdd);
+        actions.Children.Add(btnEdit);
+        actions.Children.Add(btnRemove);
+        center.Children.Add(actions);
+
+        _list = new ListBox { MinHeight = 240 };
+        _list.ItemsSource = _working;
+        center.Children.Add(_list);
+        root.Children.Add(center);
+
+        Content = root;
+
+        btnAdd.Click += (_, _) => AddOrEdit(isEdit: false);
+        btnEdit.Click += (_, _) => AddOrEdit(isEdit: true);
+        btnRemove.Click += (_, _) =>
+        {
+            if (_list.SelectedItem is not DrawingNamedColor sel) return;
+            _working.Remove(sel);
+            DrawingNamedColorStore.Save(_working);
+            _list.ItemsSource = null;
+            _list.ItemsSource = _working;
+            _dirty = true;
+        };
+    }
+
+    private void AddOrEdit(bool isEdit)
+    {
+        DrawingNamedColor? existing = isEdit ? _list.SelectedItem as DrawingNamedColor : null;
+        if (isEdit && existing == null) return;
+
+        var pick = new DrawingColorPickerWindow(isEdit ? existing!.Hex : null) { Owner = this };
+        if (pick.ShowDialog() != true || string.IsNullOrWhiteSpace(pick.ResultHex)) return;
+
+        var nameDlg = new Window
+        {
+            Title = isEdit ? "Rename color" : "Name this color",
+            Width = 380,
+            Height = 150,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+        };
+        var sp = new StackPanel { Margin = new Thickness(14) };
+        sp.Children.Add(new TextBlock { Text = "Display name", Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 4) });
+        var nameBox = new TextBox { Text = existing?.Name ?? "", Margin = new Thickness(0, 0, 0, 12) };
+        sp.Children.Add(nameBox);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        var ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        row.Children.Add(ok);
+        row.Children.Add(cancel);
+        sp.Children.Add(row);
+        nameDlg.Content = sp;
+        ok.Click += (_, _) => { nameDlg.DialogResult = true; nameDlg.Close(); };
+        cancel.Click += (_, _) => { nameDlg.DialogResult = false; nameDlg.Close(); };
+        if (nameDlg.ShowDialog() != true) return;
+
+        var name = nameBox.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(name))
+        {
+            MessageBox.Show(this, "Please enter a name.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (isEdit && existing != null)
+        {
+            existing.Name = name;
+            existing.Hex = pick.ResultHex!;
+        }
+        else
+        {
+            _working.Add(new DrawingNamedColor { Name = name, Hex = pick.ResultHex! });
+        }
+
+        DrawingNamedColorStore.Save(_working);
+        _list.ItemsSource = null;
+        _list.ItemsSource = _working;
+        _dirty = true;
+    }
+}
+
 internal sealed class DrawingWindow : Window
 {
     private enum Tool { Select, Rectangle, Ellipse, Arrow, Text, Freehand }
@@ -263,6 +780,7 @@ internal sealed class DrawingWindow : Window
         Color.FromRgb(0x67, 0x3A, 0xB7),
         Color.FromRgb(0xD1, 0xC4, 0xE9),
         Color.FromRgb(0x79, 0x55, 0x48),
+        Color.FromRgb(0x3F, 0x51, 0xB5),
         Color.FromRgb(0xF5, 0xF5, 0xDC),
     };
 
@@ -571,7 +1089,9 @@ internal sealed class DrawingWindow : Window
         {
             Owner = this,
         };
-        if (dlg.ShowDialog() == true)
+        var saved = dlg.ShowDialog() == true;
+        RefreshDrawingPalettes();
+        if (saved)
         {
             _themes = dlg.Themes;
             DrawingThemeStore.Save(_themes);
@@ -580,14 +1100,27 @@ internal sealed class DrawingWindow : Window
         }
     }
 
+    private void RefreshDrawingPalettes()
+    {
+        var merged = DrawingNamedColorStore.MergeWithBasePalette(PaletteColors);
+        _fillPalette?.ReplaceColors(merged);
+        _fillPalette?.SetSelected(_fill);
+        _strokePalette?.ReplaceColors(merged);
+        _strokePalette?.SetSelected(_stroke);
+        _textColorPalette?.ReplaceColors(merged);
+        _textColorPalette?.SetSelected(_textColor);
+    }
+
     // ---------------- Property panel ----------------
 
     private void BuildPropertyPanel()
     {
         _propertyPanel.Children.Clear();
 
+        var paletteColors = DrawingNamedColorStore.MergeWithBasePalette(PaletteColors);
+
         _propertyPanel.Children.Add(SectionHeader("Fill"));
-        _fillPalette = new SwatchPalette(PaletteColors, _fill, b =>
+        _fillPalette = new SwatchPalette(paletteColors, _fill, b =>
         {
             _fill = b;
             ApplyColorToSelected();
@@ -595,7 +1128,7 @@ internal sealed class DrawingWindow : Window
         _propertyPanel.Children.Add(_fillPalette);
 
         _propertyPanel.Children.Add(SectionHeader("Stroke / Frame"));
-        _strokePalette = new SwatchPalette(PaletteColors, _stroke, b =>
+        _strokePalette = new SwatchPalette(paletteColors, _stroke, b =>
         {
             _stroke = b;
             ApplyColorToSelected();
@@ -603,12 +1136,27 @@ internal sealed class DrawingWindow : Window
         _propertyPanel.Children.Add(_strokePalette);
 
         _propertyPanel.Children.Add(SectionHeader("Text color"));
-        _textColorPalette = new SwatchPalette(PaletteColors, _textColor, b =>
+        _textColorPalette = new SwatchPalette(paletteColors, _textColor, b =>
         {
             _textColor = b;
             ApplyColorToSelected();
         });
         _propertyPanel.Children.Add(_textColorPalette);
+
+        var btnCustomColors = new Button
+        {
+            Content = "Custom colors…",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 10),
+            Padding = new Thickness(10, 4, 10, 4),
+        };
+        btnCustomColors.Click += (_, _) =>
+        {
+            var w = new DrawingNamedColorsWindow { Owner = this };
+            if (w.ShowDialog() == true)
+                RefreshDrawingPalettes();
+        };
+        _propertyPanel.Children.Add(btnCustomColors);
 
         _propertyPanel.Children.Add(SectionHeader("Thickness"));
         _thicknessSlider = MakeSlider(1, 24, _thickness);
@@ -1799,24 +2347,26 @@ internal sealed class SwatchPalette : Border
 {
     private readonly UniformGrid _grid;
     private readonly Action<Brush> _onChanged;
-    private readonly Color[] _colors;
     private Border? _selected;
 
     public SwatchPalette(Color[] colors, Brush initial, Action<Brush> onChanged)
     {
-        _colors = colors;
         _onChanged = onChanged;
         BorderBrush = Brushes.Transparent;
         BorderThickness = new Thickness(0);
         Margin = new Thickness(0, 0, 0, 4);
         _grid = new UniformGrid { Columns = 4, Margin = new Thickness(0) };
-        foreach (var c in colors)
-        {
-            var swatch = MakeSwatch(c);
-            _grid.Children.Add(swatch);
-        }
         Child = _grid;
+        ReplaceColors(colors);
         SetSelected(initial);
+    }
+
+    public void ReplaceColors(Color[] colors)
+    {
+        _grid.Children.Clear();
+        _selected = null;
+        foreach (var c in colors)
+            _grid.Children.Add(MakeSwatch(c));
     }
 
     private Border MakeSwatch(Color color)
@@ -2098,18 +2648,36 @@ internal sealed class ThemeSettingsWindow : Window
         };
         _editor.Children.Add(_nameBox);
 
+        var customColorsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+        var btnCustomColors = new Button { Content = "Custom colors…", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(0, 0, 8, 0) };
+        btnCustomColors.Click += (_, _) =>
+        {
+            var w = new DrawingNamedColorsWindow { Owner = this };
+            if (w.ShowDialog() == true)
+                RefreshThemeColorCombosFromEditing();
+        };
+        customColorsRow.Children.Add(btnCustomColors);
+        customColorsRow.Children.Add(new TextBlock
+        {
+            Text = "Named colors appear in the lists below.",
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = Brushes.Gray,
+            FontSize = 11,
+        });
+        _editor.Children.Add(customColorsRow);
+
         var tabs = new TabControl { MinHeight = 380, Margin = new Thickness(0, 4, 0, 0) };
 
         var spR = new StackPanel { Margin = new Thickness(8) };
         spR.Children.Add(EditorLabel("Fill"));
         _rFill = MakeColorCombo();
-        spR.Children.Add(_rFill);
+        spR.Children.Add(MakeThemeColorRow(_rFill));
         spR.Children.Add(EditorLabel("Stroke / frame"));
         _rStroke = MakeColorCombo();
-        spR.Children.Add(_rStroke);
+        spR.Children.Add(MakeThemeColorRow(_rStroke));
         spR.Children.Add(EditorLabel("Text color (rectangle label)"));
         _rTextColor = MakeColorCombo();
-        spR.Children.Add(_rTextColor);
+        spR.Children.Add(MakeThemeColorRow(_rTextColor));
         spR.Children.Add(EditorLabel("Font family"));
         _rFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
         foreach (var n in FontChoices) _rFont.Items.Add(n);
@@ -2128,10 +2696,10 @@ internal sealed class ThemeSettingsWindow : Window
         var spE = new StackPanel { Margin = new Thickness(8) };
         spE.Children.Add(EditorLabel("Fill"));
         _eFill = MakeColorCombo();
-        spE.Children.Add(_eFill);
+        spE.Children.Add(MakeThemeColorRow(_eFill));
         spE.Children.Add(EditorLabel("Stroke / frame"));
         _eStroke = MakeColorCombo();
-        spE.Children.Add(_eStroke);
+        spE.Children.Add(MakeThemeColorRow(_eStroke));
         spE.Children.Add(EditorLabel("Stroke thickness"));
         _eThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
         spE.Children.Add(_eThickness);
@@ -2140,7 +2708,7 @@ internal sealed class ThemeSettingsWindow : Window
         var spA = new StackPanel { Margin = new Thickness(8) };
         spA.Children.Add(EditorLabel("Stroke"));
         _aStroke = MakeColorCombo();
-        spA.Children.Add(_aStroke);
+        spA.Children.Add(MakeThemeColorRow(_aStroke));
         spA.Children.Add(EditorLabel("Thickness"));
         _aThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
         spA.Children.Add(_aThickness);
@@ -2155,7 +2723,7 @@ internal sealed class ThemeSettingsWindow : Window
         var spT = new StackPanel { Margin = new Thickness(8) };
         spT.Children.Add(EditorLabel("Text color"));
         _tTextColor = MakeColorCombo();
-        spT.Children.Add(_tTextColor);
+        spT.Children.Add(MakeThemeColorRow(_tTextColor));
         spT.Children.Add(EditorLabel("Font family"));
         _tFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
         foreach (var n in FontChoices) _tFont.Items.Add(n);
@@ -2171,7 +2739,7 @@ internal sealed class ThemeSettingsWindow : Window
         var spF = new StackPanel { Margin = new Thickness(8) };
         spF.Children.Add(EditorLabel("Stroke"));
         _fStroke = MakeColorCombo();
-        spF.Children.Add(_fStroke);
+        spF.Children.Add(MakeThemeColorRow(_fStroke));
         spF.Children.Add(EditorLabel("Free draw thickness"));
         _fFreeThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
         spF.Children.Add(_fFreeThickness);
@@ -2270,18 +2838,141 @@ internal sealed class ThemeSettingsWindow : Window
         return item;
     }
 
-    private void TrimColorComboPresets(ComboBox cb)
+    private static bool ComboHasHexTag(ComboBox cb, string tagHex)
     {
-        while (cb.Items.Count > ColorChoices.Length)
-            cb.Items.RemoveAt(cb.Items.Count - 1);
+        foreach (var obj in cb.Items)
+        {
+            if (obj is ComboBoxItem item && item.Tag is string t
+                && string.Equals(t, tagHex, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private ComboBoxItem MakeNamedColorItem(string displayName, string tagHex)
+    {
+        var item = new ComboBoxItem { Tag = tagHex };
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        var sw = new Border
+        {
+            Width = 20,
+            Height = 14,
+            Margin = new Thickness(0, 0, 6, 0),
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            Background = DrawingWindow.ParseBrush(tagHex),
+        };
+        sp.Children.Add(sw);
+        sp.Children.Add(new TextBlock { Text = displayName, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+        sp.Children.Add(new TextBlock { Text = tagHex, VerticalAlignment = VerticalAlignment.Center, FontSize = 11, Foreground = Brushes.Gray });
+        item.Content = sp;
+        return item;
+    }
+
+    private void PopulateColorCombo(ComboBox cb)
+    {
+        cb.Items.Clear();
+        foreach (var hex in ColorChoices)
+            cb.Items.Add(MakeColorChoiceItem(hex));
+        foreach (var n in DrawingNamedColorStore.Load())
+        {
+            if (!DrawingColorUtilities.TryParseColorString(n.Hex, out var c) || c.A == 0)
+                continue;
+            var tag = DrawingColorUtilities.FormatHexForTheme(c);
+            if (ComboHasHexTag(cb, tag))
+                continue;
+            cb.Items.Add(MakeNamedColorItem(n.Name, tag));
+        }
+    }
+
+    private void RefreshThemeColorCombosFromEditing()
+    {
+        if (_editing == null) return;
+        _suppressUpdate = true;
+        try
+        {
+            _editing.EnsureToolStyles();
+            var r = _editing.Rectangle!;
+            var e = _editing.Ellipse!;
+            var a = _editing.Arrow!;
+            var tx = _editing.Text!;
+            var fh = _editing.Freehand!;
+            PopulateColorCombo(_rFill!);
+            PopulateColorCombo(_rStroke!);
+            PopulateColorCombo(_rTextColor!);
+            PopulateColorCombo(_eFill!);
+            PopulateColorCombo(_eStroke!);
+            PopulateColorCombo(_aStroke!);
+            PopulateColorCombo(_tTextColor!);
+            PopulateColorCombo(_fStroke!);
+            SelectColor(_rFill!, r.Fill);
+            SelectColor(_rStroke!, r.Stroke);
+            SelectColor(_rTextColor!, r.TextColor);
+            SelectColor(_eFill!, e.Fill);
+            SelectColor(_eStroke!, e.Stroke);
+            SelectColor(_aStroke!, a.Stroke);
+            SelectColor(_tTextColor!, tx.TextColor);
+            SelectColor(_fStroke!, fh.Stroke);
+            RebuildThemePreview();
+        }
+        finally
+        {
+            _suppressUpdate = false;
+        }
     }
 
     private ComboBox MakeColorCombo()
     {
-        var cb = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var hex in ColorChoices)
-            cb.Items.Add(MakeColorChoiceItem(hex));
+        var cb = new ComboBox { Margin = new Thickness(0) };
+        PopulateColorCombo(cb);
         return cb;
+    }
+
+    private Grid MakeThemeColorRow(ComboBox cb)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(cb, 0);
+        cb.VerticalAlignment = VerticalAlignment.Center;
+        cb.Margin = new Thickness(0, 0, 8, 0);
+
+        var swatch = new Border
+        {
+            Width = 30,
+            Height = 24,
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0x99)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(2),
+            Background = Brushes.White,
+            Cursor = Cursors.Hand,
+            ToolTip = "Graphical color picker",
+        };
+
+        void UpdateSwatch()
+        {
+            var key = ColorString(cb);
+            swatch.Background = DrawingWindow.ParseBrush(key);
+        }
+
+        cb.SelectionChanged += (_, _) => UpdateSwatch();
+
+        swatch.MouseLeftButtonDown += (_, _) =>
+        {
+            var dlg = new DrawingColorPickerWindow(ColorString(cb)) { Owner = this };
+            if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.ResultHex))
+            {
+                SelectColor(cb, dlg.ResultHex!);
+                UpdateSwatch();
+            }
+        };
+
+        Grid.SetColumn(swatch, 1);
+        grid.Children.Add(cb);
+        grid.Children.Add(swatch);
+        UpdateSwatch();
+        return grid;
     }
 
     private void LoadEditor()
@@ -2302,14 +2993,14 @@ internal sealed class ThemeSettingsWindow : Window
             var a = _editing.Arrow!;
             var tx = _editing.Text!;
             var fh = _editing.Freehand!;
-            TrimColorComboPresets(_rFill!);
-            TrimColorComboPresets(_rStroke!);
-            TrimColorComboPresets(_rTextColor!);
-            TrimColorComboPresets(_eFill!);
-            TrimColorComboPresets(_eStroke!);
-            TrimColorComboPresets(_aStroke!);
-            TrimColorComboPresets(_tTextColor!);
-            TrimColorComboPresets(_fStroke!);
+            PopulateColorCombo(_rFill!);
+            PopulateColorCombo(_rStroke!);
+            PopulateColorCombo(_rTextColor!);
+            PopulateColorCombo(_eFill!);
+            PopulateColorCombo(_eStroke!);
+            PopulateColorCombo(_aStroke!);
+            PopulateColorCombo(_tTextColor!);
+            PopulateColorCombo(_fStroke!);
             SelectColor(_rFill!, r.Fill);
             SelectColor(_rStroke!, r.Stroke);
             SelectColor(_rTextColor!, r.TextColor);
