@@ -3,6 +3,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace Noted;
 
@@ -18,6 +20,9 @@ public partial class MainWindow
 internal sealed class ImageToColorWindow : Window
 {
     private readonly Image _image;
+    private readonly Canvas _pickOverlay;
+    private readonly Ellipse _pickMarkerOuter;
+    private readonly Ellipse _pickMarkerInner;
     private readonly TextBlock _hint;
     private readonly TextBox _hex;
     private readonly Slider _r;
@@ -26,6 +31,8 @@ internal sealed class ImageToColorWindow : Window
     private readonly Border _swatch;
     private BitmapSource? _sampleSource;
     private bool _suppress;
+    private double? _pickMarkerNormX;
+    private double? _pickMarkerNormY;
 
     public ImageToColorWindow()
     {
@@ -75,10 +82,17 @@ internal sealed class ImageToColorWindow : Window
 
         var btnPicker = new Button
         {
-            Content = "Graphical color picker…",
+            Content = CreateGraphicalPickerButtonIcon(),
+            Width = 40,
+            Height = 40,
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 10, 0, 0),
-            ToolTip = "Same picker as in the Drawing plugin",
+            Padding = new Thickness(0),
+            Cursor = Cursors.Hand,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xD0, 0xD7, 0xDE)),
+            BorderThickness = new Thickness(1),
+            ToolTip = "Full color picker (same as in Drawing)",
         };
         btnPicker.Click += (_, _) => OpenGraphicalPicker();
         colorPanel.Children.Add(btnPicker);
@@ -99,7 +113,7 @@ internal sealed class ImageToColorWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Foreground = Brushes.DimGray,
             Margin = new Thickness(0, 0, 0, 8),
-            Text = "Paste a screenshot (Ctrl+V or Paste), then click the image to pick a pixel. Adjust with RGB sliders or the graphical color picker.",
+            Text = "Paste a screenshot (Ctrl+V or Paste). The center pixel is chosen automatically; click the image to move the ring. Adjust with RGB sliders or the eyedropper color-picker button.",
         };
         top.Children.Add(_hint);
 
@@ -117,9 +131,36 @@ internal sealed class ImageToColorWindow : Window
             BorderThickness = new Thickness(1),
             Background = Brushes.WhiteSmoke,
         };
+        var imageHost = new Grid { HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
         _image = new Image { Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
         _image.MouseLeftButtonDown += OnImageMouseLeftButtonDown;
-        scroll.Content = _image;
+        _pickOverlay = new Canvas { Background = Brushes.Transparent, IsHitTestVisible = false };
+        _pickMarkerOuter = new Ellipse
+        {
+            Width = 18,
+            Height = 18,
+            Stroke = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1A)),
+            StrokeThickness = 2,
+            Fill = Brushes.Transparent,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        _pickMarkerInner = new Ellipse
+        {
+            Width = 18,
+            Height = 18,
+            Stroke = Brushes.White,
+            StrokeThickness = 1,
+            Fill = Brushes.Transparent,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+        _pickOverlay.Children.Add(_pickMarkerOuter);
+        _pickOverlay.Children.Add(_pickMarkerInner);
+        imageHost.Children.Add(_image);
+        imageHost.Children.Add(_pickOverlay);
+        _image.SizeChanged += (_, _) => SyncPickOverlayToImage();
+        scroll.Content = imageHost;
 
         root.Children.Add(bottom);
         root.Children.Add(top);
@@ -181,6 +222,49 @@ internal sealed class ImageToColorWindow : Window
         return slider;
     }
 
+    // Segoe MDL2 eyedropper (EF3C) over a spectrum strip — standard picker imagery with visible color.
+    private static UIElement CreateGraphicalPickerButtonIcon()
+    {
+        var grid = new Grid { Width = 40, Height = 40, SnapsToDevicePixels = true };
+
+        var spectrumBand = new Border
+        {
+            Height = 11,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(4, 0, 4, 5),
+            CornerRadius = new CornerRadius(4),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+            BorderThickness = new Thickness(1),
+            ClipToBounds = true,
+            Background = new LinearGradientBrush(
+                new GradientStopCollection
+                {
+                    new(Colors.OrangeRed, 0),
+                    new(Colors.Gold, 0.22),
+                    new(Colors.LimeGreen, 0.48),
+                    new(Colors.DeepSkyBlue, 0.72),
+                    new(Colors.MediumPurple, 1),
+                },
+                new Point(0, 0.5),
+                new Point(1, 0.5)),
+        };
+
+        var glyph = new TextBlock
+        {
+            Text = "\uEF3C",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 22,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, -4, 0, 2),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)),
+        };
+
+        grid.Children.Add(spectrumBand);
+        grid.Children.Add(glyph);
+        return grid;
+    }
+
     private void TryPasteFromClipboard()
     {
         try
@@ -222,7 +306,72 @@ internal sealed class ImageToColorWindow : Window
         _sampleSource = converted;
         _image.Source = converted;
         _image.Cursor = Cursors.Cross;
-        _hint.Text = "Click a pixel on the image to pick its color. Adjust with RGB sliders or the graphical color picker.";
+        _hint.Text = "The center pixel is selected. Click elsewhere on the image to pick another color. Adjust with RGB sliders or the eyedropper color-picker button.";
+        HidePickMarker();
+        ScheduleSampleImageCenter();
+    }
+
+    private void ScheduleSampleImageCenter()
+    {
+        void TryApply(int attempt)
+        {
+            if (_sampleSource == null)
+                return;
+            if (_image.ActualWidth < 1 || _image.ActualHeight < 1)
+            {
+                if (attempt < 12)
+                    Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => TryApply(attempt + 1)));
+                return;
+            }
+
+            var cx = _image.ActualWidth * 0.5;
+            var cy = _image.ActualHeight * 0.5;
+            var pos = new Point(cx, cy);
+            var c = SamplePixel(pos);
+            SetUiColor(c);
+            ShowPickMarkerAt(pos);
+        }
+
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => TryApply(0)));
+    }
+
+    private void SyncPickOverlayToImage()
+    {
+        _pickOverlay.Width = _image.ActualWidth;
+        _pickOverlay.Height = _image.ActualHeight;
+        if (_pickMarkerNormX is not { } nx || _pickMarkerNormY is not { } ny)
+            return;
+        if (_image.ActualWidth < 1 || _image.ActualHeight < 1)
+            return;
+        ShowPickMarkerAt(new Point(nx * _image.ActualWidth, ny * _image.ActualHeight));
+    }
+
+    private void HidePickMarker()
+    {
+        _pickMarkerNormX = null;
+        _pickMarkerNormY = null;
+        _pickMarkerOuter.Visibility = Visibility.Collapsed;
+        _pickMarkerInner.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowPickMarkerAt(Point centerOnImage)
+    {
+        if (_image.ActualWidth > 0 && _image.ActualHeight > 0)
+        {
+            _pickMarkerNormX = centerOnImage.X / _image.ActualWidth;
+            _pickMarkerNormY = centerOnImage.Y / _image.ActualHeight;
+        }
+
+        var w = _pickMarkerOuter.Width;
+        var h = _pickMarkerOuter.Height;
+        var left = centerOnImage.X - w * 0.5;
+        var top = centerOnImage.Y - h * 0.5;
+        Canvas.SetLeft(_pickMarkerOuter, left);
+        Canvas.SetTop(_pickMarkerOuter, top);
+        Canvas.SetLeft(_pickMarkerInner, left);
+        Canvas.SetTop(_pickMarkerInner, top);
+        _pickMarkerOuter.Visibility = Visibility.Visible;
+        _pickMarkerInner.Visibility = Visibility.Visible;
     }
 
     private void OnImageMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -233,6 +382,7 @@ internal sealed class ImageToColorWindow : Window
         var pos = e.GetPosition(_image);
         var c = SamplePixel(pos);
         SetUiColor(c);
+        ShowPickMarkerAt(pos);
     }
 
     private Color SamplePixel(Point posOnImage)
