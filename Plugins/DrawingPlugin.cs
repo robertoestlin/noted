@@ -13,9 +13,11 @@ namespace Noted;
 
 public partial class MainWindow
 {
+    private string? _lastDrawingThemeName;
+
     private void ShowDrawingDialog()
     {
-        var dlg = new DrawingWindow { Owner = this };
+        var dlg = new DrawingWindow(this, _lastDrawingThemeName) { Owner = this };
         dlg.Show();
     }
 }
@@ -283,7 +285,6 @@ internal sealed class DrawingWindow : Window
 
     private readonly Canvas _canvas;
     private readonly Canvas _overlay;
-    private readonly TextBlock _status;
 
     private readonly ComboBox _themeCombo;
     private readonly StackPanel _propertyPanel;
@@ -329,8 +330,11 @@ internal sealed class DrawingWindow : Window
     private const double HandleSize = 8;
     private const double HitPadding = 6;
 
-    public DrawingWindow()
+    private readonly MainWindow _host;
+
+    public DrawingWindow(MainWindow host, string? preferredThemeName)
     {
+        _host = host;
         Title = "Drawing";
         Width = 1280;
         Height = 860;
@@ -339,7 +343,10 @@ internal sealed class DrawingWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         _themes = DrawingThemeStore.Load();
-        _activeTheme = _themes.FirstOrDefault() ?? new DrawingTheme();
+        _activeTheme = ResolveThemeByName(_themes, preferredThemeName)
+            ?? _themes.FirstOrDefault()
+            ?? new DrawingTheme();
+        _activeTheme.EnsureToolStyles();
         ApplyTheme(_activeTheme, syncUiOnly: false);
 
         var root = new DockPanel();
@@ -391,6 +398,7 @@ internal sealed class DrawingWindow : Window
             {
                 _activeTheme = t;
                 ApplyTheme(t, syncUiOnly: false);
+                _host.PersistLastDrawingThemeName(t.Name);
             }
         };
         actions.Children.Add(_themeCombo);
@@ -427,15 +435,6 @@ internal sealed class DrawingWindow : Window
 
         topBar.Children.Add(actions);
         root.Children.Add(topBar);
-
-        // ---- Status bar ----
-        _status = new TextBlock
-        {
-            Margin = new Thickness(8, 6, 8, 6),
-            Foreground = Brushes.DimGray,
-        };
-        DockPanel.SetDock(_status, Dock.Bottom);
-        root.Children.Add(_status);
 
         // ---- Left properties panel ----
         _leftScroll = new ScrollViewer
@@ -490,7 +489,14 @@ internal sealed class DrawingWindow : Window
         PreviewKeyDown += DrawingWindow_PreviewKeyDown;
 
         SelectTool(Tool.Select);
-        UpdateStatus();
+
+        Closed += (_, _) => _host.PersistLastDrawingThemeName(_activeTheme.Name);
+    }
+
+    private static DrawingTheme? ResolveThemeByName(List<DrawingTheme> themes, string? name)
+    {
+        if (themes.Count == 0 || string.IsNullOrWhiteSpace(name)) return null;
+        return themes.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     // ---------------- Theme ----------------
@@ -501,7 +507,8 @@ internal sealed class DrawingWindow : Window
         _themeCombo.ItemsSource = null;
         _themeCombo.DisplayMemberPath = "Name";
         _themeCombo.ItemsSource = _themes;
-        var match = _themes.FirstOrDefault(t => t.Name == prev) ?? _themes.FirstOrDefault();
+        var match = _themes.FirstOrDefault(t => string.Equals(t.Name, prev, StringComparison.OrdinalIgnoreCase))
+            ?? _themes.FirstOrDefault();
         if (match != null)
         {
             _activeTheme = match;
@@ -569,6 +576,7 @@ internal sealed class DrawingWindow : Window
             _themes = dlg.Themes;
             DrawingThemeStore.Save(_themes);
             RefreshThemeCombo();
+            _host.PersistLastDrawingThemeName(_activeTheme.Name);
         }
     }
 
@@ -799,22 +807,6 @@ internal sealed class DrawingWindow : Window
             SyncFromSelected();
         else
             ApplyToolProfileFromTheme(_activeTheme, _tool == Tool.Select ? Tool.Rectangle : _tool);
-        UpdateStatus();
-    }
-
-    private void UpdateStatus()
-    {
-        var hint = _tool switch
-        {
-            Tool.Select => "Click to select. Drag to move. Drag handles to resize. Double-click a rectangle to edit text. D to remove.",
-            Tool.Rectangle => "Drag to draw a rounded rectangle.",
-            Tool.Ellipse => "Drag to draw a circle/ellipse.",
-            Tool.Arrow => "Drag to draw an arrow.",
-            Tool.Text => "Click to place text, then type.",
-            Tool.Freehand => "Drag to paint freely.",
-            _ => "",
-        };
-        _status.Text = $"[{_tool}]  {hint}    Shortcuts: S R C A T F  D=Delete  V=Toggle panel  Ctrl+Z=Undo  Esc=cancel";
     }
 
     private void DrawingWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -871,7 +863,6 @@ internal sealed class DrawingWindow : Window
         if (_leftScroll == null) return;
         _propertiesVisible = !_propertiesVisible;
         _leftScroll.Visibility = _propertiesVisible ? Visibility.Visible : Visibility.Collapsed;
-        UpdateStatus();
     }
 
     private void DeleteSelected()
@@ -1789,7 +1780,6 @@ internal sealed class DrawingWindow : Window
             encoder.Frames.Add(BitmapFrame.Create(rtb));
             using var fs = File.OpenWrite(dlg.FileName);
             encoder.Save(fs);
-            _status.Text = $"Saved: {dlg.FileName}";
         }
         catch (Exception ex)
         {

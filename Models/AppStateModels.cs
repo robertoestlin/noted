@@ -368,6 +368,9 @@ public sealed class NotedSessionState
 
     /// <summary>Id of the last-selected DocPackage in Documentation mode (restored when re-entering the mode after a restart).</summary>
     public string? CurrentDocPackageId { get; set; }
+
+    /// <summary>Name of the drawing plugin theme last used (restored when opening Drawing after restart).</summary>
+    public string? LastDrawingThemeName { get; set; }
 }
 
 public sealed class StandupNoteEntry

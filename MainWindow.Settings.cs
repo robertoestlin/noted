@@ -165,8 +165,22 @@ public partial class MainWindow
             StandupWindowWidth = _standupWindowWidth,
             StandupWindowHeight = _standupWindowHeight,
             StandupWindowMaximized = _standupWindowMaximized,
-            CurrentDocPackageId = _docCurrentPackage?.Id ?? _pendingDocPackageId
+            CurrentDocPackageId = _docCurrentPackage?.Id ?? _pendingDocPackageId,
+            LastDrawingThemeName = string.IsNullOrWhiteSpace(_lastDrawingThemeName) ? null : _lastDrawingThemeName.Trim()
         };
+
+    internal void PersistLastDrawingThemeName(string? themeName)
+    {
+        _lastDrawingThemeName = string.IsNullOrWhiteSpace(themeName) ? null : themeName.Trim();
+        try
+        {
+            var opts = new JsonSerializerOptions { WriteIndented = true };
+            Directory.CreateDirectory(_backupFolder);
+            var path = Path.Combine(_backupFolder, SessionStateFileName);
+            _windowSettingsStore.Save(path, CreateNotedSessionStateSnapshot(), opts);
+        }
+        catch { /* non-critical */ }
+    }
 
     private void SaveSessionState(JsonSerializerOptions options)
     {
@@ -876,6 +890,7 @@ public partial class MainWindow
         ApplyStandupWindowFromSession(s);
         _startMaximized = s.Maximized;
         _pendingDocPackageId = string.IsNullOrEmpty(s.CurrentDocPackageId) ? null : s.CurrentDocPackageId;
+        _lastDrawingThemeName = string.IsNullOrWhiteSpace(s.LastDrawingThemeName) ? null : s.LastDrawingThemeName.Trim();
     }
 
     private void SaveSearchFilesHistory(JsonSerializerOptions options)
