@@ -136,6 +136,23 @@ internal sealed class DrawingWindow : Window
         public Brush TextColor = Brushes.Black;
         public ArrowHeadStyle ArrowHead = ArrowHeadStyle.Simple;
         public List<Point> Points = new();
+
+        public DrawItem Clone() => new()
+        {
+            Kind = Kind,
+            P1 = P1,
+            P2 = P2,
+            CornerRadius = CornerRadius,
+            Fill = Fill,
+            Stroke = Stroke,
+            StrokeThickness = StrokeThickness,
+            Text = Text,
+            FontSize = FontSize,
+            FontFamily = FontFamily,
+            TextColor = TextColor,
+            ArrowHead = ArrowHead,
+            Points = new List<Point>(Points),
+        };
     }
 
     private static readonly Color[] PaletteColors =
@@ -166,8 +183,14 @@ internal sealed class DrawingWindow : Window
     };
 
     private readonly List<DrawItem> _items = new();
+    private readonly Stack<List<DrawItem>> _undoStack = new();
+    private readonly Stack<List<DrawItem>> _redoStack = new();
+    private const int MaxUndoDepth = 100;
+
     private List<DrawingTheme> _themes;
     private DrawingTheme _activeTheme;
+    private bool _propertiesVisible = true;
+    private ScrollViewer? _leftScroll;
 
     private readonly Canvas _canvas;
     private readonly Canvas _overlay;
@@ -206,9 +229,11 @@ internal sealed class DrawingWindow : Window
     private bool _isMoving;
     private Point _moveLast;
     private int _activeHandle = -1;
+    private bool _pendingUndoForGesture;
 
     private TextBox? _activeEditor;
     private DrawItem? _editingItem;
+    private bool _editChangedAnything;
 
     private bool _suppressPropertyChanges;
 
@@ -239,12 +264,12 @@ internal sealed class DrawingWindow : Window
         DockPanel.SetDock(topBar, Dock.Top);
 
         var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
-        _btnSelect = MakeToolButton("Select (S)", Tool.Select);
-        _btnRect = MakeToolButton("Rect (R)", Tool.Rectangle);
-        _btnEllipse = MakeToolButton("Circle (C)", Tool.Ellipse);
-        _btnArrow = MakeToolButton("Arrow (A)", Tool.Arrow);
-        _btnText = MakeToolButton("Text (T)", Tool.Text);
-        _btnFreehand = MakeToolButton("Free (F)", Tool.Freehand);
+        _btnSelect = MakeToolButton("Select", "Select (S)", Tool.Select);
+        _btnRect = MakeToolButton("Rectangle", "Rectangle (R)", Tool.Rectangle);
+        _btnEllipse = MakeToolButton("Circle", "Circle (C)", Tool.Ellipse);
+        _btnArrow = MakeToolButton("Arrow", "Arrow (A)", Tool.Arrow);
+        _btnText = MakeToolButton("Text", "Text (T)", Tool.Text);
+        _btnFreehand = MakeToolButton("Freeform", "Freeform (F)", Tool.Freehand);
         tools.Children.Add(_btnSelect);
         tools.Children.Add(_btnRect);
         tools.Children.Add(_btnEllipse);
@@ -292,10 +317,6 @@ internal sealed class DrawingWindow : Window
         btnSettings.Click += (_, _) => ShowThemeSettings();
         actions.Children.Add(btnSettings);
 
-        var btnDelete = MakeButton("Delete (D)");
-        btnDelete.Click += (_, _) => DeleteSelected();
-        actions.Children.Add(btnDelete);
-
         var btnClear = MakeButton("Clear");
         btnClear.Click += (_, _) =>
         {
@@ -303,6 +324,7 @@ internal sealed class DrawingWindow : Window
             if (MessageBox.Show(this, "Clear the whole canvas?", "Drawing",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question) == MessageBoxResult.OK)
             {
+                SnapshotForUndo();
                 _items.Clear();
                 _selected = null;
                 Redraw();
@@ -327,18 +349,18 @@ internal sealed class DrawingWindow : Window
         root.Children.Add(_status);
 
         // ---- Left properties panel ----
-        var leftScroll = new ScrollViewer
+        _leftScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Width = 230,
             Background = new SolidColorBrush(Color.FromRgb(0xF7, 0xF7, 0xF7)),
         };
-        DockPanel.SetDock(leftScroll, Dock.Left);
+        DockPanel.SetDock(_leftScroll, Dock.Left);
         _propertyPanel = new StackPanel { Margin = new Thickness(10) };
-        leftScroll.Content = _propertyPanel;
+        _leftScroll.Content = _propertyPanel;
         BuildPropertyPanel();
-        root.Children.Add(leftScroll);
+        root.Children.Add(_leftScroll);
 
         // ---- Center canvas ----
         var center = new Grid { Background = Brushes.LightGray };
@@ -581,6 +603,7 @@ internal sealed class DrawingWindow : Window
     private void ApplyColorToSelected()
     {
         if (_selected == null) return;
+        SnapshotForUndo();
         if (_selected.Kind == "rect" || _selected.Kind == "ellipse")
         {
             _selected.Fill = _fill;
@@ -601,9 +624,10 @@ internal sealed class DrawingWindow : Window
 
     // ---------------- UI helpers ----------------
 
-    private Button MakeToolButton(string text, Tool tool)
+    private Button MakeToolButton(string text, string tooltip, Tool tool)
     {
         var b = MakeButton(text);
+        b.ToolTip = tooltip;
         b.Click += (_, _) => SelectTool(tool);
         return b;
     }
@@ -664,11 +688,27 @@ internal sealed class DrawingWindow : Window
             Tool.Freehand => "Drag to paint freely.",
             _ => "",
         };
-        _status.Text = $"[{_tool}]  {hint}    Shortcuts: S=Select  R=Rect  C=Circle  A=Arrow  T=Text  F=Free  D=Delete  Esc=cancel/deselect";
+        _status.Text = $"[{_tool}]  {hint}    Shortcuts: S R C A T F  D=Delete  V=Toggle panel  Ctrl+Z=Undo  Esc=cancel";
     }
 
     private void DrawingWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+        var shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+
+        if (ctrl && e.Key == Key.Z)
+        {
+            if (shift) Redo(); else Undo();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && e.Key == Key.Y)
+        {
+            Redo();
+            e.Handled = true;
+            return;
+        }
+
         if (_activeEditor != null) return;
         if (Keyboard.FocusedElement is TextBox) return;
 
@@ -680,6 +720,10 @@ internal sealed class DrawingWindow : Window
             case Key.A: SelectTool(Tool.Arrow); e.Handled = true; break;
             case Key.T: SelectTool(Tool.Text); e.Handled = true; break;
             case Key.F: SelectTool(Tool.Freehand); e.Handled = true; break;
+            case Key.V:
+                TogglePropertiesPanel();
+                e.Handled = true;
+                break;
             case Key.D:
                 if (_selected != null)
                 {
@@ -696,11 +740,65 @@ internal sealed class DrawingWindow : Window
         }
     }
 
+    private void TogglePropertiesPanel()
+    {
+        if (_leftScroll == null) return;
+        _propertiesVisible = !_propertiesVisible;
+        _leftScroll.Visibility = _propertiesVisible ? Visibility.Visible : Visibility.Collapsed;
+        UpdateStatus();
+    }
+
     private void DeleteSelected()
     {
         if (_selected == null) return;
+        SnapshotForUndo();
         _items.Remove(_selected);
         _selected = null;
+        Redraw();
+    }
+
+    // ---------------- Undo / Redo ----------------
+
+    private List<DrawItem> CloneItems()
+        => _items.Select(it => it.Clone()).ToList();
+
+    private void SnapshotForUndo()
+    {
+        _redoStack.Clear();
+        _undoStack.Push(CloneItems());
+        while (_undoStack.Count > MaxUndoDepth)
+        {
+            // Stack doesn't expose remove-from-bottom; rebuild without the oldest entry.
+            var arr = _undoStack.ToArray();
+            _undoStack.Clear();
+            for (var i = arr.Length - 2; i >= 0; i--)
+                _undoStack.Push(arr[i]);
+        }
+    }
+
+    private void Undo()
+    {
+        CommitTextEdit();
+        if (_undoStack.Count == 0) return;
+        _redoStack.Push(CloneItems());
+        var snapshot = _undoStack.Pop();
+        _items.Clear();
+        _items.AddRange(snapshot);
+        if (_selected != null && !_items.Contains(_selected))
+            _selected = null;
+        Redraw();
+    }
+
+    private void Redo()
+    {
+        CommitTextEdit();
+        if (_redoStack.Count == 0) return;
+        _undoStack.Push(CloneItems());
+        var snapshot = _redoStack.Pop();
+        _items.Clear();
+        _items.AddRange(snapshot);
+        if (_selected != null && !_items.Contains(_selected))
+            _selected = null;
         Redraw();
     }
 
@@ -737,6 +835,7 @@ internal sealed class DrawingWindow : Window
                     _activeHandle = handle;
                     _isMoving = false;
                     _moveLast = p;
+                    _pendingUndoForGesture = true;
                     _canvas.CaptureMouse();
                     return;
                 }
@@ -750,6 +849,7 @@ internal sealed class DrawingWindow : Window
                 _activeHandle = -1;
                 _isMoving = true;
                 _moveLast = p;
+                _pendingUndoForGesture = true;
                 _canvas.CaptureMouse();
             }
             Redraw();
@@ -758,6 +858,7 @@ internal sealed class DrawingWindow : Window
 
         if (_tool == Tool.Text)
         {
+            SnapshotForUndo();
             var item = new DrawItem
             {
                 Kind = "text",
@@ -774,10 +875,11 @@ internal sealed class DrawingWindow : Window
             _items.Add(item);
             _selected = item;
             Redraw();
-            StartTextEdit(item);
+            StartTextEdit(item, takeSnapshot: false);
             return;
         }
 
+        SnapshotForUndo();
         _isDrawing = true;
         _drawingItem = _tool switch
         {
@@ -846,6 +948,11 @@ internal sealed class DrawingWindow : Window
 
         if (_tool == Tool.Select && _selected != null && _activeHandle >= 0 && e.LeftButton == MouseButtonState.Pressed)
         {
+            if (_pendingUndoForGesture)
+            {
+                SnapshotForUndo();
+                _pendingUndoForGesture = false;
+            }
             ResizeSelectedByHandle(_selected, _activeHandle, p);
             Redraw();
             return;
@@ -855,9 +962,17 @@ internal sealed class DrawingWindow : Window
         {
             var dx = p.X - _moveLast.X;
             var dy = p.Y - _moveLast.Y;
-            TranslateItem(_selected, dx, dy);
-            _moveLast = p;
-            Redraw();
+            if (Math.Abs(dx) + Math.Abs(dy) > 0.001)
+            {
+                if (_pendingUndoForGesture)
+                {
+                    SnapshotForUndo();
+                    _pendingUndoForGesture = false;
+                }
+                TranslateItem(_selected, dx, dy);
+                _moveLast = p;
+                Redraw();
+            }
         }
 
         if (_tool == Tool.Select && _selected != null)
@@ -901,6 +1016,7 @@ internal sealed class DrawingWindow : Window
         _drawingItem = null;
         _isMoving = false;
         _activeHandle = -1;
+        _pendingUndoForGesture = false;
         Redraw();
     }
 
@@ -1310,11 +1426,37 @@ internal sealed class DrawingWindow : Window
 
     // ---------------- Text editor ----------------
 
-    private void StartTextEdit(DrawItem it)
+    private void StartTextEdit(DrawItem it, bool takeSnapshot = true)
     {
         CommitTextEdit();
+        if (takeSnapshot)
+            SnapshotForUndo();
+        _editChangedAnything = false;
         _editingItem = it;
         var b = GetBounds(it);
+        var isFreshTextItem = it.Kind == "text" && string.IsNullOrEmpty(it.Text);
+
+        Brush boxBackground;
+        Brush boxBorder;
+        Thickness boxBorderThickness;
+        if (it.Kind == "rect")
+        {
+            boxBackground = new SolidColorBrush(Color.FromArgb(0xE8, 0xFF, 0xFF, 0xFF));
+            boxBorder = Brushes.Transparent;
+            boxBorderThickness = new Thickness(0);
+        }
+        else if (isFreshTextItem)
+        {
+            boxBackground = Brushes.Transparent;
+            boxBorder = Brushes.Transparent;
+            boxBorderThickness = new Thickness(0);
+        }
+        else
+        {
+            boxBackground = new SolidColorBrush(Color.FromArgb(0xF0, 0xFF, 0xFF, 0xFF));
+            boxBorder = new SolidColorBrush(Color.FromArgb(0xAA, 0x21, 0x96, 0xF3));
+            boxBorderThickness = new Thickness(1);
+        }
 
         var box = new TextBox
         {
@@ -1322,12 +1464,12 @@ internal sealed class DrawingWindow : Window
             FontSize = it.FontSize,
             FontFamily = it.FontFamily,
             Foreground = it.TextColor,
-            Background = it.Kind == "rect" ? new SolidColorBrush(Color.FromArgb(0xE8, 0xFF, 0xFF, 0xFF)) : Brushes.Transparent,
-            BorderBrush = it.Kind == "rect" ? Brushes.Transparent : new SolidColorBrush(Color.FromArgb(0x55, 0x21, 0x96, 0xF3)),
-            BorderThickness = it.Kind == "rect" ? new Thickness(0) : new Thickness(0, 0, 0, 1),
+            Background = boxBackground,
+            BorderBrush = boxBorder,
+            BorderThickness = boxBorderThickness,
             Padding = new Thickness(0),
             AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
+            TextWrapping = it.Kind == "rect" ? TextWrapping.Wrap : TextWrapping.NoWrap,
             HorizontalContentAlignment = it.Kind == "rect" ? HorizontalAlignment.Center : HorizontalAlignment.Left,
             VerticalContentAlignment = it.Kind == "rect" ? VerticalAlignment.Center : VerticalAlignment.Top,
         };
@@ -1339,17 +1481,80 @@ internal sealed class DrawingWindow : Window
             w = Math.Max(40, b.Width - 8);
             h = Math.Max(20, b.Height - 8);
         }
-        else
+        else if (isFreshTextItem)
         {
             left = it.P1.X;
             top = it.P1.Y;
-            w = Math.Max(120, b.Width);
-            h = Math.Max(it.FontSize + 8, b.Height);
+            w = 480;
+            h = Math.Max(it.FontSize * 1.6, 40);
+        }
+        else
+        {
+            left = it.P1.X - 2;
+            top = it.P1.Y - 2;
+            w = Math.Max(160, b.Width + 24);
+            h = Math.Max(it.FontSize + 12, b.Height + 8);
         }
         Canvas.SetLeft(box, left);
         Canvas.SetTop(box, top);
         box.Width = w;
         box.Height = h;
+
+        var originalText = it.Text ?? "";
+
+        void ResizeForContent()
+        {
+            var text = box.Text ?? "";
+            var typeface = new Typeface(box.FontFamily, box.FontStyle, box.FontWeight, box.FontStretch);
+            var dpi = VisualTreeHelper.GetDpi(box).PixelsPerDip;
+
+            if (it.Kind == "rect")
+            {
+                var availWidth = Math.Max(40, GetBounds(it).Width - 8);
+                var ft = new FormattedText(
+                    string.IsNullOrEmpty(text) ? " " : text,
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    typeface, box.FontSize, Brushes.Black, dpi)
+                {
+                    MaxTextWidth = availWidth,
+                };
+                var neededRectHeight = ft.Height + 16;
+                var currentRectHeight = GetBounds(it).Height;
+                if (neededRectHeight > currentRectHeight)
+                {
+                    it.P2 = new Point(it.P2.X, it.P1.Y + neededRectHeight);
+                    _editChangedAnything = true;
+                    Redraw();
+                }
+            }
+            else if (it.Kind == "text")
+            {
+                var lines = text.Length == 0 ? new[] { "" } : text.Split('\n');
+                double maxLineWidth = 0;
+                foreach (var line in lines)
+                {
+                    var ft = new FormattedText(
+                        string.IsNullOrEmpty(line) ? " " : line,
+                        System.Globalization.CultureInfo.CurrentCulture,
+                        FlowDirection.LeftToRight,
+                        typeface, box.FontSize, Brushes.Black, dpi);
+                    if (ft.Width > maxLineWidth) maxLineWidth = ft.Width;
+                }
+                var minWidth = isFreshTextItem ? 480 : 200;
+                var newW = Math.Max(minWidth, maxLineWidth + 24);
+                var newH = Math.Max(box.FontSize * 1.6, lines.Length * box.FontSize * 1.4 + 12);
+                box.Width = newW;
+                box.Height = newH;
+            }
+        }
+
+        box.TextChanged += (_, _) =>
+        {
+            if (!string.Equals(box.Text, originalText, StringComparison.Ordinal))
+                _editChangedAnything = true;
+            ResizeForContent();
+        };
 
         box.KeyDown += (_, e) =>
         {
@@ -1374,13 +1579,17 @@ internal sealed class DrawingWindow : Window
             Keyboard.Focus(box);
             box.CaretIndex = box.Text?.Length ?? 0;
             if (!string.IsNullOrEmpty(box.Text)) box.SelectAll();
+            ResizeForContent();
         }), System.Windows.Threading.DispatcherPriority.Input);
     }
 
     private void CommitTextEdit()
     {
         if (_activeEditor == null || _editingItem == null) return;
-        _editingItem.Text = _activeEditor.Text ?? "";
+        var newText = _activeEditor.Text ?? "";
+        if (!string.Equals(_editingItem.Text, newText, StringComparison.Ordinal))
+            _editChangedAnything = true;
+        _editingItem.Text = newText;
         var editor = _activeEditor;
         var item = _editingItem;
         _activeEditor = null;
@@ -1392,6 +1601,11 @@ internal sealed class DrawingWindow : Window
             _items.Remove(item);
             if (ReferenceEquals(_selected, item)) _selected = null;
         }
+
+        if (!_editChangedAnything && _undoStack.Count > 0)
+            _undoStack.Pop();
+        _editChangedAnything = false;
+
         Redraw();
     }
 
