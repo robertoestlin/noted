@@ -8249,6 +8249,7 @@ public partial class MainWindow : Window
     private void MenuSafePasteArea_Click(object sender, RoutedEventArgs e) => ShowSafePasteAreaDialog();
     private void MenuStandup_Click(object sender, RoutedEventArgs e) => ShowStandupDialog();
     private void MenuComputerStatistics_Click(object sender, RoutedEventArgs e) => ShowComputerStatisticsDialog();
+    private void MenuDrawing_Click(object sender, RoutedEventArgs e) => ShowDrawingDialog();
     private void MenuJwtDecoder_Click(object sender, RoutedEventArgs e) => ShowJwtDecoderDialog();
     private void MenuJsonPretty_Click(object sender, RoutedEventArgs e) => ShowJsonPrettyDialog();
     private void MenuSearchFiles_Click(object sender, RoutedEventArgs e) => ShowSearchFilesDialog();

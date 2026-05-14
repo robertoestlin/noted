@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Media.TextFormatting;
 using ICSharpCode.AvalonEdit;
 using ICSharpCode.AvalonEdit.Document;
+using ICSharpCode.AvalonEdit.Editing;
 using ICSharpCode.AvalonEdit.Rendering;
 using Noted.Models;
 using Noted.Services;
@@ -374,12 +375,17 @@ public partial class MainWindow
         };
         BindDocumentToEditor(doc, editor);
 
-        // Markdown: hide ``` fence lines and "#… " heading markers in the view (buffer stays valid).
+        // Markdown: hide ``` fence lines in the view; "# " markers stay visible, only the heading
+        // title is styled by MarkdownHeadingTransformer.
         editor.TextArea.TextView.ElementGenerators.Insert(0, new MarkdownFenceLineHiddenGenerator());
-        editor.TextArea.TextView.ElementGenerators.Insert(1, new MarkdownHeadingPrefixGenerator());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownHeadingTransformer());
         editor.TextArea.TextView.LineTransformers.Add(new MarkdownFencedCodeBlockTransformer());
         editor.TextArea.TextView.BackgroundRenderers.Add(new MarkdownFencedCodeBackgroundRenderer());
+
+        // Lock fence lines of every closed ``` … ``` pair so typing/backspace/delete cannot corrupt
+        // them. Snippet add/remove uses Document.Replace directly, which bypasses this provider.
+        editor.TextArea.ReadOnlySectionProvider =
+            new MarkdownFenceReadOnlySectionProvider(() => editor.Document);
 
         // Fence state for a line depends on backticks elsewhere; AvalonEdit only invalidates the
         // line whose text changed, so a ``` typed near an existing "# heading" leaves the cached
@@ -986,53 +992,6 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Replaces the leading <c>#</c> / <c>##</c> / <c>###</c> + space with a zero-width
-    /// <see cref="FormattedTextElement"/> so stored markdown stays correct but the markers are not drawn.
-    /// </summary>
-    private sealed class MarkdownHeadingPrefixGenerator : VisualLineElementGenerator
-    {
-        public override int GetFirstInterestedOffset(int startOffset)
-        {
-            if (CurrentContext?.Document == null)
-                return -1;
-
-            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
-            if (startOffset != docLine.Offset)
-                return -1;
-
-            var doc = CurrentContext.Document;
-            if (DocumentLineIsInsideFencedCodeBlock(doc, docLine))
-                return -1;
-
-            var lineText = doc.GetText(docLine.Offset, docLine.Length);
-            if (!TryGetMarkdownHeadingPrefixLength(lineText, out _))
-                return -1;
-
-            return docLine.Offset;
-        }
-
-        public override VisualLineElement? ConstructElement(int offset)
-        {
-            if (CurrentContext?.Document == null)
-                return null;
-
-            var docLine = CurrentContext.VisualLine.FirstDocumentLine;
-            if (offset != docLine.Offset)
-                return null;
-
-            var doc = CurrentContext.Document;
-            if (DocumentLineIsInsideFencedCodeBlock(doc, docLine))
-                return null;
-
-            var lineText = doc.GetText(docLine.Offset, docLine.Length);
-            if (!TryGetMarkdownHeadingPrefixLength(lineText, out int prefixLen))
-                return null;
-
-            return new MarkdownHiddenDocumentSpanElement(prefixLen);
-        }
-    }
-
-    /// <summary>
     /// Uses <see cref="TextHidden"/> so the underlying document span occupies no horizontal width.
     /// </summary>
     private sealed class MarkdownHiddenDocumentSpanElement : VisualLineElement
@@ -1047,8 +1006,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Styles the visible heading title (after <c>#</c> markers); prefix is hidden by
-    /// <see cref="MarkdownHeadingPrefixGenerator"/>.
+    /// Styles the visible heading title (after <c>#</c> markers); the markers themselves stay
+    /// visible at normal size so the user can see what they typed.
     /// </summary>
     private sealed class MarkdownHeadingTransformer : DocumentColorizingTransformer
     {
@@ -1166,6 +1125,107 @@ public partial class MainWindow
                 var t = ve.TextRunProperties.Typeface;
                 ve.TextRunProperties.SetTypeface(new Typeface(CodeFont, t.Style, t.Weight, t.Stretch));
             });
+        }
+    }
+
+    /// <summary>True when <paramref name="line"/> is the opener or closer of a closed <c>``` … ```</c>
+    /// pair. An unmatched fence (user mid-typing) stays editable.</summary>
+    private static bool IsFenceLineInClosedPair(TextDocument doc, DocumentLine line)
+    {
+        if (!IsMarkdownFenceLine(doc, line))
+            return false;
+
+        DocumentLine? opener = null;
+        foreach (var candidate in doc.Lines)
+        {
+            if (!IsMarkdownFenceLine(doc, candidate))
+                continue;
+            if (opener == null)
+            {
+                opener = candidate;
+            }
+            else
+            {
+                if (opener.LineNumber == line.LineNumber || candidate.LineNumber == line.LineNumber)
+                    return true;
+                opener = null;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Blocks edits to <c>```</c> fence lines (text and surrounding newlines) once they form a closed
+    /// pair, so typing/backspace/delete cannot corrupt a code snippet. Removal goes through
+    /// <see cref="RemoveDocumentationCodeSnippet"/>, which calls <c>Document.Replace</c> directly.
+    /// </summary>
+    private sealed class MarkdownFenceReadOnlySectionProvider : IReadOnlySectionProvider
+    {
+        private readonly Func<TextDocument?> _getDoc;
+
+        public MarkdownFenceReadOnlySectionProvider(Func<TextDocument?> getDoc) => _getDoc = getDoc;
+
+        public bool CanInsert(int offset)
+        {
+            var doc = _getDoc();
+            if (doc == null || doc.TextLength == 0)
+                return true;
+            offset = Math.Clamp(offset, 0, doc.TextLength);
+            if (offset == doc.TextLength)
+                return true;
+            var line = doc.GetLineByOffset(offset);
+            return !IsFenceLineInClosedPair(doc, line);
+        }
+
+        public IEnumerable<ISegment> GetDeletableSegments(ISegment segment)
+        {
+            if (segment == null)
+                yield break;
+            var doc = _getDoc();
+            if (doc == null || doc.TextLength == 0 || segment.Length <= 0)
+            {
+                yield return segment;
+                yield break;
+            }
+
+            int segStart = Math.Max(0, segment.Offset);
+            int segEnd = Math.Min(doc.TextLength, segment.EndOffset);
+            if (segEnd <= segStart)
+                yield break;
+
+            int? runStart = null;
+            for (int o = segStart; o < segEnd; o++)
+            {
+                if (IsOffsetWritable(doc, o))
+                {
+                    runStart ??= o;
+                }
+                else if (runStart.HasValue)
+                {
+                    yield return new WritableSegment(runStart.Value, o - runStart.Value);
+                    runStart = null;
+                }
+            }
+            if (runStart.HasValue)
+                yield return new WritableSegment(runStart.Value, segEnd - runStart.Value);
+        }
+
+        private static bool IsOffsetWritable(TextDocument doc, int offset)
+        {
+            if (offset < 0 || offset >= doc.TextLength) return true;
+            var line = doc.GetLineByOffset(offset);
+            if (IsFenceLineInClosedPair(doc, line))
+                return false;
+
+            // The newline at end of a content line is shared with the next line; if the next line
+            // is a locked fence, deleting that newline would merge content into the fence.
+            if (offset >= line.Offset + line.Length && line.LineNumber < doc.LineCount)
+            {
+                var next = doc.GetLineByNumber(line.LineNumber + 1);
+                if (IsFenceLineInClosedPair(doc, next))
+                    return false;
+            }
+            return true;
         }
     }
 }
