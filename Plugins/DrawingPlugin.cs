@@ -261,6 +261,7 @@ internal sealed class DrawingWindow : Window
         Color.FromRgb(0x67, 0x3A, 0xB7),
         Color.FromRgb(0xD1, 0xC4, 0xE9),
         Color.FromRgb(0x79, 0x55, 0x48),
+        Color.FromRgb(0xF5, 0xF5, 0xDC),
     };
 
     private static readonly string[] FontChoices =
@@ -1880,6 +1881,13 @@ internal sealed class SwatchPalette : Border
                 }
             }
         }
+
+        if (_selected != null)
+        {
+            _selected.BorderBrush = Brushes.DimGray;
+            _selected.BorderThickness = new Thickness(1);
+            _selected = null;
+        }
     }
 
     private static DrawingBrush CreateCheckeredBrush()
@@ -1936,6 +1944,7 @@ internal sealed class ThemeSettingsWindow : Window
         "#E53935", "#F68A1E", "#FFD700", "#FFF6A9",
         "#4CAF50", "#A8E6A1", "#2196F3", "#B3E5FC",
         "#673AB7", "#D1C4E9", "#795548", "#3F51B5",
+        "#F5F5DC",
     };
 
     private static readonly string[] FontChoices =
@@ -2208,27 +2217,36 @@ internal sealed class ThemeSettingsWindow : Window
         return "#000000";
     }
 
+    private ComboBoxItem MakeColorChoiceItem(string value)
+    {
+        var item = new ComboBoxItem { Tag = value };
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        var sw = new Border
+        {
+            Width = 20,
+            Height = 14,
+            Margin = new Thickness(0, 0, 6, 0),
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            Background = DrawingWindow.ParseBrush(value),
+        };
+        sp.Children.Add(sw);
+        sp.Children.Add(new TextBlock { Text = value, VerticalAlignment = VerticalAlignment.Center });
+        item.Content = sp;
+        return item;
+    }
+
+    private void TrimColorComboPresets(ComboBox cb)
+    {
+        while (cb.Items.Count > ColorChoices.Length)
+            cb.Items.RemoveAt(cb.Items.Count - 1);
+    }
+
     private ComboBox MakeColorCombo()
     {
         var cb = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
         foreach (var hex in ColorChoices)
-        {
-            var item = new ComboBoxItem { Tag = hex };
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            var sw = new Border
-            {
-                Width = 20,
-                Height = 14,
-                Margin = new Thickness(0, 0, 6, 0),
-                BorderBrush = Brushes.DimGray,
-                BorderThickness = new Thickness(1),
-                Background = DrawingWindow.ParseBrush(hex),
-            };
-            sp.Children.Add(sw);
-            sp.Children.Add(new TextBlock { Text = hex, VerticalAlignment = VerticalAlignment.Center });
-            item.Content = sp;
-            cb.Items.Add(item);
-        }
+            cb.Items.Add(MakeColorChoiceItem(hex));
         return cb;
     }
 
@@ -2249,6 +2267,14 @@ internal sealed class ThemeSettingsWindow : Window
             var a = _editing.Arrow!;
             var tx = _editing.Text!;
             var fh = _editing.Freehand!;
+            TrimColorComboPresets(_rFill!);
+            TrimColorComboPresets(_rStroke!);
+            TrimColorComboPresets(_rTextColor!);
+            TrimColorComboPresets(_eFill!);
+            TrimColorComboPresets(_eStroke!);
+            TrimColorComboPresets(_aStroke!);
+            TrimColorComboPresets(_tTextColor!);
+            TrimColorComboPresets(_fStroke!);
             SelectColor(_rFill!, r.Fill);
             SelectColor(_rStroke!, r.Stroke);
             SelectColor(_rTextColor!, r.TextColor);
@@ -2282,18 +2308,22 @@ internal sealed class ThemeSettingsWindow : Window
         }
     }
 
-    private void SelectColor(ComboBox cb, string value)
+    private void SelectColor(ComboBox cb, string? value)
     {
+        var key = string.IsNullOrWhiteSpace(value) ? "Transparent" : value.Trim();
         foreach (var obj in cb.Items)
         {
             if (obj is ComboBoxItem item && item.Tag is string s
-                && string.Equals(s, value, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(s, key, StringComparison.OrdinalIgnoreCase))
             {
                 cb.SelectedItem = item;
                 return;
             }
         }
-        if (cb.Items.Count > 0) cb.SelectedIndex = 0;
+
+        var extra = MakeColorChoiceItem(key);
+        cb.Items.Add(extra);
+        cb.SelectedItem = extra;
     }
 
     private void CommitEditor()
