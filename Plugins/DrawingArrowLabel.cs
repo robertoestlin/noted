@@ -14,21 +14,50 @@ internal sealed partial class DrawingWindow
         return angleDeg;
     }
 
-    private static (Point Midpoint, double AngleDeg, double Length) GetArrowLineMetrics(Point p1, Point p2)
+    private static (Point Midpoint, double AngleDeg, double Length) GetArrowPathMetrics(IReadOnlyList<Point> path)
     {
-        var dx = p2.X - p1.X;
-        var dy = p2.Y - p1.Y;
-        var length = Math.Sqrt(dx * dx + dy * dy);
-        var angleDeg = length < 0.001
+        var length = PathPolylineLength(path);
+        if (path.Count < 2 || length < 0.001)
+        {
+            var p = path.Count > 0 ? path[0] : default;
+            return (p, 0, 0);
+        }
+
+        var half = length / 2;
+        var walked = 0.0;
+        for (var i = 1; i < path.Count; i++)
+        {
+            var a = path[i - 1];
+            var b = path[i];
+            var segLen = (b - a).Length;
+            if (segLen < 0.001)
+                continue;
+
+            if (walked + segLen >= half)
+            {
+                var t = segLen < 0.001 ? 0 : (half - walked) / segLen;
+                var mid = new Point(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+                var dx = b.X - a.X;
+                var dy = b.Y - a.Y;
+                var angleDeg = NormalizeArrowLabelAngleDegrees(Math.Atan2(dy, dx) * 180.0 / Math.PI);
+                return (mid, angleDeg, length);
+            }
+            walked += segLen;
+        }
+
+        var last = path[^1];
+        var prev = path[^2];
+        var ldx = last.X - prev.X;
+        var ldy = last.Y - prev.Y;
+        var lastAngle = Math.Sqrt(ldx * ldx + ldy * ldy) < 0.001
             ? 0
-            : NormalizeArrowLabelAngleDegrees(Math.Atan2(dy, dx) * 180.0 / Math.PI);
-        var midpoint = new Point((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2);
-        return (midpoint, angleDeg, length);
+            : NormalizeArrowLabelAngleDegrees(Math.Atan2(ldy, ldx) * 180.0 / Math.PI);
+        return (last, lastAngle, length);
     }
 
-    private static Size MeasureArrowLabel(DrawItem arrow, string? text, Visual visual)
+    private static Size MeasureArrowLabel(DrawItem arrow, string? text, Visual visual, IReadOnlyList<Point> path)
     {
-        var (_, _, length) = GetArrowLineMetrics(arrow.P1, arrow.P2);
+        var (_, _, length) = GetArrowPathMetrics(path);
         var maxWidth = Math.Max(24, length - 24);
         var dpi = VisualTreeHelper.GetDpi(visual).PixelsPerDip;
         var display = string.IsNullOrEmpty(text) ? " " : text;
@@ -49,13 +78,12 @@ internal sealed partial class DrawingWindow
         return new Size(Math.Max(32, w), h);
     }
 
-    private static void LayoutArrowLabelElement(FrameworkElement element, DrawItem arrow, Size size)
+    private static void LayoutArrowLabelElement(FrameworkElement element, Point midpoint, double angleDeg, Size size)
     {
-        var (mid, angleDeg, _) = GetArrowLineMetrics(arrow.P1, arrow.P2);
         element.Width = size.Width;
         element.Height = size.Height;
-        Canvas.SetLeft(element, mid.X - size.Width / 2);
-        Canvas.SetTop(element, mid.Y - size.Height / 2);
+        Canvas.SetLeft(element, midpoint.X - size.Width / 2);
+        Canvas.SetTop(element, midpoint.Y - size.Height / 2);
         element.RenderTransformOrigin = new Point(0.5, 0.5);
         element.RenderTransform = new RotateTransform(angleDeg);
     }
@@ -67,18 +95,18 @@ internal sealed partial class DrawingWindow
         return arrow.Text;
     }
 
-    private bool TryGetArrowLabelGap(DrawItem arrow, Visual visual, out double gapHalfLength)
+    private bool TryGetArrowLabelGap(DrawItem arrow, Visual visual, IReadOnlyList<Point> path, out double gapHalfLength)
     {
         gapHalfLength = 0;
         var text = GetArrowLabelText(arrow);
         if (string.IsNullOrEmpty(text))
             return false;
 
-        var (_, _, length) = GetArrowLineMetrics(arrow.P1, arrow.P2);
+        var (_, _, length) = GetArrowPathMetrics(path);
         if (length < 8)
             return false;
 
-        var size = MeasureArrowLabel(arrow, text, visual);
+        var size = MeasureArrowLabel(arrow, text, visual, path);
         var textWidth = Math.Max(8, size.Width - 12);
         gapHalfLength = textWidth / 2 + 6;
         var maxHalf = (length - 20) / 2;
@@ -105,29 +133,77 @@ internal sealed partial class DrawingWindow
 
     private void RenderArrowShaft(DrawItem it, Canvas surface)
     {
-        var p1 = it.P1;
-        var p2 = it.P2;
-        var dx = p2.X - p1.X;
-        var dy = p2.Y - p1.Y;
-        var len = Math.Sqrt(dx * dx + dy * dy);
-        if (len < 0.001)
+        var path = GetArrowPathPoints(it);
+        if (path.Count < 2)
             return;
 
-        var ux = dx / len;
-        var uy = dy / len;
-
-        if (TryGetArrowLabelGap(it, surface, out var halfGap))
+        if (TryGetArrowLabelGap(it, surface, path, out var halfGap))
         {
-            var midX = (p1.X + p2.X) / 2;
-            var midY = (p1.Y + p2.Y) / 2;
-            var gapStart = new Point(midX - ux * halfGap, midY - uy * halfGap);
-            var gapEnd = new Point(midX + ux * halfGap, midY + uy * halfGap);
-            AddArrowLineSegment(surface, it, p1, gapStart);
-            AddArrowLineSegment(surface, it, gapEnd, p2);
-            return;
+            var length = PathPolylineLength(path);
+            var gapStart = length / 2 - halfGap;
+            var gapEnd = length / 2 + halfGap;
+            if (gapStart > 0 && gapEnd < length
+                && TrySplitPathAtLength(path, gapStart, out var beforeGap, out _)
+                && TrySplitPathAtLength(path, gapEnd, out _, out var afterGap))
+            {
+                if (beforeGap.Count >= 2)
+                    RenderArrowPolyline(it, surface, beforeGap);
+                if (afterGap.Count >= 2)
+                    RenderArrowPolyline(it, surface, afterGap);
+                return;
+            }
         }
 
-        AddArrowLineSegment(surface, it, p1, p2);
+        RenderArrowPolyline(it, surface, path);
+    }
+
+    private static void RenderArrowPolyline(DrawItem it, Canvas surface, IReadOnlyList<Point> path)
+    {
+        for (var i = 1; i < path.Count; i++)
+        {
+            if (PointsNearlyEqual(path[i - 1], path[i]))
+                continue;
+            AddArrowLineSegment(surface, it, path[i - 1], path[i]);
+        }
+    }
+
+    private static bool TrySplitPathAtLength(
+        IReadOnlyList<Point> path,
+        double lengthFromStart,
+        out List<Point> before,
+        out List<Point> after)
+    {
+        before = new List<Point>();
+        after = new List<Point>();
+        if (path.Count < 2)
+            return false;
+
+        before.Add(path[0]);
+        var walked = 0.0;
+        for (var i = 1; i < path.Count; i++)
+        {
+            var a = path[i - 1];
+            var b = path[i];
+            var segLen = (b - a).Length;
+            if (segLen < 0.001)
+                continue;
+
+            if (walked + segLen >= lengthFromStart)
+            {
+                var t = (lengthFromStart - walked) / segLen;
+                var split = new Point(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+                before.Add(split);
+                after.Add(split);
+                for (var j = i; j < path.Count; j++)
+                    after.Add(path[j]);
+                return before.Count >= 2 && after.Count >= 2;
+            }
+
+            before.Add(b);
+            walked += segLen;
+        }
+
+        return false;
     }
 
     private void RenderArrowLabel(DrawItem it, Canvas surface)
@@ -136,7 +212,8 @@ internal sealed partial class DrawingWindow
         if (string.IsNullOrEmpty(text))
             return;
 
-        var (_, _, length) = GetArrowLineMetrics(it.P1, it.P2);
+        var path = GetArrowPathPoints(it);
+        var (_, _, length) = GetArrowPathMetrics(path);
         if (length < 8)
             return;
 
@@ -152,10 +229,11 @@ internal sealed partial class DrawingWindow
             MaxWidth = maxWidth,
             IsHitTestVisible = false,
         };
-        var size = MeasureArrowLabel(it, text, surface);
+        var size = MeasureArrowLabel(it, text, surface, path);
         tb.Width = size.Width - 12;
         tb.Measure(new Size(tb.Width, double.PositiveInfinity));
-        LayoutArrowLabelElement(tb, it, size);
+        var (mid, angleDeg, _) = GetArrowPathMetrics(path);
+        LayoutArrowLabelElement(tb, mid, angleDeg, size);
         surface.Children.Add(tb);
     }
 }

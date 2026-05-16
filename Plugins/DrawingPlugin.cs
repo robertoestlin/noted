@@ -1254,6 +1254,11 @@ internal sealed class DrawItemDto
     public string FontFamilyName { get; set; } = "Segoe UI";
     public string TextColor { get; set; } = "#000000";
     public string ArrowHead { get; set; } = "Simple";
+    public bool Direct { get; set; } = true;
+    /// <summary>When true, simple arrow head is at P2 (draw end before any canonical swap).</summary>
+    public bool SimpleHeadAtP2 { get; set; } = true;
+    public List<double> RouteBendsX { get; set; } = new();
+    public List<double> RouteBendsY { get; set; } = new();
     public List<double> PointsX { get; set; } = new();
     public List<double> PointsY { get; set; } = new();
     public int FreehandGroupId { get; set; }
@@ -1301,6 +1306,9 @@ internal sealed partial class DrawingWindow : Window
         public FontFamily FontFamily = new("Segoe UI");
         public Brush TextColor = Brushes.Black;
         public ArrowHeadStyle ArrowHead = ArrowHeadStyle.Simple;
+        public bool Direct = true;
+        public bool SimpleHeadAtP2 = true;
+        public List<Point> RouteBends = new();
         public List<Point> Points = new();
         /// <summary>Strokes drawn in the same freehand-tool session share a group id for move/delete.</summary>
         public int FreehandGroupId;
@@ -1324,6 +1332,9 @@ internal sealed partial class DrawingWindow : Window
             FontFamily = FontFamily,
             TextColor = TextColor,
             ArrowHead = ArrowHead,
+            Direct = Direct,
+            SimpleHeadAtP2 = SimpleHeadAtP2,
+            RouteBends = new List<Point>(RouteBends),
             Points = new List<Point>(Points),
             FreehandGroupId = FreehandGroupId,
         };
@@ -1397,6 +1408,7 @@ internal sealed partial class DrawingWindow : Window
     private const double FontSizeMax = 96;
     private ComboBox? _fontFamilyCombo;
     private ComboBox? _arrowHeadCombo;
+    private CheckBox? _arrowDirectCheck;
     private TextBlock? _cornerRadiusHeader;
     private TextBlock? _fontHeader;
     private TextBlock? _fontSizeHeader;
@@ -1421,6 +1433,7 @@ internal sealed partial class DrawingWindow : Window
     private double _fontSize = 22;
     private FontFamily _fontFamily = new("Segoe UI");
     private ArrowHeadStyle _arrowHead = ArrowHeadStyle.Simple;
+    private bool _arrowDirect = true;
     private double _freeThickness = 6;
 
     private bool _isDrawing;
@@ -1892,6 +1905,15 @@ internal sealed partial class DrawingWindow : Window
             }
         };
         _propertyPanel.Children.Add(_arrowHeadCombo);
+        _arrowDirectCheck = new CheckBox
+        {
+            Content = "Direct",
+            IsChecked = _arrowDirect,
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        _arrowDirectCheck.Checked += (_, _) => OnArrowDirectChanged(true);
+        _arrowDirectCheck.Unchecked += (_, _) => OnArrowDirectChanged(false);
+        _propertyPanel.Children.Add(_arrowDirectCheck);
 
         UpdatePropertyPanelVisibility();
     }
@@ -1956,6 +1978,7 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_fontSizeBox, false);
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
+            SetPropertySectionVisibility(_arrowDirectCheck, false);
             SetPropertySectionVisibility(_sizeHeader, false);
             SetPropertySectionVisibility(_sizeLine1, false);
             SetPropertySectionVisibility(_sizeLine2, false);
@@ -1979,6 +2002,7 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "arrow");
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
+        SetPropertySectionVisibility(_arrowDirectCheck, isArrow);
         RefreshSizeInfo(kind);
     }
 
@@ -2035,10 +2059,9 @@ internal sealed partial class DrawingWindow : Window
             }
             case "arrow":
             {
-                var dx = item.P2.X - item.P1.X;
-                var dy = item.P2.Y - item.P1.Y;
-                var length = Math.Sqrt(dx * dx + dy * dy);
-                var angleDeg = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+                var path = GetArrowPathPoints(item);
+                var length = PathPolylineLength(path);
+                var angleDeg = GetArrowPathMetrics(path).AngleDeg;
                 _sizeLine1.Text = $"Length: {Math.Round(length):0} px";
                 _sizeLine2.Text = $"Angle: {angleDeg:0.0}°";
                 SetPropertySectionVisibility(_sizeLine1, true);
@@ -2084,11 +2107,37 @@ internal sealed partial class DrawingWindow : Window
             }
             if (_arrowHeadCombo != null)
                 _arrowHeadCombo.SelectedIndex = (int)_arrowHead;
+            if (_arrowDirectCheck != null)
+                _arrowDirectCheck.IsChecked = _arrowDirect;
         }
         finally
         {
             _suppressPropertyChanges = false;
         }
+    }
+
+    private void OnArrowDirectChanged(bool direct)
+    {
+        if (_suppressPropertyChanges) return;
+        _arrowDirect = direct;
+        if (PrimarySelection == null || PrimarySelection.Kind != "arrow")
+            return;
+        SnapshotForUndo();
+        foreach (var it in _selection.Where(i => i.Kind == "arrow"))
+        {
+            it.Direct = direct;
+            if (direct)
+                it.RouteBends.Clear();
+            else
+            {
+                CommitArrowAnchors(it);
+                ApplySimpleHeadTargetFromDrawOrder(it);
+                CanonicalizeArrowEndpoints(it);
+                CommitArrowAnchors(it);
+                InitializeArrowRouteBends(it);
+            }
+        }
+        Redraw();
     }
 
     private void SyncFromSelected()
@@ -2102,7 +2151,11 @@ internal sealed partial class DrawingWindow : Window
         _cornerRadius = sel.CornerRadius;
         _fontSize = sel.FontSize;
         _fontFamily = sel.FontFamily;
-        if (sel.Kind == "arrow") _arrowHead = sel.ArrowHead;
+        if (sel.Kind == "arrow")
+        {
+            _arrowHead = sel.ArrowHead;
+            _arrowDirect = sel.Direct;
+        }
         SyncPropertyControlsFromCurrent();
     }
 
@@ -2554,6 +2607,11 @@ internal sealed partial class DrawingWindow : Window
         {
             foreach (var m in ExpandItemMembers(item))
                 _selection.Add(m);
+            if (item.Kind == "arrow" && !item.Direct)
+            {
+                CommitArrowAnchors(item);
+                EnsureArrowRouteBends(item);
+            }
         }
         UpdatePropertyPanelForSelection();
     }
@@ -2833,10 +2891,17 @@ internal sealed partial class DrawingWindow : Window
                 if (handle >= 0)
                 {
                     _activeHandle = handle;
+                    _activeArrowSegment = -1;
                     _isMoving = false;
                     _moveLast = p;
                     _pendingUndoForGesture = true;
                     _canvas.CaptureMouse();
+                    return;
+                }
+
+                if (TryBeginArrowSegmentDrag(PrimarySelection, p))
+                {
+                    e.Handled = true;
                     return;
                 }
             }
@@ -2850,10 +2915,19 @@ internal sealed partial class DrawingWindow : Window
                     return;
                 }
 
+                if (hit.Kind == "arrow" && !hit.Direct && TryBeginArrowSegmentDrag(hit, p))
+                {
+                    if (!_selection.Contains(hit))
+                        SetSingleSelection(hit);
+                    e.Handled = true;
+                    return;
+                }
+
                 if (!_selection.Contains(hit))
                     SetSingleSelection(hit);
 
                 _activeHandle = -1;
+                _activeArrowSegment = -1;
                 _isMoving = true;
                 _moveLast = p;
                 _pendingUndoForGesture = true;
@@ -2939,6 +3013,7 @@ internal sealed partial class DrawingWindow : Window
                 Stroke = _stroke,
                 StrokeThickness = Math.Max(1.5, _thickness),
                 ArrowHead = _arrowHead,
+                Direct = _arrowDirect,
                 FontSize = _fontSize,
                 FontFamily = _fontFamily,
                 TextColor = _textColor,
@@ -3031,6 +3106,21 @@ internal sealed partial class DrawingWindow : Window
             return;
         }
 
+        if (_tool == Tool.Select && PrimarySelection != null && _activeArrowSegment >= 0
+            && (e.LeftButton == MouseButtonState.Pressed || Mouse.Captured == _canvas))
+        {
+            if (_pendingUndoForGesture)
+            {
+                SnapshotForUndo();
+                _pendingUndoForGesture = false;
+            }
+            DragArrowSegment(PrimarySelection, _activeArrowSegment, p);
+            RefreshSizeInfo(PrimarySelection.Kind);
+            Redraw();
+            e.Handled = true;
+            return;
+        }
+
         if (_tool == Tool.Select && _isMoving && HasSelection && e.LeftButton == MouseButtonState.Pressed)
         {
             var dx = p.X - _moveLast.X;
@@ -3070,7 +3160,27 @@ internal sealed partial class DrawingWindow : Window
         if (_tool == Tool.Select && PrimarySelection != null && !IsMultiSelection)
         {
             var h = GetHandleAt(PrimarySelection, p);
-            _canvas.Cursor = h >= 0 ? CursorForHandle(PrimarySelection, h) : (HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow);
+            if (h >= 0)
+                _canvas.Cursor = CursorForHandle(PrimarySelection, h);
+            else if (PrimarySelection.Kind == "arrow" && !PrimarySelection.Direct)
+            {
+                var seg = GetArrowSegmentHandleAt(PrimarySelection, p);
+                if (seg >= 0)
+                {
+                    Cursor? segCursor = null;
+                    foreach (var handle in GetArrowSegmentHandles(PrimarySelection))
+                    {
+                        if (handle.SegmentIndex != seg) continue;
+                        segCursor = CursorForArrowSegment(handle.IsHorizontal);
+                        break;
+                    }
+                    _canvas.Cursor = segCursor ?? Cursors.Arrow;
+                }
+                else
+                    _canvas.Cursor = HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow;
+            }
+            else
+                _canvas.Cursor = HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow;
         }
         else if (_tool == Tool.Select && HasSelection)
         {
@@ -3153,6 +3263,13 @@ internal sealed partial class DrawingWindow : Window
                         _drawingItem.AnchorEndShapeId = endShape?.Id;
                     }
                     CommitArrowAnchors(_drawingItem);
+                    ApplySimpleHeadTargetFromDrawOrder(_drawingItem);
+                    if (!_drawingItem.Direct)
+                    {
+                        CanonicalizeArrowEndpoints(_drawingItem);
+                        CommitArrowAnchors(_drawingItem);
+                        InitializeArrowRouteBends(_drawingItem);
+                    }
                 }
             }
             else if (_drawingItem.Kind == "freehand")
@@ -3164,9 +3281,12 @@ internal sealed partial class DrawingWindow : Window
                 }
             }
         }
-        var editedArrow = _tool == Tool.Select
+        var editedArrowEndpoint = _tool == Tool.Select
             && PrimarySelection?.Kind == "arrow"
             && _activeHandle >= 0;
+        var editedArrowSegment = _tool == Tool.Select
+            && PrimarySelection?.Kind == "arrow"
+            && _activeArrowSegment >= 0;
 
         _isDrawing = false;
         _drawingItem = null;
@@ -3175,11 +3295,17 @@ internal sealed partial class DrawingWindow : Window
         _arrowDrawEndAnchorIndex = null;
         _isMoving = false;
         _activeHandle = -1;
+        _activeArrowSegment = -1;
         _pendingUndoForGesture = false;
         _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
 
-        if (editedArrow && PrimarySelection != null)
-            CommitArrowAnchors(PrimarySelection);
+        if (PrimarySelection?.Kind == "arrow")
+        {
+            if (editedArrowEndpoint)
+                CommitArrowAnchors(PrimarySelection);
+            if (editedArrowEndpoint || editedArrowSegment)
+                SyncArrowRouteBendsToAnchors(PrimarySelection);
+        }
 
         Redraw();
     }
@@ -3248,6 +3374,11 @@ internal sealed partial class DrawingWindow : Window
     {
         it.P1 = new Point(it.P1.X + dx, it.P1.Y + dy);
         it.P2 = new Point(it.P2.X + dx, it.P2.Y + dy);
+        if (it.Kind == "arrow")
+        {
+            for (var i = 0; i < it.RouteBends.Count; i++)
+                it.RouteBends[i] = new Point(it.RouteBends[i].X + dx, it.RouteBends[i].Y + dy);
+        }
         if (it.Kind == "freehand")
         {
             for (var i = 0; i < it.Points.Count; i++)
@@ -3266,7 +3397,7 @@ internal sealed partial class DrawingWindow : Window
         return null;
     }
 
-    private static bool HitTest(DrawItem it, Point p)
+    private bool HitTest(DrawItem it, Point p)
     {
         switch (it.Kind)
         {
@@ -3279,7 +3410,11 @@ internal sealed partial class DrawingWindow : Window
                 return b.Contains(p);
             }
             case "arrow":
-                return PointNearSegment(p, it.P1, it.P2, Math.Max(6, it.StrokeThickness + 4));
+            {
+                var tol = Math.Max(6, it.StrokeThickness + 4);
+                var path = GetArrowPathPoints(it);
+                return HitTestArrowPath(p, path, tol);
+            }
             case "freehand":
             {
                 var outline = DrawingFreehandGeometry.Flatten(it.Points);
@@ -3358,7 +3493,13 @@ internal sealed partial class DrawingWindow : Window
         if (it.Kind == "arrow")
         {
             if (handle == 0) MoveArrowEndpoint(it, isStart: true, p, preserveAnchorLock: false);
-            else if (handle == 1) MoveArrowEndpoint(it, isStart: false, p, preserveAnchorLock: false);
+            else if (handle == 1)
+            {
+                MoveArrowEndpoint(it, isStart: false, p, preserveAnchorLock: false);
+                if (it.Direct)
+                    it.SimpleHeadAtP2 = true;
+            }
+            SyncArrowRouteBendsToAnchors(it);
             return;
         }
 
@@ -3390,7 +3531,9 @@ internal sealed partial class DrawingWindow : Window
         var preservedEditor = _activeEditor;
         _canvas.Children.Clear();
         _overlay.Children.Clear();
-        var skipAnchorRefresh = _tool == Tool.Select && _activeHandle >= 0 && PrimarySelection != null;
+        var skipAnchorRefresh = _tool == Tool.Select
+            && (_activeHandle >= 0 || _activeArrowSegment >= 0)
+            && PrimarySelection != null;
         RefreshAllAnchoredArrows(skipAnchorRefresh ? PrimarySelection : null);
         foreach (var it in _items)
             RenderItem(it, _canvas);
@@ -3416,8 +3559,11 @@ internal sealed partial class DrawingWindow : Window
             }
             else if (_editingItem.Kind == "arrow")
             {
-                var size = MeasureArrowLabel(_editingItem, preservedEditor is TextBox tb ? tb.Text : _editingItem.Text, _canvas);
-                LayoutArrowLabelElement(preservedEditor, _editingItem, size);
+                var path = GetArrowPathPoints(_editingItem);
+                var labelText = preservedEditor is TextBox tb ? tb.Text : _editingItem.Text;
+                var size = MeasureArrowLabel(_editingItem, labelText, _canvas, path);
+                var (mid, angleDeg, _) = GetArrowPathMetrics(path);
+                LayoutArrowLabelElement(preservedEditor, mid, angleDeg, size);
             }
             if (_editingItem.Kind is "rect" or "ellipse")
                 ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
@@ -3668,7 +3814,7 @@ internal sealed partial class DrawingWindow : Window
             case "arrow":
             {
                 RenderArrowShaft(it, surface);
-                AddArrowHeads(surface, it);
+                AddArrowHeads(it, surface);
                 RenderArrowLabel(it, surface);
                 break;
             }
@@ -3710,17 +3856,25 @@ internal sealed partial class DrawingWindow : Window
         }
     }
 
-    private static void AddArrowHeads(Canvas surface, DrawItem it)
+    private void AddArrowHeads(DrawItem it, Canvas surface)
     {
         if (it.ArrowHead == ArrowHeadStyle.None) return;
+        var path = GetArrowPathPoints(it);
+        if (path.Count < 2) return;
+
         var headSize = Math.Max(10, it.StrokeThickness * 4);
+        var endFrom = path[^2];
+        var endTo = path[^1];
         if (it.ArrowHead == ArrowHeadStyle.Double)
         {
-            DrawHead(surface, it.P2, it.P1, it.Stroke, it.StrokeThickness, headSize);
-            DrawHead(surface, it.P1, it.P2, it.Stroke, it.StrokeThickness, headSize);
+            DrawHead(surface, endFrom, endTo, it.Stroke, it.StrokeThickness, headSize);
+            DrawHead(surface, path[1], path[0], it.Stroke, it.StrokeThickness, headSize);
             return;
         }
-        DrawHead(surface, it.P1, it.P2, it.Stroke, it.StrokeThickness, headSize);
+        if (it.SimpleHeadAtP2)
+            DrawHead(surface, endFrom, endTo, it.Stroke, it.StrokeThickness, headSize);
+        else
+            DrawHead(surface, path[1], path[0], it.Stroke, it.StrokeThickness, headSize);
     }
 
     private static void DrawHead(Canvas surface, Point from, Point to, Brush stroke, double thickness, double size)
@@ -3781,7 +3935,7 @@ internal sealed partial class DrawingWindow : Window
             Canvas.SetTop(box, b.Top - 2);
             _overlay.Children.Add(box);
         }
-        else
+        else if (it.Direct)
         {
             var line = new Line
             {
@@ -3792,6 +3946,24 @@ internal sealed partial class DrawingWindow : Window
                 IsHitTestVisible = false,
             };
             _overlay.Children.Add(line);
+        }
+        else
+        {
+            var path = GetArrowPathPoints(it);
+            for (var i = 0; i < path.Count - 1; i++)
+            {
+                _overlay.Children.Add(new Line
+                {
+                    X1 = path[i].X,
+                    Y1 = path[i].Y,
+                    X2 = path[i + 1].X,
+                    Y2 = path[i + 1].Y,
+                    Stroke = accent,
+                    StrokeThickness = 1,
+                    StrokeDashArray = new DoubleCollection { 4, 3 },
+                    IsHitTestVisible = false,
+                });
+            }
         }
 
         if (!showHandles) return;
@@ -3812,6 +3984,9 @@ internal sealed partial class DrawingWindow : Window
             Canvas.SetTop(hr, h.Y - HandleSize / 2);
             _overlay.Children.Add(hr);
         }
+
+        if (it.Kind == "arrow" && !it.Direct)
+            RenderArrowSegmentHandles(it);
     }
 
     // ---------------- Text editor ----------------
@@ -3897,7 +4072,8 @@ internal sealed partial class DrawingWindow : Window
         }
         else if (isArrowLabel)
         {
-            var size = MeasureArrowLabel(it, it.Text, _canvas);
+            var path = GetArrowPathPoints(it);
+            var size = MeasureArrowLabel(it, it.Text, _canvas, path);
             left = 0;
             top = 0;
             w = size.Width;
@@ -3918,7 +4094,11 @@ internal sealed partial class DrawingWindow : Window
             h = Math.Max(it.FontSize + 12, b.Height + 8);
         }
         if (isArrowLabel)
-            LayoutArrowLabelElement(box, it, new Size(w, h));
+        {
+            var path = GetArrowPathPoints(it);
+            var (mid, angleDeg, _) = GetArrowPathMetrics(path);
+            LayoutArrowLabelElement(box, mid, angleDeg, new Size(w, h));
+        }
         else
         {
             Canvas.SetLeft(box, left);
@@ -3998,8 +4178,10 @@ internal sealed partial class DrawingWindow : Window
             }
             else if (it.Kind == "arrow")
             {
-                var size = MeasureArrowLabel(it, text, box);
-                LayoutArrowLabelElement(box, it, size);
+                var path = GetArrowPathPoints(it);
+                var size = MeasureArrowLabel(it, text, box, path);
+                var (mid, angleDeg, _) = GetArrowPathMetrics(path);
+                LayoutArrowLabelElement(box, mid, angleDeg, size);
                 Redraw();
             }
         }
@@ -4256,6 +4438,8 @@ internal sealed partial class DrawingWindow : Window
             FontFamilyName = it.FontFamily.Source,
             TextColor = BrushToHex(it.TextColor),
             ArrowHead = it.ArrowHead.ToString(),
+            Direct = it.Direct,
+            SimpleHeadAtP2 = it.SimpleHeadAtP2,
             FreehandGroupId = it.FreehandGroupId,
             Id = it.Id,
             AnchorStartShapeId = it.AnchorStartShapeId,
@@ -4267,6 +4451,11 @@ internal sealed partial class DrawingWindow : Window
         {
             dto.PointsX.Add(p.X);
             dto.PointsY.Add(p.Y);
+        }
+        foreach (var p in it.RouteBends)
+        {
+            dto.RouteBendsX.Add(p.X);
+            dto.RouteBendsY.Add(p.Y);
         }
         return dto;
     }
@@ -4291,6 +4480,8 @@ internal sealed partial class DrawingWindow : Window
             FontFamily = new FontFamily(string.IsNullOrWhiteSpace(dto.FontFamilyName) ? "Segoe UI" : dto.FontFamilyName),
             TextColor = ParseBrush(dto.TextColor),
             ArrowHead = Enum.TryParse<ArrowHeadStyle>(dto.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple,
+            Direct = dto.Direct,
+            SimpleHeadAtP2 = dto.SimpleHeadAtP2,
             FreehandGroupId = dto.FreehandGroupId,
             Id = dto.Id,
             AnchorStartShapeId = dto.AnchorStartShapeId,
@@ -4301,6 +4492,9 @@ internal sealed partial class DrawingWindow : Window
         int pointCount = Math.Min(dto.PointsX.Count, dto.PointsY.Count);
         for (int i = 0; i < pointCount; i++)
             item.Points.Add(new Point(dto.PointsX[i], dto.PointsY[i]));
+        int bendCount = Math.Min(dto.RouteBendsX.Count, dto.RouteBendsY.Count);
+        for (int i = 0; i < bendCount; i++)
+            item.RouteBends.Add(new Point(dto.RouteBendsX[i], dto.RouteBendsY[i]));
         return item;
     }
 

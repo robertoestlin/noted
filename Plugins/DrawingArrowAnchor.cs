@@ -264,6 +264,8 @@ internal sealed partial class DrawingWindow
                 arrow.P2 = GetShapeAnchorPointByIndex(endShape, idx);
             }
         }
+
+        SyncArrowRouteBendsToAnchors(arrow);
     }
 
     private void RefreshAllAnchoredArrows(DrawItem? skipItem = null)
