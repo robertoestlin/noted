@@ -2676,6 +2676,32 @@ internal sealed class DrawingWindow : Window
         item.P2 = new Point(p1.X + signX * stdW, p1.Y + signY * stdH);
     }
 
+    private void SnapDefaultSizedEllipseCenterY(DrawItem item)
+    {
+        if (item.Kind != "ellipse") return;
+
+        var bounds = GetBounds(item);
+        var centerY = bounds.Top + bounds.Height / 2;
+        var startY = item.P1.Y;
+
+        double? bestDy = null;
+        foreach (var other in _items)
+        {
+            if (ReferenceEquals(other, item)) continue;
+            var ob = GetBounds(other);
+            if (ob.Height <= 0) continue;
+            if (startY < ob.Top || startY > ob.Bottom) continue;
+            var otherCenterY = ob.Top + ob.Height / 2;
+            var dy = otherCenterY - centerY;
+            if (bestDy == null || Math.Abs(dy) < Math.Abs(bestDy.Value))
+                bestDy = dy;
+        }
+
+        if (!bestDy.HasValue || Math.Abs(bestDy.Value) < 0.001) return;
+        item.P1 = new Point(item.P1.X, item.P1.Y + bestDy.Value);
+        item.P2 = new Point(item.P2.X, item.P2.Y + bestDy.Value);
+    }
+
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" })
@@ -2683,6 +2709,7 @@ internal sealed class DrawingWindow : Window
             CommitTextEdit();
             var item = _drawingItem;
             ApplyDefaultSizeToShape(item);
+            SnapDefaultSizedEllipseCenterY(item);
             if (_canvas.IsMouseCaptured)
                 _canvas.ReleaseMouseCapture();
             _isDrawing = false;
