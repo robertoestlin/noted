@@ -3070,38 +3070,68 @@ internal sealed class DrawingWindow : Window
 
     private void RenderSnapGuides()
     {
-        var alignBrush = new SolidColorBrush(Color.FromRgb(0xE9, 0x1E, 0x63));
-        var spaceBrush = new SolidColorBrush(Color.FromRgb(0x43, 0xA0, 0x47));
+        var alignBrush = new SolidColorBrush(Colors.Black);
+        var spaceBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5));
+        var alignDash = new DoubleCollection { 4, 4 };
         foreach (var g in _snapGuides)
         {
-            var brush = g.IsSpacing ? spaceBrush : alignBrush;
-            if (g.IsVertical)
-            {
-                _overlay.Children.Add(new Line
-                {
-                    X1 = g.Position,
-                    Y1 = g.Start,
-                    X2 = g.Position,
-                    Y2 = g.End,
-                    Stroke = brush,
-                    StrokeThickness = 1,
-                    IsHitTestVisible = false,
-                });
-            }
+            if (g.IsSpacing)
+                RenderSpacingBracket(g, spaceBrush);
             else
-            {
-                _overlay.Children.Add(new Line
-                {
-                    X1 = g.Start,
-                    Y1 = g.Position,
-                    X2 = g.End,
-                    Y2 = g.Position,
-                    Stroke = brush,
-                    StrokeThickness = 1,
-                    IsHitTestVisible = false,
-                });
-            }
+                RenderAlignmentGuide(g, alignBrush, alignDash);
         }
+    }
+
+    private void RenderAlignmentGuide(DrawingSnapGuides.GuideLine g, Brush brush, DoubleCollection dash)
+    {
+        if (g.IsVertical)
+        {
+            AddSnapLine(g.Position, g.Start, g.Position, g.End, brush, dash);
+            return;
+        }
+        AddSnapLine(g.Start, g.Position, g.End, g.Position, brush, dash);
+    }
+
+    /// <summary>|------| dimension bracket for equal-spacing snap (below or beside the gap).</summary>
+    private void RenderSpacingBracket(DrawingSnapGuides.GuideLine g, Brush brush)
+    {
+        var cap = DrawingSnapGuides.SpacingCapLength;
+        if (!g.IsVertical)
+        {
+            var y = g.Position;
+            var x1 = Math.Min(g.Start, g.End);
+            var x2 = Math.Max(g.Start, g.End);
+            if (x2 - x1 < 2) return;
+            AddSnapLine(x1, y, x2, y, brush);
+            AddSnapLine(x1, y, x1, y - cap, brush);
+            AddSnapLine(x2, y, x2, y - cap, brush);
+            return;
+        }
+
+        var x = g.Position;
+        var y1 = Math.Min(g.Start, g.End);
+        var y2 = Math.Max(g.Start, g.End);
+        if (y2 - y1 < 2) return;
+        AddSnapLine(x, y1, x, y2, brush);
+        AddSnapLine(x, y1, x - cap, y1, brush);
+        AddSnapLine(x, y2, x - cap, y2, brush);
+    }
+
+    private void AddSnapLine(double x1, double y1, double x2, double y2, Brush brush, DoubleCollection? dash = null)
+    {
+        _overlay.Children.Add(new Line
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            Stroke = brush,
+            StrokeThickness = 1,
+            StrokeDashArray = dash,
+            StrokeStartLineCap = PenLineCap.Square,
+            StrokeEndLineCap = PenLineCap.Square,
+            IsHitTestVisible = false,
+        });
     }
 
     private void RenderMarqueeRect()

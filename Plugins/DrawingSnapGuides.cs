@@ -6,6 +6,8 @@ namespace Noted;
 internal static class DrawingSnapGuides
 {
     public const double DefaultSnapDistance = 8;
+    public const double SpacingGuideOffset = 14;
+    public const double SpacingCapLength = 7;
     private const double GapMatchTolerance = 3;
 
     public readonly struct GuideLine
@@ -208,29 +210,31 @@ internal static class DrawingSnapGuides
             if (bestDx != before) matched = gap;
         }
 
-        for (var i = 0; i < sorted.Count - 2; i++)
+        var allHorizontal = others.Append(proposed).OrderBy(r => r.Left).ToList();
+        for (var i = 0; i < allHorizontal.Count - 2; i++)
         {
-            var g1 = sorted[i + 1].Left - sorted[i].Right;
-            var g2 = sorted[i + 2].Left - sorted[i + 1].Right;
+            var g1 = allHorizontal[i + 1].Left - allHorizontal[i].Right;
+            var g2 = allHorizontal[i + 2].Left - allHorizontal[i + 1].Right;
             if (g1 < 1 || Math.Abs(g1 - g2) > GapMatchTolerance) continue;
 
-            var targetLeft = sorted[i + 2].Right + g1;
+            var targetLeft = allHorizontal[i + 2].Right + g1;
             var tripleDelta = targetLeft - proposed.Left;
             if (Math.Abs(tripleDelta) <= snapDistance
                 && (bestDx == null || Math.Abs(tripleDelta) < Math.Abs(bestDx.Value)))
             {
                 bestDx = tripleDelta;
                 matched = null;
-                var y = OverlapMidY(sorted[i], sorted[i + 1], sorted[i + 2]);
-                guides.Add(new GuideLine { IsVertical = false, IsSpacing = true, Position = y, Start = sorted[i].Right, End = sorted[i + 1].Left });
-                guides.Add(new GuideLine { IsVertical = false, IsSpacing = true, Position = y, Start = sorted[i + 1].Right, End = sorted[i + 2].Left });
+                AddMatchingHorizontalSpacingGuides(allHorizontal, g1, guides);
             }
         }
 
-        if (bestDx != null && matched != null)
+        if (bestDx != null)
         {
-            var y = OverlapMidY(matched.Value.First, matched.Value.Second);
-            guides.Add(new GuideLine { IsVertical = false, IsSpacing = true, Position = y, Start = matched.Value.First.Right, End = matched.Value.Second.Left });
+            guides.RemoveAll(g => g.IsSpacing && !g.IsVertical);
+            var referenceGap = matched?.Size
+                ?? FindReferenceHorizontalGap(allHorizontal);
+            if (referenceGap >= 1)
+                AddMatchingHorizontalSpacingGuides(allHorizontal, referenceGap.Value, guides);
         }
 
         return bestDx ?? 0;
@@ -262,29 +266,31 @@ internal static class DrawingSnapGuides
             if (bestDy != before) matched = gap;
         }
 
-        for (var i = 0; i < sorted.Count - 2; i++)
+        var allVertical = others.Append(proposed).OrderBy(r => r.Top).ToList();
+        for (var i = 0; i < allVertical.Count - 2; i++)
         {
-            var g1 = sorted[i + 1].Top - sorted[i].Bottom;
-            var g2 = sorted[i + 2].Top - sorted[i + 1].Bottom;
+            var g1 = allVertical[i + 1].Top - allVertical[i].Bottom;
+            var g2 = allVertical[i + 2].Top - allVertical[i + 1].Bottom;
             if (g1 < 1 || Math.Abs(g1 - g2) > GapMatchTolerance) continue;
 
-            var targetTop = sorted[i + 2].Bottom + g1;
+            var targetTop = allVertical[i + 2].Bottom + g1;
             var tripleDelta = targetTop - proposed.Top;
             if (Math.Abs(tripleDelta) <= snapDistance
                 && (bestDy == null || Math.Abs(tripleDelta) < Math.Abs(bestDy.Value)))
             {
                 bestDy = tripleDelta;
                 matched = null;
-                var x = OverlapMidX(sorted[i], sorted[i + 1], sorted[i + 2]);
-                guides.Add(new GuideLine { IsVertical = true, IsSpacing = true, Position = x, Start = sorted[i].Bottom, End = sorted[i + 1].Top });
-                guides.Add(new GuideLine { IsVertical = true, IsSpacing = true, Position = x, Start = sorted[i + 1].Bottom, End = sorted[i + 2].Top });
+                AddMatchingVerticalSpacingGuides(allVertical, g1, guides);
             }
         }
 
-        if (bestDy != null && matched != null)
+        if (bestDy != null)
         {
-            var x = OverlapMidX(matched.Value.First, matched.Value.Second);
-            guides.Add(new GuideLine { IsVertical = true, IsSpacing = true, Position = x, Start = matched.Value.First.Bottom, End = matched.Value.Second.Top });
+            guides.RemoveAll(g => g.IsSpacing && g.IsVertical);
+            var referenceGap = matched?.Size
+                ?? FindReferenceVerticalGap(allVertical);
+            if (referenceGap >= 1)
+                AddMatchingVerticalSpacingGuides(allVertical, referenceGap.Value, guides);
         }
 
         return bestDy ?? 0;
@@ -299,31 +305,73 @@ internal static class DrawingSnapGuides
         return true;
     }
 
-    private static double OverlapMidY(Rect a, Rect b)
+    private static double? FindReferenceHorizontalGap(List<Rect> sortedByLeft)
     {
-        var top = Math.Max(a.Top, b.Top);
-        var bottom = Math.Min(a.Bottom, b.Bottom);
-        return top <= bottom ? (top + bottom) / 2 : (a.Top + a.Bottom + b.Top + b.Bottom) / 4;
+        for (var i = 0; i < sortedByLeft.Count - 1; i++)
+        {
+            var g = sortedByLeft[i + 1].Left - sortedByLeft[i].Right;
+            if (g >= 1) return g;
+        }
+        return null;
     }
 
-    private static double OverlapMidY(Rect a, Rect b, Rect c)
+    private static double? FindReferenceVerticalGap(List<Rect> sortedByTop)
     {
-        var top = Math.Max(Math.Max(a.Top, b.Top), c.Top);
-        var bottom = Math.Min(Math.Min(a.Bottom, b.Bottom), c.Bottom);
-        return top <= bottom ? (top + bottom) / 2 : (a.Top + b.Top + c.Top) / 3;
+        for (var i = 0; i < sortedByTop.Count - 1; i++)
+        {
+            var g = sortedByTop[i + 1].Top - sortedByTop[i].Bottom;
+            if (g >= 1) return g;
+        }
+        return null;
     }
 
-    private static double OverlapMidX(Rect a, Rect b)
+    private static void AddMatchingHorizontalSpacingGuides(List<Rect> sortedByLeft, double referenceGap, List<GuideLine> guides)
     {
-        var left = Math.Max(a.Left, b.Left);
-        var right = Math.Min(a.Right, b.Right);
-        return left <= right ? (left + right) / 2 : (a.Left + a.Right + b.Left + b.Right) / 4;
+        for (var i = 0; i < sortedByLeft.Count - 1; i++)
+        {
+            var gap = sortedByLeft[i + 1].Left - sortedByLeft[i].Right;
+            if (gap >= 1 && Math.Abs(gap - referenceGap) <= GapMatchTolerance)
+                AddHorizontalSpacingGuide(guides, sortedByLeft[i], sortedByLeft[i + 1]);
+        }
     }
 
-    private static double OverlapMidX(Rect a, Rect b, Rect c)
+    private static void AddMatchingVerticalSpacingGuides(List<Rect> sortedByTop, double referenceGap, List<GuideLine> guides)
     {
-        var left = Math.Max(Math.Max(a.Left, b.Left), c.Left);
-        var right = Math.Min(Math.Min(a.Right, b.Right), c.Right);
-        return left <= right ? (left + right) / 2 : (a.Left + b.Left + c.Left) / 3;
+        for (var i = 0; i < sortedByTop.Count - 1; i++)
+        {
+            var gap = sortedByTop[i + 1].Top - sortedByTop[i].Bottom;
+            if (gap >= 1 && Math.Abs(gap - referenceGap) <= GapMatchTolerance)
+                AddVerticalSpacingGuide(guides, sortedByTop[i], sortedByTop[i + 1]);
+        }
+    }
+
+    private static void AddHorizontalSpacingGuide(List<GuideLine> guides, Rect leftObject, Rect rightObject)
+    {
+        var gapStart = leftObject.Right;
+        var gapEnd = rightObject.Left;
+        if (gapEnd - gapStart < 1) return;
+        guides.Add(new GuideLine
+        {
+            IsVertical = false,
+            IsSpacing = true,
+            Position = Math.Max(leftObject.Bottom, rightObject.Bottom) + SpacingGuideOffset,
+            Start = gapStart,
+            End = gapEnd,
+        });
+    }
+
+    private static void AddVerticalSpacingGuide(List<GuideLine> guides, Rect topObject, Rect bottomObject)
+    {
+        var gapStart = topObject.Bottom;
+        var gapEnd = bottomObject.Top;
+        if (gapEnd - gapStart < 1) return;
+        guides.Add(new GuideLine
+        {
+            IsVertical = true,
+            IsSpacing = true,
+            Position = Math.Max(topObject.Right, bottomObject.Right) + SpacingGuideOffset,
+            Start = gapStart,
+            End = gapEnd,
+        });
     }
 }
