@@ -8235,6 +8235,7 @@ public partial class MainWindow : Window
     private void MenuAlarms_Click(object sender, RoutedEventArgs e) => ShowAlarmsDialog();
     private void MenuTags_Click(object sender, RoutedEventArgs e) => ShowTagsDialog();
     private void MenuUsers_Click(object sender, RoutedEventArgs e) => ShowUsersDialog();
+    private void MenuColorPalettes_Click(object sender, RoutedEventArgs e) => ShowColorPalettesDialog();
     private void MenuTabCleanup_Click(object sender, RoutedEventArgs e) => ShowTabCleanupDialog();
     private void MenuRecoverTabs_Click(object sender, RoutedEventArgs e) => ShowRecoverTabsDialog();
     private void MenuAboutInfo_Click(object sender, RoutedEventArgs e)

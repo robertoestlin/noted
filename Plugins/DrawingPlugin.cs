@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -8,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using Noted.Services;
 
 namespace Noted;
 
@@ -310,47 +312,38 @@ internal static class DrawingColorUtilities
         => TryParseColorString(hex, out var c) ? c : fallback;
 }
 
+/// <summary>
+/// Backwards-compatible facade over <see cref="ColorPaletteService"/>. The drawing plugin's
+/// own "Custom colors" dialog operates on the default ("Main") palette; pickers across the
+/// app see every named color from every palette via <see cref="MergeWithBasePalette"/>.
+/// </summary>
 internal static class DrawingNamedColorStore
 {
-    private const string NamedColorsFileName = "drawing-named-colors.json";
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
-    public static string NamedColorsFilePath => System.IO.Path.Combine(DrawingThemeStore.NotedDataDirectory, NamedColorsFileName);
+    private static readonly ColorPaletteService Service = new();
 
     public static List<DrawingNamedColor> Load()
     {
-        try
-        {
-            if (!File.Exists(NamedColorsFilePath))
-                return new List<DrawingNamedColor>();
-            var list = JsonSerializer.Deserialize<List<DrawingNamedColor>>(File.ReadAllText(NamedColorsFilePath), JsonOptions);
-            return list ?? new List<DrawingNamedColor>();
-        }
-        catch
-        {
-            return new List<DrawingNamedColor>();
-        }
+        var main = Service.GetOrCreateDefault();
+        return main.Colors
+            .Select(c => new DrawingNamedColor { Name = c.Name, Hex = c.Hex })
+            .ToList();
     }
 
     public static void Save(List<DrawingNamedColor> colors)
     {
-        try
-        {
-            Directory.CreateDirectory(DrawingThemeStore.NotedDataDirectory);
-            File.WriteAllText(NamedColorsFilePath, JsonSerializer.Serialize(colors, JsonOptions));
-        }
-        catch
-        {
-            // ignore
-        }
+        var palettes = Service.LoadPalettes();
+        var main = palettes.First(p => p.Name.Equals(ColorPaletteService.DefaultPaletteName, StringComparison.OrdinalIgnoreCase));
+        main.Colors = colors
+            .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Hex))
+            .Select(c => new NamedColor { Name = c.Name, Hex = c.Hex })
+            .ToList();
+        Service.SavePalettes(palettes);
     }
 
     public static Color[] MergeWithBasePalette(Color[] baseColors)
     {
-        var list = new List<Color>();
-        foreach (var c in baseColors)
-            list.Add(c);
-        foreach (var n in Load())
+        var list = new List<Color>(baseColors);
+        foreach (var n in Service.GetAllNamedColors())
         {
             if (!DrawingColorUtilities.TryParseColorString(n.Hex, out var c) || c.A == 0)
                 continue;
@@ -2874,7 +2867,7 @@ internal sealed class ThemeSettingsWindow : Window
         cb.Items.Clear();
         foreach (var hex in ColorChoices)
             cb.Items.Add(MakeColorChoiceItem(hex));
-        foreach (var n in DrawingNamedColorStore.Load())
+        foreach (var n in new ColorPaletteService().GetAllNamedColors())
         {
             if (!DrawingColorUtilities.TryParseColorString(n.Hex, out var c) || c.A == 0)
                 continue;

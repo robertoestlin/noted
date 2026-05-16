@@ -1,3 +1,6 @@
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -5,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Noted.Services;
 
 namespace Noted;
 
@@ -14,6 +18,73 @@ public partial class MainWindow
     {
         var dlg = new ImageToColorWindow { Owner = this };
         dlg.Show();
+    }
+}
+
+internal sealed class ImageToColorHistoryEntry
+{
+    public string Hex { get; set; } = "";
+    public DateTime Utc { get; set; }
+}
+
+internal static class ImageToColorHistoryStore
+{
+    private const string FolderName = @"c:\tools\backup\noted";
+    private const string FileName = "image-to-color-history.json";
+    private const int MaxEntries = 100;
+    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
+    public static string FilePath => System.IO.Path.Combine(FolderName, FileName);
+
+    public static List<ImageToColorHistoryEntry> Load()
+    {
+        try
+        {
+            if (!File.Exists(FilePath))
+                return new List<ImageToColorHistoryEntry>();
+            var loaded = JsonSerializer.Deserialize<List<ImageToColorHistoryEntry>>(File.ReadAllText(FilePath));
+            if (loaded == null)
+                return new List<ImageToColorHistoryEntry>();
+            return loaded.Where(e => !string.IsNullOrWhiteSpace(e.Hex)).Take(MaxEntries).ToList();
+        }
+        catch
+        {
+            return new List<ImageToColorHistoryEntry>();
+        }
+    }
+
+    public static List<ImageToColorHistoryEntry> AddAndSave(List<ImageToColorHistoryEntry> existing, string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex))
+            return existing;
+
+        var normalized = hex.Trim();
+        var updated = new List<ImageToColorHistoryEntry>(existing.Count + 1);
+        updated.Add(new ImageToColorHistoryEntry { Hex = normalized, Utc = DateTime.UtcNow });
+        foreach (var e in existing)
+        {
+            if (string.Equals(e.Hex, normalized, StringComparison.OrdinalIgnoreCase))
+                continue;
+            updated.Add(e);
+            if (updated.Count >= MaxEntries)
+                break;
+        }
+
+        Save(updated);
+        return updated;
+    }
+
+    private static void Save(List<ImageToColorHistoryEntry> entries)
+    {
+        try
+        {
+            Directory.CreateDirectory(FolderName);
+            System.IO.File.WriteAllText(FilePath, JsonSerializer.Serialize(entries, JsonOptions));
+        }
+        catch
+        {
+            // non-critical
+        }
     }
 }
 
@@ -29,21 +100,31 @@ internal sealed class ImageToColorWindow : Window
     private readonly Slider _g;
     private readonly Slider _b;
     private readonly Border _swatch;
+    private readonly ItemsControl _historyList;
+    private readonly ColorPaletteService _paletteService = new();
+    private List<ImageToColorHistoryEntry> _history;
     private BitmapSource? _sampleSource;
     private bool _suppress;
+    private bool _saveOnClose;
     private double? _pickMarkerNormX;
     private double? _pickMarkerNormY;
 
     public ImageToColorWindow()
     {
         Title = "Image to color";
-        Width = 720;
+        Width = 820;
         Height = 640;
-        MinWidth = 480;
+        MinWidth = 560;
         MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
+        _history = ImageToColorHistoryStore.Load();
+
         var root = new DockPanel { Margin = new Thickness(12) };
+
+        var historyColumn = BuildHistoryColumn(out _historyList);
+        DockPanel.SetDock(historyColumn, Dock.Left);
+        root.Children.Add(historyColumn);
 
         var bottom = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -80,13 +161,18 @@ internal sealed class ImageToColorWindow : Window
         _g.ValueChanged += (_, _) => OnRgbSliderChanged();
         _b.ValueChanged += (_, _) => OnRgbSliderChanged();
 
+        var buttonRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 10, 0, 0),
+        };
+
         var btnPicker = new Button
         {
             Content = CreateGraphicalPickerButtonIcon(),
             Width = 40,
             Height = 40,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 10, 0, 0),
             Padding = new Thickness(0),
             Cursor = Cursors.Hand,
             Background = Brushes.White,
@@ -95,14 +181,56 @@ internal sealed class ImageToColorWindow : Window
             ToolTip = "Full color picker (same as in Drawing)",
         };
         btnPicker.Click += (_, _) => OpenGraphicalPicker();
-        colorPanel.Children.Add(btnPicker);
+        buttonRow.Children.Add(btnPicker);
+
+        var btnAddToPalette = new Button
+        {
+            Content = CreateAddGlyph(),
+            Width = 40,
+            Height = 40,
+            Margin = new Thickness(8, 0, 0, 0),
+            Padding = new Thickness(0),
+            Cursor = Cursors.Hand,
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xD0, 0xD7, 0xDE)),
+            BorderThickness = new Thickness(1),
+            ToolTip = "Add to palette…",
+        };
+        btnAddToPalette.Click += (_, _) => OpenAddToPalette();
+        buttonRow.Children.Add(btnAddToPalette);
+
+        colorPanel.Children.Add(buttonRow);
 
         bottom.Children.Add(colorPanel);
 
         var closeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
-        var btnClose = new Button { Content = "Close", Width = 90, IsCancel = true, IsDefault = true };
-        btnClose.Click += (_, _) => Close();
-        closeRow.Children.Add(btnClose);
+        var btnOk = new Button
+        {
+            Content = "OK",
+            Width = 90,
+            IsDefault = true,
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "Save the current color to history and close",
+        };
+        btnOk.Click += (_, _) =>
+        {
+            _saveOnClose = true;
+            Close();
+        };
+        var btnDiscard = new Button
+        {
+            Content = "Discard",
+            Width = 90,
+            IsCancel = true,
+            ToolTip = "Close without saving the current color to history",
+        };
+        btnDiscard.Click += (_, _) =>
+        {
+            _saveOnClose = false;
+            Close();
+        };
+        closeRow.Children.Add(btnOk);
+        closeRow.Children.Add(btnDiscard);
         bottom.Children.Add(closeRow);
 
         var top = new StackPanel { Margin = new Thickness(0, 0, 0, 8) };
@@ -170,8 +298,10 @@ internal sealed class ImageToColorWindow : Window
 
         CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (_, _) => TryPasteFromClipboard(), OnPasteCanExecute));
         Activated += (_, _) => CommandManager.InvalidateRequerySuggested();
+        Closing += (_, _) => PersistHistoryIfRequested();
 
         SetUiColor(Color.FromRgb(0x21, 0x96, 0xF3));
+        RefreshHistoryList();
     }
 
     private void OnPasteCanExecute(object sender, CanExecuteRoutedEventArgs e) => e.CanExecute = ClipboardContainsBitmap();
@@ -222,6 +352,36 @@ internal sealed class ImageToColorWindow : Window
         return slider;
     }
 
+    private static FrameworkElement BuildHistoryColumn(out ItemsControl list)
+    {
+        var column = new DockPanel { Width = 72, Margin = new Thickness(0, 0, 12, 0) };
+
+        var header = new TextBlock
+        {
+            Text = "History",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.DimGray,
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        DockPanel.SetDock(header, Dock.Top);
+        column.Children.Add(header);
+
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xE0)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(4),
+        };
+
+        list = new ItemsControl();
+        scroll.Content = list;
+        column.Children.Add(scroll);
+        return column;
+    }
+
     // Segoe MDL2 eyedropper (EF3C) over a spectrum strip — standard picker imagery with visible color.
     private static UIElement CreateGraphicalPickerButtonIcon()
     {
@@ -251,7 +411,7 @@ internal sealed class ImageToColorWindow : Window
 
         var glyph = new TextBlock
         {
-            Text = "\uEF3C",
+            Text = "",
             FontFamily = new FontFamily("Segoe MDL2 Assets"),
             FontSize = 22,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -263,6 +423,19 @@ internal sealed class ImageToColorWindow : Window
         grid.Children.Add(spectrumBand);
         grid.Children.Add(glyph);
         return grid;
+    }
+
+    private static UIElement CreateAddGlyph()
+    {
+        return new TextBlock
+        {
+            Text = "",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 18,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)),
+        };
     }
 
     private void TryPasteFromClipboard()
@@ -468,5 +641,223 @@ internal sealed class ImageToColorWindow : Window
 
         if (DrawingColorUtilities.TryParseColorString(dlg.ResultHex, out var c) && c.A != 0)
             SetUiColor(Color.FromRgb(c.R, c.G, c.B));
+    }
+
+    private void OpenAddToPalette()
+    {
+        var currentHex = _hex.Text?.Trim();
+        if (!DrawingColorUtilities.TryParseColorString(currentHex, out var parsed) || parsed.A == 0)
+            parsed = Color.FromRgb(0x21, 0x96, 0xF3);
+
+        var dlg = new AddToPaletteWindow(_paletteService, DrawingColorUtilities.FormatHexForTheme(Color.FromRgb(parsed.R, parsed.G, parsed.B)))
+        {
+            Owner = this,
+        };
+        dlg.ShowDialog();
+    }
+
+    private void RefreshHistoryList()
+    {
+        _historyList.Items.Clear();
+        foreach (var entry in _history)
+        {
+            if (!DrawingColorUtilities.TryParseColorString(entry.Hex, out var c) || c.A == 0)
+                continue;
+
+            var solid = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+            solid.Freeze();
+
+            var swatch = new Button
+            {
+                Width = 28,
+                Height = 28,
+                Margin = new Thickness(0, 0, 4, 4),
+                Padding = new Thickness(0),
+                Background = solid,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xC0, 0xC0, 0xC0)),
+                BorderThickness = new Thickness(1),
+                Cursor = Cursors.Hand,
+                ToolTip = entry.Hex,
+            };
+            var capturedHex = entry.Hex;
+            swatch.Click += (_, _) =>
+            {
+                if (DrawingColorUtilities.TryParseColorString(capturedHex, out var cc) && cc.A != 0)
+                    SetUiColor(Color.FromRgb(cc.R, cc.G, cc.B));
+            };
+            _historyList.Items.Add(swatch);
+        }
+    }
+
+    private void PersistHistoryIfRequested()
+    {
+        if (!_saveOnClose)
+            return;
+
+        var currentHex = _hex.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(currentHex))
+            return;
+        if (!DrawingColorUtilities.TryParseColorString(currentHex, out var c) || c.A == 0)
+            return;
+
+        var normalized = DrawingColorUtilities.FormatHexForTheme(Color.FromRgb(c.R, c.G, c.B));
+        _history = ImageToColorHistoryStore.AddAndSave(_history, normalized);
+    }
+}
+
+internal sealed class AddToPaletteWindow : Window
+{
+    private const string NewPaletteSentinel = "<New palette…>";
+
+    private readonly ColorPaletteService _service;
+    private readonly ComboBox _paletteCombo;
+    private readonly TextBox _newPaletteBox;
+    private readonly TextBlock _newPaletteLabel;
+    private readonly TextBox _nameBox;
+    private readonly TextBox _hexBox;
+    private readonly Border _preview;
+    private readonly Button _ok;
+
+    public AddToPaletteWindow(ColorPaletteService service, string initialHex)
+    {
+        _service = service;
+        Title = "Add to palette";
+        Width = 380;
+        Height = 260;
+        ResizeMode = ResizeMode.NoResize;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ShowInTaskbar = false;
+
+        var sp = new StackPanel { Margin = new Thickness(14) };
+
+        sp.Children.Add(new TextBlock { Text = "Palette", Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 4) });
+        _paletteCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        _paletteCombo.SelectionChanged += (_, _) => OnPaletteSelectionChanged();
+        sp.Children.Add(_paletteCombo);
+
+        _newPaletteLabel = new TextBlock
+        {
+            Text = "New palette name",
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 4),
+            Visibility = Visibility.Collapsed,
+        };
+        sp.Children.Add(_newPaletteLabel);
+        _newPaletteBox = new TextBox { Margin = new Thickness(0, 0, 0, 8), Visibility = Visibility.Collapsed };
+        _newPaletteBox.TextChanged += (_, _) => UpdateOkState();
+        sp.Children.Add(_newPaletteBox);
+
+        sp.Children.Add(new TextBlock { Text = "Color name", Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 4) });
+        _nameBox = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        _nameBox.TextChanged += (_, _) => UpdateOkState();
+        sp.Children.Add(_nameBox);
+
+        sp.Children.Add(new TextBlock { Text = "Color code", Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 4) });
+        var hexRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
+        _hexBox = new TextBox { Width = 200, VerticalAlignment = VerticalAlignment.Center, Text = initialHex };
+        _hexBox.TextChanged += (_, _) => OnHexChanged();
+        hexRow.Children.Add(_hexBox);
+        _preview = new Border
+        {
+            Width = 24,
+            Height = 24,
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            BorderBrush = Brushes.Gray,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(2),
+        };
+        hexRow.Children.Add(_preview);
+        sp.Children.Add(hexRow);
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        _ok = new Button { Content = "OK", Width = 80, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
+        var cancel = new Button { Content = "Cancel", Width = 80, IsCancel = true };
+        _ok.Click += (_, _) => CommitAndClose();
+        cancel.Click += (_, _) => { DialogResult = false; Close(); };
+        row.Children.Add(_ok);
+        row.Children.Add(cancel);
+        sp.Children.Add(row);
+
+        Content = sp;
+
+        PopulatePalettes();
+        OnHexChanged();
+        UpdateOkState();
+    }
+
+    private void PopulatePalettes()
+    {
+        _paletteCombo.Items.Clear();
+        foreach (var p in _service.LoadPalettes())
+            _paletteCombo.Items.Add(p.Name);
+        _paletteCombo.Items.Add(NewPaletteSentinel);
+        _paletteCombo.SelectedIndex = 0;
+    }
+
+    private void OnPaletteSelectionChanged()
+    {
+        var creatingNew = string.Equals(_paletteCombo.SelectedItem as string, NewPaletteSentinel, StringComparison.Ordinal);
+        _newPaletteLabel.Visibility = creatingNew ? Visibility.Visible : Visibility.Collapsed;
+        _newPaletteBox.Visibility = creatingNew ? Visibility.Visible : Visibility.Collapsed;
+        if (creatingNew)
+            _newPaletteBox.Focus();
+        UpdateOkState();
+    }
+
+    private void OnHexChanged()
+    {
+        if (DrawingColorUtilities.TryParseColorString(_hexBox.Text, out var c) && c.A != 0)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
+            brush.Freeze();
+            _preview.Background = brush;
+        }
+        else
+        {
+            _preview.Background = Brushes.Transparent;
+        }
+        UpdateOkState();
+    }
+
+    private void UpdateOkState()
+    {
+        var hasName = !string.IsNullOrWhiteSpace(_nameBox.Text);
+        var hasValidHex = DrawingColorUtilities.TryParseColorString(_hexBox.Text, out var c) && c.A != 0;
+        var paletteResolves = ResolvePaletteName() != null;
+        _ok.IsEnabled = hasName && hasValidHex && paletteResolves;
+    }
+
+    private string? ResolvePaletteName()
+    {
+        var selected = _paletteCombo.SelectedItem as string;
+        if (string.Equals(selected, NewPaletteSentinel, StringComparison.Ordinal))
+        {
+            var trimmed = (_newPaletteBox.Text ?? "").Trim();
+            return trimmed.Length == 0 ? null : trimmed;
+        }
+        return string.IsNullOrWhiteSpace(selected) ? null : selected;
+    }
+
+    private void CommitAndClose()
+    {
+        var paletteName = ResolvePaletteName();
+        if (paletteName == null)
+            return;
+        if (!DrawingColorUtilities.TryParseColorString(_hexBox.Text, out var c) || c.A == 0)
+            return;
+
+        var creatingNew = string.Equals(_paletteCombo.SelectedItem as string, NewPaletteSentinel, StringComparison.Ordinal);
+        if (creatingNew && !_service.CreatePalette(paletteName))
+        {
+            MessageBox.Show(this, $"A palette named \"{paletteName}\" already exists.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var hex = DrawingColorUtilities.FormatHexForTheme(Color.FromRgb(c.R, c.G, c.B));
+        _service.AddOrUpdateColor(paletteName, new NamedColor { Name = _nameBox.Text.Trim(), Hex = hex });
+
+        DialogResult = true;
+        Close();
     }
 }
