@@ -552,6 +552,21 @@ public sealed class WindowSettings
 
     /// <summary>How often (in minutes) to write dirty Documentation packages to the backup folder. Default 1; 0 disables interval saves (still saved on exit).</summary>
     public int? DocumentationSaveIntervalMinutes { get; set; }
+
+    /// <summary>Default rectangle width (px) when drawing; also used for size snap while dragging.</summary>
+    public int? DrawingDefaultRectangleWidth { get; set; }
+
+    /// <summary>Default rectangle height (px) when drawing; also used for size snap while dragging.</summary>
+    public int? DrawingDefaultRectangleHeight { get; set; }
+
+    /// <summary>Default ellipse width (px) when drawing; also used for size snap while dragging.</summary>
+    public int? DrawingDefaultEllipseWidth { get; set; }
+
+    /// <summary>Default ellipse height (px) when drawing; also used for size snap while dragging.</summary>
+    public int? DrawingDefaultEllipseHeight { get; set; }
+
+    /// <summary>While drawing, width/height snap to defaults when within this many pixels (default 12).</summary>
+    public int? DrawingShapeSizeSnapThresholdPx { get; set; }
 }
 
 // ---------------------------------------------------------------------------

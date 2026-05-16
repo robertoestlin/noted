@@ -23,6 +23,34 @@ public partial class MainWindow
 
     private string? _lastDrawingThemeName;
 
+    internal const int DefaultDrawingRectangleWidth = 150;
+    internal const int DefaultDrawingRectangleHeight = 75;
+    internal const int DefaultDrawingEllipseWidth = 45;
+    internal const int DefaultDrawingEllipseHeight = 45;
+    internal const int DefaultDrawingShapeSizeSnapThresholdPx = 12;
+    internal const int MinDrawingShapeSizePx = 8;
+    internal const int MaxDrawingShapeSizePx = 4096;
+
+    private int _drawingDefaultRectangleWidth = DefaultDrawingRectangleWidth;
+    private int _drawingDefaultRectangleHeight = DefaultDrawingRectangleHeight;
+    private int _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
+    private int _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
+    private int _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
+
+    internal void GetDrawingShapeDefaults(string kind, out double standardWidth, out double standardHeight)
+    {
+        if (kind == "rect")
+        {
+            standardWidth = _drawingDefaultRectangleWidth;
+            standardHeight = _drawingDefaultRectangleHeight;
+            return;
+        }
+        standardWidth = _drawingDefaultEllipseWidth;
+        standardHeight = _drawingDefaultEllipseHeight;
+    }
+
+    internal int DrawingShapeSizeSnapThresholdPx => _drawingShapeSizeSnapThresholdPx;
+
     private void ShowDrawingDialog()
     {
         var dlg = new DrawingWindow(this, _lastDrawingThemeName) { Owner = this };
@@ -1349,6 +1377,9 @@ internal sealed class DrawingWindow : Window
     private TextBlock? _fontHeader;
     private TextBlock? _fontSizeHeader;
     private TextBlock? _arrowStyleHeader;
+    private TextBlock? _sizeHeader;
+    private TextBlock? _sizeLine1;
+    private TextBlock? _sizeLine2;
 
     private StackPanel? _toolsPanel;
 
@@ -1697,6 +1728,21 @@ internal sealed class DrawingWindow : Window
     {
         _propertyPanel.Children.Clear();
 
+        _sizeHeader = SectionHeader("Size");
+        _propertyPanel.Children.Add(_sizeHeader);
+        _sizeLine1 = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 2),
+        };
+        _propertyPanel.Children.Add(_sizeLine1);
+        _sizeLine2 = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        _propertyPanel.Children.Add(_sizeLine2);
+
         _fillColorPicker = new CompactColorPicker(_fill, b =>
         {
             _fill = b;
@@ -1874,6 +1920,9 @@ internal sealed class DrawingWindow : Window
             SetPropertySectionVisibility(_fontSizeSlider, false);
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
+            SetPropertySectionVisibility(_sizeHeader, false);
+            SetPropertySectionVisibility(_sizeLine1, false);
+            SetPropertySectionVisibility(_sizeLine2, false);
             return;
         }
 
@@ -1892,6 +1941,88 @@ internal sealed class DrawingWindow : Window
         SetPropertySectionVisibility(_fontSizeSlider, !isFreehand && kind is "text" or "rect" or "ellipse");
         SetPropertySectionVisibility(_arrowStyleHeader, !isFreehand && kind == "arrow");
         SetPropertySectionVisibility(_arrowHeadCombo, !isFreehand && kind == "arrow");
+        RefreshSizeInfo(kind);
+    }
+
+    private void RefreshSizeInfo(string? kind)
+    {
+        var showSize = kind is "rect" or "ellipse" or "arrow";
+        SetPropertySectionVisibility(_sizeHeader, showSize);
+        SetPropertySectionVisibility(_sizeLine1, showSize);
+        SetPropertySectionVisibility(_sizeLine2, showSize);
+        if (!showSize || _sizeLine1 == null || _sizeLine2 == null)
+            return;
+
+        var item = GetSizeDisplaySource(kind);
+        if (item == null)
+        {
+            _sizeLine1.Text = "";
+            _sizeLine2.Text = "";
+            SetPropertySectionVisibility(_sizeLine1, false);
+            SetPropertySectionVisibility(_sizeLine2, false);
+            return;
+        }
+
+        switch (item.Kind)
+        {
+            case "rect":
+            {
+                var b = GetBounds(item);
+                _sizeLine1.Text = $"Width: {Math.Round(b.Width):0} px";
+                _sizeLine2.Text = $"Height: {Math.Round(b.Height):0} px";
+                SetPropertySectionVisibility(_sizeLine1, true);
+                SetPropertySectionVisibility(_sizeLine2, true);
+                break;
+            }
+            case "ellipse":
+            {
+                var b = GetBounds(item);
+                var w = b.Width;
+                var h = b.Height;
+                if (Math.Abs(w - h) < 1.0)
+                {
+                    _sizeLine1.Text = $"Diameter: {Math.Round(w):0} px";
+                    _sizeLine2.Text = "";
+                    SetPropertySectionVisibility(_sizeLine1, true);
+                    SetPropertySectionVisibility(_sizeLine2, false);
+                }
+                else
+                {
+                    _sizeLine1.Text = $"Diameter (horizontal): {Math.Round(w):0} px";
+                    _sizeLine2.Text = $"Diameter (vertical): {Math.Round(h):0} px";
+                    SetPropertySectionVisibility(_sizeLine1, true);
+                    SetPropertySectionVisibility(_sizeLine2, true);
+                }
+                break;
+            }
+            case "arrow":
+            {
+                var dx = item.P2.X - item.P1.X;
+                var dy = item.P2.Y - item.P1.Y;
+                var length = Math.Sqrt(dx * dx + dy * dy);
+                var angleDeg = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+                _sizeLine1.Text = $"Length: {Math.Round(length):0} px";
+                _sizeLine2.Text = $"Angle: {angleDeg:0.0}°";
+                SetPropertySectionVisibility(_sizeLine1, true);
+                SetPropertySectionVisibility(_sizeLine2, true);
+                break;
+            }
+        }
+    }
+
+    private DrawItem? GetSizeDisplaySource(string? kind)
+    {
+        if (kind is not ("rect" or "ellipse" or "arrow"))
+            return null;
+        if (_isDrawing && _drawingItem != null && _drawingItem.Kind == kind)
+            return _drawingItem;
+        if (_tool == Tool.Select && !IsMultiSelection)
+        {
+            var sel = SelectionPropertySource();
+            if (sel != null && sel.Kind == kind)
+                return sel;
+        }
+        return null;
     }
 
     private void SyncPropertyControlsFromCurrent()
@@ -2654,10 +2785,22 @@ internal sealed class DrawingWindow : Window
                 if (_drawingItem.Points.Count == 0 || (_drawingItem.Points[^1] - p).Length > 0.75)
                     _drawingItem.Points.Add(p);
             }
+            else if (_drawingItem.Kind is "rect" or "ellipse")
+            {
+                _host.GetDrawingShapeDefaults(_drawingItem.Kind, out var stdW, out var stdH);
+                _drawingItem.P2 = DrawingShapeSizeSnap.SnapDragCorner(
+                    _drawingItem.P1,
+                    p,
+                    stdW,
+                    stdH,
+                    _host.DrawingShapeSizeSnapThresholdPx);
+            }
             else
             {
                 _drawingItem.P2 = p;
             }
+            if (_drawingItem.Kind is "rect" or "ellipse" or "arrow")
+                RefreshSizeInfo(_drawingItem.Kind);
             Redraw();
             return;
         }
@@ -2677,6 +2820,7 @@ internal sealed class DrawingWindow : Window
                 _pendingUndoForGesture = false;
             }
             ResizeSelectedByHandle(PrimarySelection, _activeHandle, p);
+            RefreshSizeInfo(PrimarySelection.Kind);
             Redraw();
             return;
         }
@@ -2704,6 +2848,11 @@ internal sealed class DrawingWindow : Window
                 foreach (var it in GetSelectionMembers())
                     TranslateItem(it, finalDx, finalDy);
                 _moveLast = p;
+                if (GetHomogeneousSelectionKind() is { } moveKind
+                    && moveKind is "rect" or "ellipse" or "arrow")
+                {
+                    RefreshSizeInfo(moveKind);
+                }
                 Redraw();
             }
         }

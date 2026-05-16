@@ -141,7 +141,12 @@ public partial class MainWindow
             ClosedTabsMaxCount = _closedTabsMaxCount,
             ClosedTabsRetentionDays = _closedTabsRetentionDays,
             SaveBulletsAs = _saveBulletsAsMarker == '*' ? "*" : "-",
-            ExternalBrowserForLinks = _externalBrowserForLinks
+            ExternalBrowserForLinks = _externalBrowserForLinks,
+            DrawingDefaultRectangleWidth = _drawingDefaultRectangleWidth,
+            DrawingDefaultRectangleHeight = _drawingDefaultRectangleHeight,
+            DrawingDefaultEllipseWidth = _drawingDefaultEllipseWidth,
+            DrawingDefaultEllipseHeight = _drawingDefaultEllipseHeight,
+            DrawingShapeSizeSnapThresholdPx = _drawingShapeSizeSnapThresholdPx,
         };
 
     private NotedSessionState CreateNotedSessionStateSnapshot()
@@ -1128,6 +1133,11 @@ public partial class MainWindow
         _backupAdditionalIncludeMidiCustomSongs = false;
         _backupAdditionalIncludeImages = true;
         ResetQuickMessageOverlaySettings();
+        _drawingDefaultRectangleWidth = DefaultDrawingRectangleWidth;
+        _drawingDefaultRectangleHeight = DefaultDrawingRectangleHeight;
+        _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
+        _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
+        _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
     }
 
     private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
@@ -1295,6 +1305,35 @@ public partial class MainWindow
 
         ApplyThemeColorsFromSettings(state);
         _externalBrowserForLinks = NormalizeExternalBrowserChoice(state.ExternalBrowserForLinks);
+        ApplyDrawingSettingsFromWindowSettings(state);
+    }
+
+    private void ApplyDrawingSettingsFromWindowSettings(WindowSettings state)
+    {
+        _drawingDefaultRectangleWidth = NormalizeDrawingShapeSize(
+            state.DrawingDefaultRectangleWidth, DefaultDrawingRectangleWidth);
+        _drawingDefaultRectangleHeight = NormalizeDrawingShapeSize(
+            state.DrawingDefaultRectangleHeight, DefaultDrawingRectangleHeight);
+        _drawingDefaultEllipseWidth = NormalizeDrawingShapeSize(
+            state.DrawingDefaultEllipseWidth, DefaultDrawingEllipseWidth);
+        _drawingDefaultEllipseHeight = NormalizeDrawingShapeSize(
+            state.DrawingDefaultEllipseHeight, DefaultDrawingEllipseHeight);
+        _drawingShapeSizeSnapThresholdPx = NormalizeDrawingShapeSnapThreshold(
+            state.DrawingShapeSizeSnapThresholdPx);
+    }
+
+    private static int NormalizeDrawingShapeSize(int? value, int defaultValue)
+    {
+        if (value is >= MinDrawingShapeSizePx and <= MaxDrawingShapeSizePx)
+            return value.Value;
+        return defaultValue;
+    }
+
+    private static int NormalizeDrawingShapeSnapThreshold(int? value)
+    {
+        if (value is >= 2 and <= 80)
+            return value.Value;
+        return DefaultDrawingShapeSizeSnapThresholdPx;
     }
 
     private static ExternalBrowserChoice NormalizeExternalBrowserChoice(ExternalBrowserChoice value)
