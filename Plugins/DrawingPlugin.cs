@@ -25,8 +25,8 @@ public partial class MainWindow
 
     internal const int DefaultDrawingRectangleWidth = 150;
     internal const int DefaultDrawingRectangleHeight = 75;
-    internal const int DefaultDrawingEllipseWidth = 45;
-    internal const int DefaultDrawingEllipseHeight = 45;
+    internal const int DefaultDrawingEllipseWidth = 58;
+    internal const int DefaultDrawingEllipseHeight = 58;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 12;
     internal const int MinDrawingShapeSizePx = 8;
     internal const int MaxDrawingShapeSizePx = 4096;
@@ -1368,9 +1368,14 @@ internal sealed class DrawingWindow : Window
     private Grid? _textColorRow;
     private Grid? _freehandColorRow;
     private TextBlock? _thicknessHeader;
-    private Slider? _thicknessSlider;
+    private TextBox? _thicknessBox;
     private Slider? _cornerSlider;
-    private Slider? _fontSizeSlider;
+    private TextBox? _fontSizeBox;
+
+    private const double ThicknessMin = 1;
+    private const double ThicknessMax = 24;
+    private const double FontSizeMin = 8;
+    private const double FontSizeMax = 96;
     private ComboBox? _fontFamilyCombo;
     private ComboBox? _arrowHeadCombo;
     private TextBlock? _cornerRadiusHeader;
@@ -1777,18 +1782,16 @@ internal sealed class DrawingWindow : Window
 
         _thicknessHeader = SectionHeader("Thickness");
         _propertyPanel.Children.Add(_thicknessHeader);
-        _thicknessSlider = MakeSlider(1, 24, _thickness);
-        _thicknessSlider.ValueChanged += (_, _) =>
+        _thicknessBox = MakeNumberBox(_thickness, ThicknessMin, ThicknessMax, v =>
         {
-            if (_suppressPropertyChanges) return;
-            _thickness = _thicknessSlider!.Value;
+            _thickness = v;
             if (PrimarySelection != null && PrimarySelection.Kind != "freehand")
             {
                 PrimarySelection.StrokeThickness = _thickness;
                 Redraw();
             }
-        };
-        _propertyPanel.Children.Add(_thicknessSlider);
+        });
+        _propertyPanel.Children.Add(_thicknessBox);
 
         _cornerRadiusHeader = SectionHeader("Corner radius (rect)");
         _propertyPanel.Children.Add(_cornerRadiusHeader);
@@ -1828,18 +1831,16 @@ internal sealed class DrawingWindow : Window
 
         _fontSizeHeader = SectionHeader("Font size");
         _propertyPanel.Children.Add(_fontSizeHeader);
-        _fontSizeSlider = MakeSlider(8, 96, _fontSize);
-        _fontSizeSlider.ValueChanged += (_, _) =>
+        _fontSizeBox = MakeNumberBox(_fontSize, FontSizeMin, FontSizeMax, v =>
         {
-            if (_suppressPropertyChanges) return;
-            _fontSize = _fontSizeSlider!.Value;
+            _fontSize = v;
             if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse")
             {
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
             }
-        };
-        _propertyPanel.Children.Add(_fontSizeSlider);
+        });
+        _propertyPanel.Children.Add(_fontSizeBox);
 
         _arrowStyleHeader = SectionHeader("Arrow style");
         _propertyPanel.Children.Add(_arrowStyleHeader);
@@ -1910,14 +1911,14 @@ internal sealed class DrawingWindow : Window
             SetPropertySectionVisibility(_strokeColorRow, false);
             SetPropertySectionVisibility(_textColorRow, false);
             SetPropertySectionVisibility(_thicknessHeader, false);
-            SetPropertySectionVisibility(_thicknessSlider, false);
+            SetPropertySectionVisibility(_thicknessBox, false);
             SetPropertySectionVisibility(_freehandColorRow, false);
             SetPropertySectionVisibility(_cornerRadiusHeader, false);
             SetPropertySectionVisibility(_cornerSlider, false);
             SetPropertySectionVisibility(_fontHeader, false);
             SetPropertySectionVisibility(_fontFamilyCombo, false);
             SetPropertySectionVisibility(_fontSizeHeader, false);
-            SetPropertySectionVisibility(_fontSizeSlider, false);
+            SetPropertySectionVisibility(_fontSizeBox, false);
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
             SetPropertySectionVisibility(_sizeHeader, false);
@@ -1931,14 +1932,14 @@ internal sealed class DrawingWindow : Window
         SetPropertySectionVisibility(_strokeColorRow, !isFreehand);
         SetPropertySectionVisibility(_textColorRow, !isFreehand);
         SetPropertySectionVisibility(_thicknessHeader, !isFreehand);
-        SetPropertySectionVisibility(_thicknessSlider, !isFreehand);
+        SetPropertySectionVisibility(_thicknessBox, !isFreehand);
         SetPropertySectionVisibility(_freehandColorRow, isFreehand);
         SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && kind == "rect");
         SetPropertySectionVisibility(_cornerSlider, !isFreehand && kind == "rect");
         SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
         SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse");
         SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontSizeSlider, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse");
         SetPropertySectionVisibility(_arrowStyleHeader, !isFreehand && kind == "arrow");
         SetPropertySectionVisibility(_arrowHeadCombo, !isFreehand && kind == "arrow");
         RefreshSizeInfo(kind);
@@ -2034,9 +2035,9 @@ internal sealed class DrawingWindow : Window
             _strokeColorPicker?.SetSelected(_stroke);
             _textColorPicker?.SetSelected(_textColor);
             _freehandColorPicker?.SetSelected(_stroke);
-            if (_thicknessSlider != null) _thicknessSlider.Value = Math.Clamp(_thickness, _thicknessSlider.Minimum, _thicknessSlider.Maximum);
+            if (_thicknessBox != null) _thicknessBox.Text = Math.Clamp(_thickness, ThicknessMin, ThicknessMax).ToString("0.##");
             if (_cornerSlider != null) _cornerSlider.Value = Math.Clamp(_cornerRadius, _cornerSlider.Minimum, _cornerSlider.Maximum);
-            if (_fontSizeSlider != null) _fontSizeSlider.Value = Math.Clamp(_fontSize, _fontSizeSlider.Minimum, _fontSizeSlider.Maximum);
+            if (_fontSizeBox != null) _fontSizeBox.Text = Math.Clamp(_fontSize, FontSizeMin, FontSizeMax).ToString("0.##");
             if (_fontFamilyCombo != null)
             {
                 var fname = _fontFamily.Source;
@@ -2359,6 +2360,40 @@ internal sealed class DrawingWindow : Window
             IsSnapToTickEnabled = true,
             Margin = new Thickness(0, 0, 0, 4),
         };
+
+    private TextBox MakeNumberBox(double initial, double min, double max, Action<double> onValueChanged)
+    {
+        var box = new TextBox
+        {
+            Text = Math.Clamp(initial, min, max).ToString("0.##"),
+            Margin = new Thickness(0, 0, 0, 4),
+            Padding = new Thickness(4, 2, 4, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Width = 80,
+        };
+        box.TextChanged += (_, _) =>
+        {
+            if (_suppressPropertyChanges) return;
+            if (double.TryParse(box.Text, out var v))
+                onValueChanged(Math.Clamp(v, min, max));
+        };
+        box.LostFocus += (_, _) =>
+        {
+            if (double.TryParse(box.Text, out var v))
+                box.Text = Math.Clamp(v, min, max).ToString("0.##");
+        };
+        box.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Up && e.Key != Key.Down) return;
+            if (!double.TryParse(box.Text, out var v)) return;
+            var step = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift ? 5 : 1;
+            v = Math.Clamp(v + (e.Key == Key.Up ? step : -step), min, max);
+            box.Text = v.ToString("0.##");
+            box.CaretIndex = box.Text.Length;
+            e.Handled = true;
+        };
+        return box;
+    }
 
     private void SelectTool(Tool tool, int? variantIndex = null)
     {
