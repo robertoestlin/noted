@@ -1373,6 +1373,7 @@ internal sealed class DrawingWindow : Window
 
     private bool _isMoving;
     private Point _moveLast;
+    private IReadOnlyList<DrawingSnapGuides.GuideLine> _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
     private int _activeHandle = -1;
     private bool _pendingUndoForGesture;
 
@@ -2691,11 +2692,24 @@ internal sealed class DrawingWindow : Window
                     SnapshotForUndo();
                     _pendingUndoForGesture = false;
                 }
+                var moving = GetSelectionBounds();
+                var selected = GetSelectionMembers().ToHashSet();
+                var others = _items.Where(i => !selected.Contains(i)).Select(GetBounds).ToList();
+                var (snappedDx, snappedDy, guides) = DrawingSnapGuides.AdjustMove(dx, dy, moving, others);
+                var finalDx = DrawingSnapGuides.CoalesceMoveDelta(dx, snappedDx);
+                var finalDy = DrawingSnapGuides.CoalesceMoveDelta(dy, snappedDy);
+                _snapGuides = DrawingSnapGuides.IsSnapEngaged(dx, dy, finalDx, finalDy)
+                    ? guides
+                    : Array.Empty<DrawingSnapGuides.GuideLine>();
                 foreach (var it in GetSelectionMembers())
-                    TranslateItem(it, dx, dy);
+                    TranslateItem(it, finalDx, finalDy);
                 _moveLast = p;
                 Redraw();
             }
+        }
+        else if (!_isMoving)
+        {
+            _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
         }
 
         if (_tool == Tool.Select && PrimarySelection != null && !IsMultiSelection)
@@ -2773,6 +2787,7 @@ internal sealed class DrawingWindow : Window
         _isMoving = false;
         _activeHandle = -1;
         _pendingUndoForGesture = false;
+        _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
         Redraw();
     }
 
@@ -3018,6 +3033,75 @@ internal sealed class DrawingWindow : Window
 
         if (_isMarqueeSelecting)
             RenderMarqueeRect();
+
+        if (_snapGuides.Count > 0)
+            RenderSnapGuides();
+    }
+
+    private Rect GetSelectionBounds()
+    {
+        var first = true;
+        var left = 0d;
+        var top = 0d;
+        var right = 0d;
+        var bottom = 0d;
+        foreach (var it in GetSelectionMembers())
+        {
+            var b = GetBounds(it);
+            if (b.Width <= 0 && b.Height <= 0) continue;
+            if (first)
+            {
+                left = b.Left;
+                top = b.Top;
+                right = b.Right;
+                bottom = b.Bottom;
+                first = false;
+            }
+            else
+            {
+                left = Math.Min(left, b.Left);
+                top = Math.Min(top, b.Top);
+                right = Math.Max(right, b.Right);
+                bottom = Math.Max(bottom, b.Bottom);
+            }
+        }
+        return first ? Rect.Empty : new Rect(left, top, right - left, bottom - top);
+    }
+
+    private void RenderSnapGuides()
+    {
+        var alignBrush = new SolidColorBrush(Color.FromRgb(0xE9, 0x1E, 0x63));
+        var spaceBrush = new SolidColorBrush(Color.FromRgb(0x43, 0xA0, 0x47));
+        foreach (var g in _snapGuides)
+        {
+            var brush = g.IsSpacing ? spaceBrush : alignBrush;
+            if (g.IsVertical)
+            {
+                _overlay.Children.Add(new Line
+                {
+                    X1 = g.Position,
+                    Y1 = g.Start,
+                    X2 = g.Position,
+                    Y2 = g.End,
+                    Stroke = brush,
+                    StrokeThickness = 1,
+                    IsHitTestVisible = false,
+                });
+            }
+            else
+            {
+                _overlay.Children.Add(new Line
+                {
+                    X1 = g.Start,
+                    Y1 = g.Position,
+                    X2 = g.End,
+                    Y2 = g.Position,
+                    Stroke = brush,
+                    StrokeThickness = 1,
+                    IsHitTestVisible = false,
+                });
+            }
+        }
     }
 
     private void RenderMarqueeRect()
