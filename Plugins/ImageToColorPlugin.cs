@@ -631,13 +631,28 @@ internal sealed class ImageToColorWindow : Window
         var currentHex = _hex.Text?.Trim();
         if (!DrawingColorUtilities.TryParseColorString(currentHex, out var parsed) || parsed.A == 0)
             parsed = Color.FromRgb(0x21, 0x96, 0xF3);
+        var original = Color.FromRgb(parsed.R, parsed.G, parsed.B);
 
-        var dlg = new DrawingColorPickerWindow(DrawingColorUtilities.FormatHexForTheme(Color.FromRgb(parsed.R, parsed.G, parsed.B)))
+        var dlg = new DrawingColorPickerWindow(DrawingColorUtilities.FormatHexForTheme(original))
         {
             Owner = this,
         };
-        if (dlg.ShowDialog() != true || string.IsNullOrWhiteSpace(dlg.ResultHex))
+
+        void OnColorChanged(Color live)
+        {
+            if (live.A == 0) return;
+            SetUiColor(Color.FromRgb(live.R, live.G, live.B));
+        }
+
+        dlg.ColorChanged += OnColorChanged;
+        var ok = dlg.ShowDialog();
+        dlg.ColorChanged -= OnColorChanged;
+
+        if (ok != true || string.IsNullOrWhiteSpace(dlg.ResultHex))
+        {
+            SetUiColor(original);
             return;
+        }
 
         if (DrawingColorUtilities.TryParseColorString(dlg.ResultHex, out var c) && c.A != 0)
             SetUiColor(Color.FromRgb(c.R, c.G, c.B));
@@ -723,7 +738,7 @@ internal sealed class AddToPaletteWindow : Window
         _service = service;
         Title = "Add to palette";
         Width = 380;
-        Height = 260;
+        SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;

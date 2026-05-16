@@ -362,6 +362,9 @@ internal sealed class DrawingColorPickerWindow : Window
 {
     public string? ResultHex { get; private set; }
 
+    /// <summary>Fires for every textual change to the picker's selected color while the dialog is open.</summary>
+    public event Action<Color>? ColorChanged;
+
     private const int SpecW = 240;
     private const int SpecH = 160;
     private const int StripW = 22;
@@ -478,12 +481,22 @@ internal sealed class DrawingColorPickerWindow : Window
 
         _hex.TextChanged += (_, _) =>
         {
-            if (_suppress) return;
-            if (!DrawingColorUtilities.TryParseColorString(_hex.Text, out var c) || c.A == 0) return;
-            DrawingColorUtilities.RgbToHsv(c, out _selH, out _selS, out _selV);
-            RegenerateSpectrum();
-            RegenerateStrip();
-            UpdateMarkerAndThumb();
+            if (!_suppress)
+            {
+                if (DrawingColorUtilities.TryParseColorString(_hex.Text, out var typed) && typed.A != 0)
+                {
+                    DrawingColorUtilities.RgbToHsv(typed, out _selH, out _selS, out _selV);
+                    RegenerateSpectrum();
+                    RegenerateStrip();
+                    UpdateMarkerAndThumb();
+                }
+                else
+                {
+                    return;
+                }
+            }
+            if (DrawingColorUtilities.TryParseColorString(_hex.Text, out var current) && current.A != 0)
+                ColorChanged?.Invoke(Color.FromRgb(current.R, current.G, current.B));
         };
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };

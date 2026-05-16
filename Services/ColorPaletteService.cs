@@ -38,24 +38,31 @@ public sealed class ColorPaletteService
     {
         try
         {
-            if (File.Exists(FilePath))
+            List<ColorPalette> palettes;
+            var firstRun = !File.Exists(FilePath);
+
+            if (firstRun)
             {
-                var loaded = JsonSerializer.Deserialize<List<ColorPalette>>(File.ReadAllText(FilePath));
-                if (loaded != null)
-                {
-                    NormalizePalettes(loaded);
-                    return loaded;
-                }
+                palettes = TryMigrateFromLegacy();
+            }
+            else
+            {
+                palettes = JsonSerializer.Deserialize<List<ColorPalette>>(File.ReadAllText(FilePath))
+                           ?? new List<ColorPalette>();
             }
 
-            var migrated = TryMigrateFromLegacy();
-            NormalizePalettes(migrated);
-            SavePalettes(migrated);
-            return migrated;
+            NormalizePalettes(palettes);
+            var addedBuiltIns = EnsureBuiltInsPresent(palettes);
+
+            if (firstRun || addedBuiltIns)
+                SavePalettes(palettes);
+
+            return palettes;
         }
         catch
         {
             var fallback = new List<ColorPalette> { new() { Name = DefaultPaletteName } };
+            EnsureBuiltInsPresent(fallback);
             return fallback;
         }
     }
@@ -215,6 +222,61 @@ public sealed class ColorPaletteService
 
         if (FindDefault(palettes) == null)
             palettes.Insert(0, new ColorPalette { Name = DefaultPaletteName });
+    }
+
+    /// <summary>Built-in colors that are always present in the Main palette. New entries reach existing users on next load.</summary>
+    private static readonly (string Name, string Hex)[] BuiltInMainColors =
+    {
+        ("Black",        "#000000"),
+        ("White",        "#FFFFFF"),
+        ("Dark gray",    "#555555"),
+        ("Light gray",   "#BBBBBB"),
+        ("Red",          "#E53935"),
+        ("Orange",       "#F68A1E"),
+        ("Gold",         "#FFD700"),
+        ("Pale yellow",  "#FFF6A9"),
+        ("Green",        "#4CAF50"),
+        ("Light green",  "#A8E6A1"),
+        ("Blue",         "#2196F3"),
+        ("Light blue",   "#B3E5FC"),
+        ("Purple",       "#673AB7"),
+        ("Lavender",     "#D1C4E9"),
+        ("Brown",        "#795548"),
+        ("Indigo",       "#3F51B5"),
+        ("Beige",        "#F5F5DC"),
+    };
+
+    /// <summary>Adds any missing built-in colors (matched by normalized hex) to Main. Returns true if anything was added.</summary>
+    private static bool EnsureBuiltInsPresent(List<ColorPalette> palettes)
+    {
+        var main = FindDefault(palettes);
+        if (main == null)
+            return false;
+
+        var existingHexes = new HashSet<string>(
+            main.Colors
+                .Select(c => NormalizeHex(c.Hex))
+                .Where(s => s.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+
+        var added = false;
+        foreach (var (name, hex) in BuiltInMainColors)
+        {
+            var normalized = NormalizeHex(hex);
+            if (normalized.Length == 0 || !existingHexes.Add(normalized))
+                continue;
+            main.Colors.Add(new NamedColor { Name = name, Hex = normalized });
+            added = true;
+        }
+        return added;
+    }
+
+    private static string NormalizeHex(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex))
+            return "";
+        var trimmed = hex.Trim();
+        return trimmed.StartsWith("#") ? trimmed.ToUpperInvariant() : trimmed;
     }
 
     private static List<ColorPalette> TryMigrateFromLegacy()
