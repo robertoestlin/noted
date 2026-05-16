@@ -1217,6 +1217,12 @@ internal sealed class DrawingWindow : Window
     private CompactColorPicker? _fillColorPicker;
     private CompactColorPicker? _strokeColorPicker;
     private CompactColorPicker? _textColorPicker;
+    private CompactColorPicker? _freehandColorPicker;
+    private Grid? _fillColorRow;
+    private Grid? _strokeColorRow;
+    private Grid? _textColorRow;
+    private Grid? _freehandColorRow;
+    private TextBlock? _thicknessHeader;
     private Slider? _thicknessSlider;
     private Slider? _cornerSlider;
     private Slider? _fontSizeSlider;
@@ -1563,6 +1569,8 @@ internal sealed class DrawingWindow : Window
         _strokeColorPicker?.SetSelected(_stroke);
         _textColorPicker?.Refresh();
         _textColorPicker?.SetSelected(_textColor);
+        _freehandColorPicker?.Refresh();
+        _freehandColorPicker?.SetSelected(_stroke);
     }
 
     // ---------------- Property panel ----------------
@@ -1576,23 +1584,35 @@ internal sealed class DrawingWindow : Window
             _fill = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(MakeCompactColorRow("Fill", _fillColorPicker));
+        _fillColorRow = MakeCompactColorRow("Fill", _fillColorPicker);
+        _propertyPanel.Children.Add(_fillColorRow);
 
         _strokeColorPicker = new CompactColorPicker(_stroke, b =>
         {
             _stroke = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(MakeCompactColorRow("Stroke / Frame", _strokeColorPicker));
+        _strokeColorRow = MakeCompactColorRow("Stroke / Frame", _strokeColorPicker);
+        _propertyPanel.Children.Add(_strokeColorRow);
 
         _textColorPicker = new CompactColorPicker(_textColor, b =>
         {
             _textColor = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(MakeCompactColorRow("Text color", _textColorPicker));
+        _textColorRow = MakeCompactColorRow("Text color", _textColorPicker);
+        _propertyPanel.Children.Add(_textColorRow);
 
-        _propertyPanel.Children.Add(SectionHeader("Thickness"));
+        _freehandColorPicker = new CompactColorPicker(_stroke, b =>
+        {
+            _stroke = b;
+            ApplyColorToSelected();
+        });
+        _freehandColorRow = MakeCompactColorRow("Color", _freehandColorPicker);
+        _propertyPanel.Children.Add(_freehandColorRow);
+
+        _thicknessHeader = SectionHeader("Thickness");
+        _propertyPanel.Children.Add(_thicknessHeader);
         _thicknessSlider = MakeSlider(1, 24, _thickness);
         _thicknessSlider.ValueChanged += (_, _) =>
         {
@@ -1683,10 +1703,27 @@ internal sealed class DrawingWindow : Window
         element.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private string? GetHomogeneousSelectionKind()
+    {
+        if (_selection.Count == 0) return null;
+        var kinds = _selection.Select(s => s.Kind).Distinct().ToList();
+        return kinds.Count == 1 ? kinds[0] : null;
+    }
+
+    private DrawItem? SelectionPropertySource()
+    {
+        var kind = GetHomogeneousSelectionKind();
+        if (kind == null) return null;
+        return _selection.FirstOrDefault(s => s.Kind == kind);
+    }
+
     private string? PropertyPanelContextKind()
     {
-        if (_selection.Count == 1)
-            return PrimarySelection!.Kind;
+        var selectedKind = GetHomogeneousSelectionKind();
+        if (selectedKind != null)
+            return selectedKind;
+        if (_tool == Tool.Select)
+            return null;
         return _tool switch
         {
             Tool.Rectangle => "rect",
@@ -1701,14 +1738,40 @@ internal sealed class DrawingWindow : Window
     private void UpdatePropertyPanelVisibility()
     {
         var kind = PropertyPanelContextKind();
-        SetPropertySectionVisibility(_cornerRadiusHeader, kind == "rect");
-        SetPropertySectionVisibility(_cornerSlider, kind == "rect");
-        SetPropertySectionVisibility(_fontHeader, kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontFamilyCombo, kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontSizeHeader, kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontSizeSlider, kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_arrowStyleHeader, kind == "arrow");
-        SetPropertySectionVisibility(_arrowHeadCombo, kind == "arrow");
+        if (kind == null)
+        {
+            SetPropertySectionVisibility(_fillColorRow, false);
+            SetPropertySectionVisibility(_strokeColorRow, false);
+            SetPropertySectionVisibility(_textColorRow, false);
+            SetPropertySectionVisibility(_thicknessHeader, false);
+            SetPropertySectionVisibility(_thicknessSlider, false);
+            SetPropertySectionVisibility(_freehandColorRow, false);
+            SetPropertySectionVisibility(_cornerRadiusHeader, false);
+            SetPropertySectionVisibility(_cornerSlider, false);
+            SetPropertySectionVisibility(_fontHeader, false);
+            SetPropertySectionVisibility(_fontFamilyCombo, false);
+            SetPropertySectionVisibility(_fontSizeHeader, false);
+            SetPropertySectionVisibility(_fontSizeSlider, false);
+            SetPropertySectionVisibility(_arrowStyleHeader, false);
+            SetPropertySectionVisibility(_arrowHeadCombo, false);
+            return;
+        }
+
+        var isFreehand = kind == "freehand";
+        SetPropertySectionVisibility(_fillColorRow, !isFreehand);
+        SetPropertySectionVisibility(_strokeColorRow, !isFreehand);
+        SetPropertySectionVisibility(_textColorRow, !isFreehand);
+        SetPropertySectionVisibility(_thicknessHeader, !isFreehand);
+        SetPropertySectionVisibility(_thicknessSlider, !isFreehand);
+        SetPropertySectionVisibility(_freehandColorRow, isFreehand);
+        SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && kind == "rect");
+        SetPropertySectionVisibility(_cornerSlider, !isFreehand && kind == "rect");
+        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontSizeSlider, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_arrowStyleHeader, !isFreehand && kind == "arrow");
+        SetPropertySectionVisibility(_arrowHeadCombo, !isFreehand && kind == "arrow");
     }
 
     private void SyncPropertyControlsFromCurrent()
@@ -1719,6 +1782,7 @@ internal sealed class DrawingWindow : Window
             _fillColorPicker?.SetSelected(_fill);
             _strokeColorPicker?.SetSelected(_stroke);
             _textColorPicker?.SetSelected(_textColor);
+            _freehandColorPicker?.SetSelected(_stroke);
             if (_thicknessSlider != null) _thicknessSlider.Value = Math.Clamp(_thickness, _thicknessSlider.Minimum, _thicknessSlider.Maximum);
             if (_cornerSlider != null) _cornerSlider.Value = Math.Clamp(_cornerRadius, _cornerSlider.Minimum, _cornerSlider.Maximum);
             if (_fontSizeSlider != null) _fontSizeSlider.Value = Math.Clamp(_fontSize, _fontSizeSlider.Minimum, _fontSizeSlider.Maximum);
@@ -1739,7 +1803,7 @@ internal sealed class DrawingWindow : Window
 
     private void SyncFromSelected()
     {
-        var sel = PrimarySelection;
+        var sel = SelectionPropertySource();
         if (sel == null) return;
         _fill = sel.Fill;
         _stroke = sel.Stroke;
@@ -1754,22 +1818,22 @@ internal sealed class DrawingWindow : Window
 
     private void ApplyColorToSelected()
     {
-        var sel = PrimarySelection;
+        var sel = SelectionPropertySource();
         if (sel == null) return;
         SnapshotForUndo();
         if (sel.Kind == "rect" || sel.Kind == "ellipse")
         {
-            sel.Fill = _fill;
-            sel.Stroke = _stroke;
-            sel.TextColor = _textColor;
+            foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse"))
+            {
+                it.Fill = _fill;
+                it.Stroke = _stroke;
+                it.TextColor = _textColor;
+            }
         }
         else if (sel.Kind == "arrow" || sel.Kind == "freehand")
         {
-            foreach (var it in GetSelectionMembers())
-            {
-                if (it.Kind is "arrow" or "freehand")
-                    it.Stroke = _stroke;
-            }
+            foreach (var it in _selection.Where(i => i.Kind is "arrow" or "freehand"))
+                it.Stroke = _stroke;
         }
         else if (sel.Kind == "text")
         {
@@ -1998,10 +2062,13 @@ internal sealed class DrawingWindow : Window
         _btnText.Background = tool == Tool.Text ? brushOn : brushOff;
         _btnFreehand.Background = tool == Tool.Freehand ? brushOn : brushOff;
         Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
-        if (_tool == Tool.Select && PrimarySelection != null)
-            SyncFromSelected();
+        if (_tool == Tool.Select)
+        {
+            if (SelectionPropertySource() != null)
+                SyncFromSelected();
+        }
         else
-            ApplyToolProfileFromTheme(_activeTheme, _tool == Tool.Select ? Tool.Rectangle : _tool);
+            ApplyToolProfileFromTheme(_activeTheme, _tool);
         UpdatePropertyPanelVisibility();
     }
 
@@ -2121,8 +2188,8 @@ internal sealed class DrawingWindow : Window
     private void UpdatePropertyPanelForSelection()
     {
         if (_leftScroll != null)
-            _leftScroll.IsEnabled = _selection.Count <= 1;
-        if (_selection.Count == 1)
+            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null;
+        if (SelectionPropertySource() != null)
             SyncFromSelected();
         UpdatePropertyPanelVisibility();
     }
