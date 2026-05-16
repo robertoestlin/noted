@@ -188,16 +188,23 @@ public sealed class ColorPaletteService
     public List<NamedColor> GetAllNamedColors()
     {
         var result = new List<NamedColor>();
+        foreach (var (_, color) in EnumeratePaletteColors())
+            result.Add(new NamedColor { Name = color.Name, Hex = color.Hex });
+        return result;
+    }
+
+    /// <summary>All named colors with their source palette (preserves palette order).</summary>
+    public IEnumerable<(string PaletteName, NamedColor Color)> EnumeratePaletteColors()
+    {
         foreach (var p in LoadPalettes())
         {
             foreach (var c in p.Colors)
             {
                 if (string.IsNullOrWhiteSpace(c.Name) || string.IsNullOrWhiteSpace(c.Hex))
                     continue;
-                result.Add(new NamedColor { Name = c.Name, Hex = c.Hex });
+                yield return (p.Name, c);
             }
         }
-        return result;
     }
 
     private static bool IsDefaultName(string? name)

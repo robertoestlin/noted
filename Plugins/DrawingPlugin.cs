@@ -2665,7 +2665,7 @@ internal sealed class ThemeSettingsWindow : Window
         customColorsRow.Children.Add(btnCustomColors);
         customColorsRow.Children.Add(new TextBlock
         {
-            Text = "Named colors appear in the lists below.",
+            Text = "Colors are listed by palette (Color Palettes plugin).",
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = Brushes.Gray,
             FontSize = 11,
@@ -2844,19 +2844,11 @@ internal sealed class ThemeSettingsWindow : Window
         return item;
     }
 
-    private static bool ComboHasHexTag(ComboBox cb, string tagHex)
+    private ComboBoxItem MakeNamedColorItem(string paletteName, string colorName, string tagHex)
     {
-        foreach (var obj in cb.Items)
-        {
-            if (obj is ComboBoxItem item && item.Tag is string t
-                && string.Equals(t, tagHex, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
-    private ComboBoxItem MakeNamedColorItem(string displayName, string tagHex)
-    {
+        var displayName = string.IsNullOrWhiteSpace(paletteName)
+            ? colorName
+            : $"{paletteName} · {colorName}";
         var item = new ComboBoxItem { Tag = tagHex };
         var sp = new StackPanel { Orientation = Orientation.Horizontal };
         var sw = new Border
@@ -2875,19 +2867,55 @@ internal sealed class ThemeSettingsWindow : Window
         return item;
     }
 
+    private static ComboBoxItem MakePaletteHeaderItem(string paletteName)
+    {
+        return new ComboBoxItem
+        {
+            Content = paletteName,
+            IsEnabled = false,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.Gray,
+            Padding = new Thickness(4, 6, 4, 2),
+        };
+    }
+
     private void PopulateColorCombo(ComboBox cb)
     {
         cb.Items.Clear();
-        foreach (var hex in ColorChoices)
-            cb.Items.Add(MakeColorChoiceItem(hex));
-        foreach (var n in new ColorPaletteService().GetAllNamedColors())
+        var seenHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        cb.Items.Add(MakeColorChoiceItem("Transparent"));
+        seenHexes.Add("Transparent");
+
+        var service = new ColorPaletteService();
+        string? lastPalette = null;
+        foreach (var (paletteName, color) in service.EnumeratePaletteColors())
         {
-            if (!DrawingColorUtilities.TryParseColorString(n.Hex, out var c) || c.A == 0)
+            if (!DrawingColorUtilities.TryParseColorString(color.Hex, out var parsed) || parsed.A == 0)
                 continue;
-            var tag = DrawingColorUtilities.FormatHexForTheme(c);
-            if (ComboHasHexTag(cb, tag))
+            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
+            if (!seenHexes.Add(tag))
                 continue;
-            cb.Items.Add(MakeNamedColorItem(n.Name, tag));
+
+            if (!string.Equals(lastPalette, paletteName, StringComparison.OrdinalIgnoreCase))
+            {
+                cb.Items.Add(MakePaletteHeaderItem(paletteName));
+                lastPalette = paletteName;
+            }
+
+            cb.Items.Add(MakeNamedColorItem(paletteName, color.Name, tag));
+        }
+
+        foreach (var hex in ColorChoices)
+        {
+            if (string.Equals(hex, "Transparent", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!DrawingColorUtilities.TryParseColorString(hex, out var parsed))
+                continue;
+            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
+            if (!seenHexes.Add(tag))
+                continue;
+            cb.Items.Add(MakeColorChoiceItem(tag));
         }
     }
 
