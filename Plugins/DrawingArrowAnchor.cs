@@ -206,7 +206,8 @@ internal sealed partial class DrawingWindow
             }
             else
             {
-                arrow.AnchorStartIndex = GetNearestAnchorIndex(startShape, arrow.P1);
+                if (!arrow.AnchorStartIndex.HasValue)
+                    arrow.AnchorStartIndex = GetNearestAnchorIndex(startShape, arrow.P1);
                 arrow.P1 = GetShapeAnchorPointByIndex(startShape, arrow.AnchorStartIndex.Value);
             }
         }
@@ -221,7 +222,8 @@ internal sealed partial class DrawingWindow
             }
             else
             {
-                arrow.AnchorEndIndex = GetNearestAnchorIndex(endShape, arrow.P2);
+                if (!arrow.AnchorEndIndex.HasValue)
+                    arrow.AnchorEndIndex = GetNearestAnchorIndex(endShape, arrow.P2);
                 arrow.P2 = GetShapeAnchorPointByIndex(endShape, arrow.AnchorEndIndex.Value);
             }
         }
@@ -308,17 +310,71 @@ internal sealed partial class DrawingWindow
         }
     }
 
-    private Point ResolveArrowEndpoint(Point cursor, Point otherEnd, out DrawItem? anchoredShape)
+    private Point ResolveArrowEndpoint(
+        Point cursor,
+        DrawItem? lockedShape,
+        int? lockedIndex,
+        out DrawItem? anchoredShape,
+        out int? anchorIndex)
     {
         if (TryGetNearestAnchorSnap(cursor, out var snapShape, out var snapPoint))
         {
             anchoredShape = snapShape;
+            anchorIndex = GetNearestAnchorIndex(snapShape!, snapPoint);
             return snapPoint;
         }
 
-        anchoredShape = HitTestAnchorableShape(cursor);
-        return anchoredShape != null
-            ? GetShapeAnchorPoint(anchoredShape, otherEnd)
-            : cursor;
+        var overShape = HitTestAnchorableShape(cursor);
+        if (overShape == null)
+        {
+            anchoredShape = null;
+            anchorIndex = null;
+            return cursor;
+        }
+
+        if (lockedShape != null
+            && overShape.Id == lockedShape.Id
+            && lockedIndex.HasValue)
+        {
+            anchoredShape = overShape;
+            anchorIndex = lockedIndex;
+            return GetShapeAnchorPointByIndex(overShape, lockedIndex.Value);
+        }
+
+        anchoredShape = null;
+        anchorIndex = null;
+        return cursor;
+    }
+
+    private void MoveArrowEndpoint(DrawItem arrow, bool isStart, Point cursor)
+    {
+        DrawItem? lockedShape = null;
+        int? lockedIndex = null;
+        if (isStart)
+        {
+            if (arrow.AnchorStartShapeId is int startId)
+                lockedShape = FindShapeById(startId);
+            lockedIndex = arrow.AnchorStartIndex;
+        }
+        else
+        {
+            if (arrow.AnchorEndShapeId is int endId)
+                lockedShape = FindShapeById(endId);
+            lockedIndex = arrow.AnchorEndIndex;
+        }
+
+        var pt = ResolveArrowEndpoint(cursor, lockedShape, lockedIndex, out var shape, out var index);
+        if (isStart)
+        {
+            arrow.P1 = pt;
+            arrow.AnchorStartShapeId = shape?.Id;
+            arrow.AnchorStartIndex = index;
+        }
+        else
+        {
+            arrow.P2 = pt;
+            arrow.AnchorEndShapeId = shape?.Id;
+            arrow.AnchorEndIndex = index;
+        }
     }
 }

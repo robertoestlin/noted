@@ -1452,6 +1452,8 @@ internal sealed partial class DrawingWindow : Window
     private int _nextItemId = 1;
     private DrawItem? _hoveredAnchorShape;
     private DrawItem? _arrowDrawStartShape;
+    private DrawItem? _arrowDrawEndShape;
+    private int? _arrowDrawEndAnchorIndex;
 
     private const double HandleSize = 8;
     private const double HitPadding = 6;
@@ -2903,6 +2905,8 @@ internal sealed partial class DrawingWindow : Window
         SnapshotForUndo();
         _isDrawing = true;
         _arrowDrawStartShape = null;
+        _arrowDrawEndShape = null;
+        _arrowDrawEndAnchorIndex = null;
         Point? arrowSnapStart = null;
         if (_tool == Tool.Arrow)
         {
@@ -2962,7 +2966,9 @@ internal sealed partial class DrawingWindow : Window
             if (_drawingItem.Kind == "arrow" && _arrowDrawStartShape != null)
             {
                 _drawingItem.AnchorStartShapeId = _arrowDrawStartShape.Id;
-                _drawingItem.P1 = arrowSnapStart ?? GetShapeAnchorPoint(_arrowDrawStartShape, p);
+                var startPt = arrowSnapStart ?? p;
+                _drawingItem.AnchorStartIndex = GetNearestAnchorIndex(_arrowDrawStartShape, startPt);
+                _drawingItem.P1 = GetShapeAnchorPointByIndex(_arrowDrawStartShape, _drawingItem.AnchorStartIndex.Value);
             }
             _items.Add(_drawingItem);
             SetSingleSelection(_drawingItem);
@@ -2994,9 +3000,11 @@ internal sealed partial class DrawingWindow : Window
             }
             else if (_drawingItem.Kind == "arrow")
             {
-                _drawingItem.P2 = ResolveArrowEndpoint(p, _drawingItem.P1, out _);
-                if (_arrowDrawStartShape != null)
-                    _drawingItem.P1 = GetShapeAnchorPoint(_arrowDrawStartShape, _drawingItem.P2);
+                _drawingItem.P2 = ResolveArrowEndpoint(
+                    p, _arrowDrawEndShape, _arrowDrawEndAnchorIndex,
+                    out _arrowDrawEndShape, out _arrowDrawEndAnchorIndex);
+                if (_arrowDrawStartShape != null && _drawingItem.AnchorStartIndex is int startIdx)
+                    _drawingItem.P1 = GetShapeAnchorPointByIndex(_arrowDrawStartShape, startIdx);
             }
             else
             {
@@ -3138,9 +3146,17 @@ internal sealed partial class DrawingWindow : Window
                 {
                     if (_arrowDrawStartShape != null)
                         _drawingItem.AnchorStartShapeId = _arrowDrawStartShape.Id;
-                    var endShape = HitTestAnchorableShape(_drawingItem.P2)
-                        ?? FindShapeOwningAnchorPoint(_drawingItem.P2);
-                    _drawingItem.AnchorEndShapeId = endShape?.Id;
+                    if (_arrowDrawEndShape != null)
+                    {
+                        _drawingItem.AnchorEndShapeId = _arrowDrawEndShape.Id;
+                        _drawingItem.AnchorEndIndex = _arrowDrawEndAnchorIndex;
+                    }
+                    else
+                    {
+                        var endShape = HitTestAnchorableShape(_drawingItem.P2)
+                            ?? FindShapeOwningAnchorPoint(_drawingItem.P2);
+                        _drawingItem.AnchorEndShapeId = endShape?.Id;
+                    }
                     CommitArrowAnchors(_drawingItem);
                 }
             }
@@ -3153,13 +3169,23 @@ internal sealed partial class DrawingWindow : Window
                 }
             }
         }
+        var editedArrow = _tool == Tool.Select
+            && PrimarySelection?.Kind == "arrow"
+            && _activeHandle >= 0;
+
         _isDrawing = false;
         _drawingItem = null;
         _arrowDrawStartShape = null;
+        _arrowDrawEndShape = null;
+        _arrowDrawEndAnchorIndex = null;
         _isMoving = false;
         _activeHandle = -1;
         _pendingUndoForGesture = false;
         _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
+
+        if (editedArrow && PrimarySelection != null)
+            CommitArrowAnchors(PrimarySelection);
+
         Redraw();
     }
 
@@ -3332,12 +3358,12 @@ internal sealed partial class DrawingWindow : Window
         };
     }
 
-    private static void ResizeSelectedByHandle(DrawItem it, int handle, Point p)
+    private void ResizeSelectedByHandle(DrawItem it, int handle, Point p)
     {
         if (it.Kind == "arrow")
         {
-            if (handle == 0) it.P1 = p;
-            else if (handle == 1) it.P2 = p;
+            if (handle == 0) MoveArrowEndpoint(it, isStart: true, p);
+            else if (handle == 1) MoveArrowEndpoint(it, isStart: false, p);
             return;
         }
 
@@ -3420,6 +3446,17 @@ internal sealed partial class DrawingWindow : Window
 
         if (_tool == Tool.Arrow && _hoveredAnchorShape != null)
             RenderShapeAnchorPoints(_hoveredAnchorShape);
+
+        if (_tool == Tool.Select
+            && _activeHandle >= 0
+            && PrimarySelection?.Kind == "arrow")
+        {
+            foreach (var it in _items)
+            {
+                if (IsAnchorableShape(it))
+                    RenderShapeAnchorPoints(it);
+            }
+        }
     }
 
     private Rect GetSelectionBounds()
