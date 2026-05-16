@@ -2196,25 +2196,8 @@ internal sealed class DrawingWindow : Window
         var b = GetBounds(it);
         var accent = new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3));
 
-        if (it.Kind == "freehand")
+        if (it.Kind is "freehand" or "text")
             return;
-
-        if (it.Kind == "text")
-        {
-            var underline = new Line
-            {
-                X1 = b.Left,
-                Y1 = b.Bottom + 1,
-                X2 = b.Right,
-                Y2 = b.Bottom + 1,
-                Stroke = accent,
-                StrokeThickness = 1,
-                StrokeDashArray = new DoubleCollection { 3, 2 },
-                IsHitTestVisible = false,
-            };
-            _overlay.Children.Add(underline);
-            return;
-        }
 
         if (it.Kind != "arrow")
         {
