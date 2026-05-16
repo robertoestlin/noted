@@ -266,11 +266,11 @@ internal sealed partial class DrawingWindow
         }
     }
 
-    private void RefreshAllAnchoredArrows()
+    private void RefreshAllAnchoredArrows(DrawItem? skipItem = null)
     {
         foreach (var it in _items)
         {
-            if (ReferenceEquals(it, _drawingItem)) continue;
+            if (ReferenceEquals(it, _drawingItem) || ReferenceEquals(it, skipItem)) continue;
             if (it.Kind == "arrow"
                 && (it.AnchorStartShapeId.HasValue || it.AnchorEndShapeId.HasValue))
                 RefreshAnchoredArrowEndpoints(it);
@@ -346,21 +346,24 @@ internal sealed partial class DrawingWindow
         return cursor;
     }
 
-    private void MoveArrowEndpoint(DrawItem arrow, bool isStart, Point cursor)
+    private void MoveArrowEndpoint(DrawItem arrow, bool isStart, Point cursor, bool preserveAnchorLock = true)
     {
         DrawItem? lockedShape = null;
         int? lockedIndex = null;
-        if (isStart)
+        if (preserveAnchorLock)
         {
-            if (arrow.AnchorStartShapeId is int startId)
-                lockedShape = FindShapeById(startId);
-            lockedIndex = arrow.AnchorStartIndex;
-        }
-        else
-        {
-            if (arrow.AnchorEndShapeId is int endId)
-                lockedShape = FindShapeById(endId);
-            lockedIndex = arrow.AnchorEndIndex;
+            if (isStart)
+            {
+                if (arrow.AnchorStartShapeId is int startId)
+                    lockedShape = FindShapeById(startId);
+                lockedIndex = arrow.AnchorStartIndex;
+            }
+            else
+            {
+                if (arrow.AnchorEndShapeId is int endId)
+                    lockedShape = FindShapeById(endId);
+                lockedIndex = arrow.AnchorEndIndex;
+            }
         }
 
         var pt = ResolveArrowEndpoint(cursor, lockedShape, lockedIndex, out var shape, out var index);

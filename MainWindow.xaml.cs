@@ -2073,6 +2073,9 @@ public partial class MainWindow : Window
 
         border.PreviewMouseLeftButtonDown += (_, e) =>
         {
+            if (IsDescendantOf(e.OriginalSource as DependencyObject, resizeHandle))
+                return;
+
             if (editor.Document == null)
                 return;
 
@@ -2166,6 +2169,17 @@ public partial class MainWindow : Window
         };
 
         return border;
+    }
+
+    private static bool IsDescendantOf(DependencyObject? source, DependencyObject ancestor)
+    {
+        while (source != null)
+        {
+            if (ReferenceEquals(source, ancestor))
+                return true;
+            source = VisualTreeHelper.GetParent(source) ?? LogicalTreeHelper.GetParent(source);
+        }
+        return false;
     }
 
     private static int ClampScalePercent(int scalePercent)

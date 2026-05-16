@@ -3357,8 +3357,8 @@ internal sealed partial class DrawingWindow : Window
     {
         if (it.Kind == "arrow")
         {
-            if (handle == 0) MoveArrowEndpoint(it, isStart: true, p);
-            else if (handle == 1) MoveArrowEndpoint(it, isStart: false, p);
+            if (handle == 0) MoveArrowEndpoint(it, isStart: true, p, preserveAnchorLock: false);
+            else if (handle == 1) MoveArrowEndpoint(it, isStart: false, p, preserveAnchorLock: false);
             return;
         }
 
@@ -3390,7 +3390,8 @@ internal sealed partial class DrawingWindow : Window
         var preservedEditor = _activeEditor;
         _canvas.Children.Clear();
         _overlay.Children.Clear();
-        RefreshAllAnchoredArrows();
+        var skipAnchorRefresh = _tool == Tool.Select && _activeHandle >= 0 && PrimarySelection != null;
+        RefreshAllAnchoredArrows(skipAnchorRefresh ? PrimarySelection : null);
         foreach (var it in _items)
             RenderItem(it, _canvas);
 
