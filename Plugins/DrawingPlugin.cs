@@ -1257,6 +1257,9 @@ internal sealed class DrawItemDto
     public List<double> PointsX { get; set; } = new();
     public List<double> PointsY { get; set; } = new();
     public int FreehandGroupId { get; set; }
+    public int Id { get; set; }
+    public int? AnchorStartShapeId { get; set; }
+    public int? AnchorEndShapeId { get; set; }
 }
 
 /// <summary>Context passed to <see cref="DrawingWindow"/> when re-opening a previously-saved drawing via the
@@ -1271,7 +1274,7 @@ internal sealed class DrawingEditContext
     public string? PackageId { get; init; }
 }
 
-internal sealed class DrawingWindow : Window
+internal sealed partial class DrawingWindow : Window
 {
     private enum Tool { Select, Rectangle, Ellipse, Arrow, Text, Freehand }
 
@@ -1279,9 +1282,12 @@ internal sealed class DrawingWindow : Window
 
     private sealed class DrawItem
     {
+        public int Id;
         public string Kind = "rect"; // rect, ellipse, arrow, text, freehand
         public Point P1;
         public Point P2;
+        public int? AnchorStartShapeId;
+        public int? AnchorEndShapeId;
         public double CornerRadius = 14;
         public Brush Fill = Brushes.Transparent;
         public Brush Stroke = Brushes.Black;
@@ -1297,9 +1303,12 @@ internal sealed class DrawingWindow : Window
 
         public DrawItem Clone() => new()
         {
+            Id = Id,
             Kind = Kind,
             P1 = P1,
             P2 = P2,
+            AnchorStartShapeId = AnchorStartShapeId,
+            AnchorEndShapeId = AnchorEndShapeId,
             CornerRadius = CornerRadius,
             Fill = Fill,
             Stroke = Stroke,
@@ -1425,6 +1434,9 @@ internal sealed class DrawingWindow : Window
 
     private int _nextFreehandGroupId = 1;
     private int _currentFreehandGroupId;
+    private int _nextItemId = 1;
+    private DrawItem? _hoveredAnchorShape;
+    private DrawItem? _arrowDrawStartShape;
 
     private const double HandleSize = 8;
     private const double HitPadding = 6;
@@ -2412,6 +2424,8 @@ internal sealed class DrawingWindow : Window
             }
         }
 
+        var hoverCleared = _hoveredAnchorShape != null && tool != Tool.Arrow;
+        _hoveredAnchorShape = tool == Tool.Arrow ? _hoveredAnchorShape : null;
         _tool = tool;
         UpdateToolBarHighlight();
         _canvas.Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
@@ -2426,6 +2440,8 @@ internal sealed class DrawingWindow : Window
             SyncPropertyControlsFromCurrent();
         }
         UpdatePropertyPanelVisibility();
+        if (hoverCleared || tool == Tool.Arrow)
+            Redraw();
     }
 
     private void DrawingWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -2569,7 +2585,11 @@ internal sealed class DrawingWindow : Window
         if (!HasSelection) return;
         SnapshotForUndo();
         foreach (var it in GetSelectionMembers().ToList())
+        {
+            if (IsAnchorableShape(it))
+                RemoveArrowsAnchoredTo(it.Id);
             _items.Remove(it);
+        }
         ClearSelection();
         Redraw();
     }
@@ -2587,9 +2607,16 @@ internal sealed class DrawingWindow : Window
         const double offset = 16;
         _selection.Clear();
         var groupMap = new Dictionary<int, int>();
+        var idMap = new Dictionary<int, int>();
+        var pasted = new List<DrawItem>();
         foreach (var proto in _clipboard)
         {
             var copy = proto.Clone();
+            var oldId = copy.Id;
+            copy.Id = 0;
+            AssignItemId(copy);
+            if (oldId != 0)
+                idMap[oldId] = copy.Id;
             TranslateItem(copy, offset, offset);
             if (copy.Kind == "freehand" && copy.FreehandGroupId != 0)
             {
@@ -2600,9 +2627,24 @@ internal sealed class DrawingWindow : Window
                 }
                 copy.FreehandGroupId = newId;
             }
+            pasted.Add(copy);
+        }
+        foreach (var copy in pasted)
+        {
+            if (copy.AnchorStartShapeId is int s && idMap.TryGetValue(s, out var ns))
+                copy.AnchorStartShapeId = ns;
+            else if (copy.AnchorStartShapeId.HasValue)
+                copy.AnchorStartShapeId = null;
+
+            if (copy.AnchorEndShapeId is int e && idMap.TryGetValue(e, out var ne))
+                copy.AnchorEndShapeId = ne;
+            else if (copy.AnchorEndShapeId.HasValue)
+                copy.AnchorEndShapeId = null;
+
             _items.Add(copy);
             _selection.Add(copy);
         }
+        RefreshAllAnchoredArrows();
         UpdatePropertyPanelForSelection();
         Redraw();
     }
@@ -2824,6 +2866,7 @@ internal sealed class DrawingWindow : Window
                 StrokeThickness = _thickness,
                 Fill = Brushes.Transparent,
             };
+            AssignItemId(item);
             _items.Add(item);
             SetSingleSelection(item);
             Redraw();
@@ -2833,6 +2876,18 @@ internal sealed class DrawingWindow : Window
 
         SnapshotForUndo();
         _isDrawing = true;
+        _arrowDrawStartShape = null;
+        Point? arrowSnapStart = null;
+        if (_tool == Tool.Arrow)
+        {
+            if (TryGetNearestAnchorSnap(p, out var snapShape, out var snapPoint))
+            {
+                _arrowDrawStartShape = snapShape;
+                arrowSnapStart = snapPoint;
+            }
+            else
+                _arrowDrawStartShape = HitTestAnchorableShape(p);
+        }
         _drawingItem = _tool switch
         {
             Tool.Rectangle => new DrawItem
@@ -2874,6 +2929,12 @@ internal sealed class DrawingWindow : Window
 
         if (_drawingItem != null)
         {
+            AssignItemId(_drawingItem);
+            if (_drawingItem.Kind == "arrow" && _arrowDrawStartShape != null)
+            {
+                _drawingItem.AnchorStartShapeId = _arrowDrawStartShape.Id;
+                _drawingItem.P1 = arrowSnapStart ?? GetShapeAnchorPoint(_arrowDrawStartShape, p);
+            }
             _items.Add(_drawingItem);
             SetSingleSelection(_drawingItem);
             _canvas.CaptureMouse();
@@ -2901,6 +2962,12 @@ internal sealed class DrawingWindow : Window
                     stdW,
                     stdH,
                     _host.DrawingShapeSizeSnapThresholdPx);
+            }
+            else if (_drawingItem.Kind == "arrow")
+            {
+                _drawingItem.P2 = ResolveArrowEndpoint(p, _drawingItem.P1, out _);
+                if (_arrowDrawStartShape != null)
+                    _drawingItem.P1 = GetShapeAnchorPoint(_arrowDrawStartShape, _drawingItem.P2);
             }
             else
             {
@@ -2985,6 +3052,16 @@ internal sealed class DrawingWindow : Window
         {
             _canvas.Cursor = Cursors.Arrow;
         }
+
+        if (_tool == Tool.Arrow)
+        {
+            var hovered = HitTestAnchorableShape(p);
+            if (!ReferenceEquals(hovered, _hoveredAnchorShape))
+            {
+                _hoveredAnchorShape = hovered;
+                Redraw();
+            }
+        }
     }
 
     private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
@@ -3028,6 +3105,15 @@ internal sealed class DrawingWindow : Window
                     _items.Remove(_drawingItem);
                     _selection.Remove(_drawingItem);
                 }
+                else
+                {
+                    if (_arrowDrawStartShape != null)
+                        _drawingItem.AnchorStartShapeId = _arrowDrawStartShape.Id;
+                    var endShape = HitTestAnchorableShape(_drawingItem.P2)
+                        ?? FindShapeOwningAnchorPoint(_drawingItem.P2);
+                    _drawingItem.AnchorEndShapeId = endShape?.Id;
+                    RefreshAnchoredArrowEndpoints(_drawingItem);
+                }
             }
             else if (_drawingItem.Kind == "freehand")
             {
@@ -3040,6 +3126,7 @@ internal sealed class DrawingWindow : Window
         }
         _isDrawing = false;
         _drawingItem = null;
+        _arrowDrawStartShape = null;
         _isMoving = false;
         _activeHandle = -1;
         _pendingUndoForGesture = false;
@@ -3121,8 +3208,11 @@ internal sealed class DrawingWindow : Window
     private DrawItem? HitTestTop(Point p)
     {
         for (var i = _items.Count - 1; i >= 0; i--)
-            if (HitTest(_items[i], p))
-                return _items[i];
+        {
+            var it = _items[i];
+            if (HitTest(it, p))
+                return it;
+        }
         return null;
     }
 
@@ -3250,6 +3340,7 @@ internal sealed class DrawingWindow : Window
         var preservedEditor = _activeEditor;
         _canvas.Children.Clear();
         _overlay.Children.Clear();
+        RefreshAllAnchoredArrows();
         foreach (var it in _items)
             RenderItem(it, _canvas);
 
@@ -3292,6 +3383,9 @@ internal sealed class DrawingWindow : Window
 
         if (_snapGuides.Count > 0)
             RenderSnapGuides();
+
+        if (_tool == Tool.Arrow && _hoveredAnchorShape != null)
+            RenderShapeAnchorPoints(_hoveredAnchorShape);
     }
 
     private Rect GetSelectionBounds()
@@ -4084,6 +4178,9 @@ internal sealed class DrawingWindow : Window
             TextColor = BrushToHex(it.TextColor),
             ArrowHead = it.ArrowHead.ToString(),
             FreehandGroupId = it.FreehandGroupId,
+            Id = it.Id,
+            AnchorStartShapeId = it.AnchorStartShapeId,
+            AnchorEndShapeId = it.AnchorEndShapeId,
         };
         foreach (var p in it.Points)
         {
@@ -4110,6 +4207,9 @@ internal sealed class DrawingWindow : Window
             TextColor = ParseBrush(dto.TextColor),
             ArrowHead = Enum.TryParse<ArrowHeadStyle>(dto.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple,
             FreehandGroupId = dto.FreehandGroupId,
+            Id = dto.Id,
+            AnchorStartShapeId = dto.AnchorStartShapeId,
+            AnchorEndShapeId = dto.AnchorEndShapeId,
         };
         int pointCount = Math.Min(dto.PointsX.Count, dto.PointsY.Count);
         for (int i = 0; i < pointCount; i++)
@@ -4124,14 +4224,20 @@ internal sealed class DrawingWindow : Window
         _undoStack.Clear();
         _redoStack.Clear();
         int maxGroupId = 0;
+        int maxItemId = 0;
         foreach (var dto in workspace.Items)
         {
             var item = ItemFromDto(dto);
             _items.Add(item);
             if (item.FreehandGroupId > maxGroupId)
                 maxGroupId = item.FreehandGroupId;
+            if (item.Id > maxItemId)
+                maxItemId = item.Id;
         }
         _nextFreehandGroupId = maxGroupId + 1;
+        _nextItemId = maxItemId + 1;
+        EnsureItemIds();
+        RefreshAllAnchoredArrows();
         UpdatePropertyPanelForSelection();
         Redraw();
     }
