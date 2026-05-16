@@ -2254,7 +2254,10 @@ internal sealed class DrawingWindow : Window
                 SyncFromSelected();
         }
         else
+        {
             ApplyToolProfileFromTheme(_activeTheme, _tool);
+            SyncPropertyControlsFromCurrent();
+        }
         UpdatePropertyPanelVisibility();
     }
 
