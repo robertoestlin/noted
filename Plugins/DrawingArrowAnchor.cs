@@ -146,8 +146,9 @@ internal sealed partial class DrawingWindow
         var len = Math.Sqrt(dx * dx + dy * dy);
         var ux = dx / len;
         var uy = dy / len;
-        foreach (var a in anchors)
+        for (var i = 0; i < anchors.Length; i++)
         {
+            var a = anchors[i];
             var ax = a.X - center.X;
             var ay = a.Y - center.Y;
             var alen = Math.Sqrt(ax * ax + ay * ay);
@@ -162,6 +163,70 @@ internal sealed partial class DrawingWindow
         return best;
     }
 
+    private static int GetNearestAnchorIndex(DrawItem shape, Point p)
+    {
+        var anchors = GetShapeAnchorPoints(shape);
+        if (anchors.Length == 0)
+            return 0;
+
+        var best = 0;
+        var bestDist = double.MaxValue;
+        for (var i = 0; i < anchors.Length; i++)
+        {
+            var d = (p - anchors[i]).Length;
+            if (d < bestDist)
+            {
+                bestDist = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    private static Point GetShapeAnchorPointByIndex(DrawItem shape, int index)
+    {
+        var anchors = GetShapeAnchorPoints(shape);
+        if (anchors.Length == 0)
+            return GetShapeCenter(shape);
+        index = Math.Clamp(index, 0, anchors.Length - 1);
+        return anchors[index];
+    }
+
+    private void CommitArrowAnchors(DrawItem arrow)
+    {
+        if (arrow.Kind != "arrow") return;
+
+        if (arrow.AnchorStartShapeId is int startId)
+        {
+            var startShape = FindShapeById(startId);
+            if (startShape == null)
+            {
+                arrow.AnchorStartShapeId = null;
+                arrow.AnchorStartIndex = null;
+            }
+            else
+            {
+                arrow.AnchorStartIndex = GetNearestAnchorIndex(startShape, arrow.P1);
+                arrow.P1 = GetShapeAnchorPointByIndex(startShape, arrow.AnchorStartIndex.Value);
+            }
+        }
+
+        if (arrow.AnchorEndShapeId is int endId)
+        {
+            var endShape = FindShapeById(endId);
+            if (endShape == null)
+            {
+                arrow.AnchorEndShapeId = null;
+                arrow.AnchorEndIndex = null;
+            }
+            else
+            {
+                arrow.AnchorEndIndex = GetNearestAnchorIndex(endShape, arrow.P2);
+                arrow.P2 = GetShapeAnchorPointByIndex(endShape, arrow.AnchorEndIndex.Value);
+            }
+        }
+    }
+
     private void RefreshAnchoredArrowEndpoints(DrawItem arrow)
     {
         if (arrow.Kind != "arrow") return;
@@ -169,19 +234,33 @@ internal sealed partial class DrawingWindow
         if (arrow.AnchorStartShapeId is int startId)
         {
             var startShape = FindShapeById(startId);
-            if (startShape != null)
-                arrow.P1 = GetShapeAnchorPoint(startShape, arrow.P2);
-            else
+            if (startShape == null)
+            {
                 arrow.AnchorStartShapeId = null;
+                arrow.AnchorStartIndex = null;
+            }
+            else
+            {
+                var idx = arrow.AnchorStartIndex ?? GetNearestAnchorIndex(startShape, arrow.P1);
+                arrow.AnchorStartIndex = idx;
+                arrow.P1 = GetShapeAnchorPointByIndex(startShape, idx);
+            }
         }
 
         if (arrow.AnchorEndShapeId is int endId)
         {
             var endShape = FindShapeById(endId);
-            if (endShape != null)
-                arrow.P2 = GetShapeAnchorPoint(endShape, arrow.P1);
-            else
+            if (endShape == null)
+            {
                 arrow.AnchorEndShapeId = null;
+                arrow.AnchorEndIndex = null;
+            }
+            else
+            {
+                var idx = arrow.AnchorEndIndex ?? GetNearestAnchorIndex(endShape, arrow.P2);
+                arrow.AnchorEndIndex = idx;
+                arrow.P2 = GetShapeAnchorPointByIndex(endShape, idx);
+            }
         }
     }
 
@@ -189,6 +268,7 @@ internal sealed partial class DrawingWindow
     {
         foreach (var it in _items)
         {
+            if (ReferenceEquals(it, _drawingItem)) continue;
             if (it.Kind == "arrow"
                 && (it.AnchorStartShapeId.HasValue || it.AnchorEndShapeId.HasValue))
                 RefreshAnchoredArrowEndpoints(it);

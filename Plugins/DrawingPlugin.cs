@@ -1260,6 +1260,8 @@ internal sealed class DrawItemDto
     public int Id { get; set; }
     public int? AnchorStartShapeId { get; set; }
     public int? AnchorEndShapeId { get; set; }
+    public int? AnchorStartIndex { get; set; }
+    public int? AnchorEndIndex { get; set; }
 }
 
 /// <summary>Context passed to <see cref="DrawingWindow"/> when re-opening a previously-saved drawing via the
@@ -1288,6 +1290,8 @@ internal sealed partial class DrawingWindow : Window
         public Point P2;
         public int? AnchorStartShapeId;
         public int? AnchorEndShapeId;
+        public int? AnchorStartIndex;
+        public int? AnchorEndIndex;
         public double CornerRadius = 14;
         public Brush Fill = Brushes.Transparent;
         public Brush Stroke = Brushes.Black;
@@ -1309,6 +1313,8 @@ internal sealed partial class DrawingWindow : Window
             P2 = P2,
             AnchorStartShapeId = AnchorStartShapeId,
             AnchorEndShapeId = AnchorEndShapeId,
+            AnchorStartIndex = AnchorStartIndex,
+            AnchorEndIndex = AnchorEndIndex,
             CornerRadius = CornerRadius,
             Fill = Fill,
             Stroke = Stroke,
@@ -3112,7 +3118,7 @@ internal sealed partial class DrawingWindow : Window
                     var endShape = HitTestAnchorableShape(_drawingItem.P2)
                         ?? FindShapeOwningAnchorPoint(_drawingItem.P2);
                     _drawingItem.AnchorEndShapeId = endShape?.Id;
-                    RefreshAnchoredArrowEndpoints(_drawingItem);
+                    CommitArrowAnchors(_drawingItem);
                 }
             }
             else if (_drawingItem.Kind == "freehand")
@@ -4181,6 +4187,8 @@ internal sealed partial class DrawingWindow : Window
             Id = it.Id,
             AnchorStartShapeId = it.AnchorStartShapeId,
             AnchorEndShapeId = it.AnchorEndShapeId,
+            AnchorStartIndex = it.AnchorStartIndex,
+            AnchorEndIndex = it.AnchorEndIndex,
         };
         foreach (var p in it.Points)
         {
@@ -4210,6 +4218,8 @@ internal sealed partial class DrawingWindow : Window
             Id = dto.Id,
             AnchorStartShapeId = dto.AnchorStartShapeId,
             AnchorEndShapeId = dto.AnchorEndShapeId,
+            AnchorStartIndex = dto.AnchorStartIndex,
+            AnchorEndIndex = dto.AnchorEndIndex,
         };
         int pointCount = Math.Min(dto.PointsX.Count, dto.PointsY.Count);
         for (int i = 0; i < pointCount; i++)
