@@ -858,6 +858,8 @@ internal sealed class DrawingWindow : Window
         public Brush TextColor = Brushes.Black;
         public ArrowHeadStyle ArrowHead = ArrowHeadStyle.Simple;
         public List<Point> Points = new();
+        /// <summary>Strokes drawn in the same freehand-tool session share a group id for move/delete.</summary>
+        public int FreehandGroupId;
 
         public DrawItem Clone() => new()
         {
@@ -874,6 +876,7 @@ internal sealed class DrawingWindow : Window
             TextColor = TextColor,
             ArrowHead = ArrowHead,
             Points = new List<Point>(Points),
+            FreehandGroupId = FreehandGroupId,
         };
     }
 
@@ -959,6 +962,9 @@ internal sealed class DrawingWindow : Window
     private bool _editChangedAnything;
 
     private bool _suppressPropertyChanges;
+
+    private int _nextFreehandGroupId = 1;
+    private int _currentFreehandGroupId;
 
     private const double HandleSize = 8;
     private const double HitPadding = 6;
@@ -1405,7 +1411,11 @@ internal sealed class DrawingWindow : Window
         }
         else if (_selected.Kind == "arrow" || _selected.Kind == "freehand")
         {
-            _selected.Stroke = _stroke;
+            foreach (var it in GetSelectionMembers())
+            {
+                if (it.Kind is "arrow" or "freehand")
+                    it.Stroke = _stroke;
+            }
         }
         else if (_selected.Kind == "text")
         {
@@ -1456,6 +1466,9 @@ internal sealed class DrawingWindow : Window
 
     private void SelectTool(Tool tool)
     {
+        if (tool == Tool.Freehand && _tool != Tool.Freehand)
+            _currentFreehandGroupId = _nextFreehandGroupId++;
+
         _tool = tool;
         var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
         Brush brushOff = SystemColors.ControlBrush;
@@ -1532,9 +1545,26 @@ internal sealed class DrawingWindow : Window
     {
         if (_selected == null) return;
         SnapshotForUndo();
-        _items.Remove(_selected);
+        foreach (var it in GetSelectionMembers().ToList())
+            _items.Remove(it);
         _selected = null;
         Redraw();
+    }
+
+    private IEnumerable<DrawItem> GetSelectionMembers()
+    {
+        if (_selected == null)
+            yield break;
+        if (_selected.Kind != "freehand" || _selected.FreehandGroupId == 0)
+        {
+            yield return _selected;
+            yield break;
+        }
+        foreach (var it in _items)
+        {
+            if (it.Kind == "freehand" && it.FreehandGroupId == _selected.FreehandGroupId)
+                yield return it;
+        }
     }
 
     // ---------------- Undo / Redo ----------------
@@ -1694,6 +1724,7 @@ internal sealed class DrawingWindow : Window
                 Stroke = _stroke,
                 StrokeThickness = Math.Max(3, _freeThickness),
                 Points = new List<Point> { p },
+                FreehandGroupId = _currentFreehandGroupId,
             },
             _ => null,
         };
@@ -1749,7 +1780,8 @@ internal sealed class DrawingWindow : Window
                     SnapshotForUndo();
                     _pendingUndoForGesture = false;
                 }
-                TranslateItem(_selected, dx, dy);
+                foreach (var it in GetSelectionMembers())
+                    TranslateItem(it, dx, dy);
                 _moveLast = p;
                 Redraw();
             }
