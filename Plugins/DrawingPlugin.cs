@@ -925,9 +925,9 @@ internal sealed class DrawingWindow : Window
     private readonly ComboBox _themeCombo;
     private readonly StackPanel _propertyPanel;
 
-    private SwatchPalette? _fillPalette;
-    private SwatchPalette? _strokePalette;
-    private SwatchPalette? _textColorPalette;
+    private CompactColorPicker? _fillColorPicker;
+    private CompactColorPicker? _strokeColorPicker;
+    private CompactColorPicker? _textColorPicker;
     private Slider? _thicknessSlider;
     private Slider? _cornerSlider;
     private Slider? _fontSizeSlider;
@@ -1226,13 +1226,12 @@ internal sealed class DrawingWindow : Window
 
     private void RefreshDrawingPalettes()
     {
-        var merged = DrawingNamedColorStore.MergeWithBasePalette(PaletteColors);
-        _fillPalette?.ReplaceColors(merged);
-        _fillPalette?.SetSelected(_fill);
-        _strokePalette?.ReplaceColors(merged);
-        _strokePalette?.SetSelected(_stroke);
-        _textColorPalette?.ReplaceColors(merged);
-        _textColorPalette?.SetSelected(_textColor);
+        _fillColorPicker?.Refresh();
+        _fillColorPicker?.SetSelected(_fill);
+        _strokeColorPicker?.Refresh();
+        _strokeColorPicker?.SetSelected(_stroke);
+        _textColorPicker?.Refresh();
+        _textColorPicker?.SetSelected(_textColor);
     }
 
     // ---------------- Property panel ----------------
@@ -1241,46 +1240,26 @@ internal sealed class DrawingWindow : Window
     {
         _propertyPanel.Children.Clear();
 
-        var paletteColors = DrawingNamedColorStore.MergeWithBasePalette(PaletteColors);
-
-        _propertyPanel.Children.Add(SectionHeader("Fill"));
-        _fillPalette = new SwatchPalette(paletteColors, _fill, b =>
+        _fillColorPicker = new CompactColorPicker(_fill, b =>
         {
             _fill = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(_fillPalette);
+        _propertyPanel.Children.Add(MakeCompactColorRow("Fill", _fillColorPicker));
 
-        _propertyPanel.Children.Add(SectionHeader("Stroke / Frame"));
-        _strokePalette = new SwatchPalette(paletteColors, _stroke, b =>
+        _strokeColorPicker = new CompactColorPicker(_stroke, b =>
         {
             _stroke = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(_strokePalette);
+        _propertyPanel.Children.Add(MakeCompactColorRow("Stroke / Frame", _strokeColorPicker));
 
-        _propertyPanel.Children.Add(SectionHeader("Text color"));
-        _textColorPalette = new SwatchPalette(paletteColors, _textColor, b =>
+        _textColorPicker = new CompactColorPicker(_textColor, b =>
         {
             _textColor = b;
             ApplyColorToSelected();
         });
-        _propertyPanel.Children.Add(_textColorPalette);
-
-        var btnCustomColors = new Button
-        {
-            Content = "Custom colors…",
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 0, 0, 10),
-            Padding = new Thickness(10, 4, 10, 4),
-        };
-        btnCustomColors.Click += (_, _) =>
-        {
-            var w = new DrawingNamedColorsWindow { Owner = this };
-            if (w.ShowDialog() == true)
-                RefreshDrawingPalettes();
-        };
-        _propertyPanel.Children.Add(btnCustomColors);
+        _propertyPanel.Children.Add(MakeCompactColorRow("Text color", _textColorPicker));
 
         _propertyPanel.Children.Add(SectionHeader("Thickness"));
         _thicknessSlider = MakeSlider(1, 24, _thickness);
@@ -1367,9 +1346,9 @@ internal sealed class DrawingWindow : Window
         _suppressPropertyChanges = true;
         try
         {
-            _fillPalette?.SetSelected(_fill);
-            _strokePalette?.SetSelected(_stroke);
-            _textColorPalette?.SetSelected(_textColor);
+            _fillColorPicker?.SetSelected(_fill);
+            _strokeColorPicker?.SetSelected(_stroke);
+            _textColorPicker?.SetSelected(_textColor);
             if (_thicknessSlider != null) _thicknessSlider.Value = Math.Clamp(_thickness, _thicknessSlider.Minimum, _thicknessSlider.Maximum);
             if (_cornerSlider != null) _cornerSlider.Value = Math.Clamp(_cornerRadius, _cornerSlider.Minimum, _cornerSlider.Maximum);
             if (_fontSizeSlider != null) _fontSizeSlider.Value = Math.Clamp(_fontSize, _fontSizeSlider.Minimum, _fontSizeSlider.Maximum);
@@ -1596,6 +1575,21 @@ internal sealed class DrawingWindow : Window
             Padding = new Thickness(8, 4, 8, 4),
             MinWidth = 60,
         };
+
+    private static Grid MakeCompactColorRow(string label, CompactColorPicker picker)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var hdr = SectionHeader(label);
+        hdr.VerticalAlignment = VerticalAlignment.Center;
+        hdr.Margin = new Thickness(0, 0, 8, 0);
+        Grid.SetColumn(hdr, 0);
+        Grid.SetColumn(picker, 1);
+        row.Children.Add(hdr);
+        row.Children.Add(picker);
+        return row;
+    }
 
     private static TextBlock SectionHeader(string text)
         => new()
@@ -2639,96 +2633,238 @@ internal sealed class DrawingWindow : Window
     }
 }
 
-// ---------------- Color swatch palette ----------------
+// ---------------- Palette color picker (shared by Drawing window + Themes) ----------------
 
-internal sealed class SwatchPalette : Border
+internal static class DrawingPaletteColorPicker
 {
-    private readonly UniformGrid _grid;
-    private readonly Action<Brush> _onChanged;
-    private Border? _selected;
-
-    public SwatchPalette(Color[] colors, Brush initial, Action<Brush> onChanged)
+    private static readonly string[] ColorChoices =
     {
-        _onChanged = onChanged;
-        BorderBrush = Brushes.Transparent;
-        BorderThickness = new Thickness(0);
-        Margin = new Thickness(0, 0, 0, 4);
-        _grid = new UniformGrid { Columns = 4, Margin = new Thickness(0) };
-        Child = _grid;
-        ReplaceColors(colors);
-        SetSelected(initial);
+        "Transparent",
+        "#000000", "#FFFFFF", "#555555", "#BBBBBB",
+        "#E53935", "#F68A1E", "#FFD700", "#FFF6A9",
+        "#4CAF50", "#A8E6A1", "#2196F3", "#B3E5FC",
+        "#673AB7", "#D1C4E9", "#795548", "#3F51B5",
+        "#F5F5DC",
+    };
+
+    public static ComboBox CreateCombo()
+    {
+        var cb = new ComboBox { Margin = new Thickness(0) };
+        Populate(cb);
+        return cb;
     }
 
-    public void ReplaceColors(Color[] colors)
+    public static void Populate(ItemsControl items)
     {
-        _grid.Children.Clear();
-        _selected = null;
-        foreach (var c in colors)
-            _grid.Children.Add(MakeSwatch(c));
-    }
+        items.Items.Clear();
+        var seenHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    private Border MakeSwatch(Color color)
-    {
-        Brush background = color == Colors.Transparent ? CreateCheckeredBrush() : new SolidColorBrush(color);
-        if (background is Freezable f) f.Freeze();
-        var actualBrush = color == Colors.Transparent ? Brushes.Transparent : new SolidColorBrush(color);
+        items.Items.Add(MakeColorChoiceItem("Transparent"));
+        seenHexes.Add("Transparent");
 
-        var b = new Border
+        var service = new ColorPaletteService();
+        string? lastPalette = null;
+        foreach (var (paletteName, color) in service.EnumeratePaletteColors())
         {
-            Width = 32,
-            Height = 26,
-            Margin = new Thickness(2),
-            BorderBrush = Brushes.DimGray,
-            BorderThickness = new Thickness(1),
-            Background = background,
-            Cursor = Cursors.Hand,
-            CornerRadius = new CornerRadius(3),
-            Tag = actualBrush,
-        };
-        b.MouseLeftButtonDown += (_, _) =>
-        {
-            SetSelectedSwatch(b);
-            _onChanged(actualBrush);
-        };
-        return b;
-    }
+            if (!DrawingColorUtilities.TryParseColorString(color.Hex, out var parsed) || parsed.A == 0)
+                continue;
+            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
+            if (!seenHexes.Add(tag))
+                continue;
 
-    private void SetSelectedSwatch(Border b)
-    {
-        if (_selected != null)
-        {
-            _selected.BorderBrush = Brushes.DimGray;
-            _selected.BorderThickness = new Thickness(1);
-        }
-        _selected = b;
-        _selected.BorderBrush = new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3));
-        _selected.BorderThickness = new Thickness(2);
-    }
-
-    public void SetSelected(Brush brush)
-    {
-        var hex = DrawingWindow.BrushToHex(brush);
-        foreach (var child in _grid.Children)
-        {
-            if (child is Border b && b.Tag is Brush tagBrush)
+            if (!string.Equals(lastPalette, paletteName, StringComparison.OrdinalIgnoreCase))
             {
-                if (string.Equals(DrawingWindow.BrushToHex(tagBrush), hex, StringComparison.OrdinalIgnoreCase))
-                {
-                    SetSelectedSwatch(b);
-                    return;
-                }
+                items.Items.Add(MakePaletteHeaderItem(paletteName));
+                lastPalette = paletteName;
+            }
+
+            items.Items.Add(MakeNamedColorItem(paletteName, color.Name, tag));
+        }
+
+        foreach (var hex in ColorChoices)
+        {
+            if (string.Equals(hex, "Transparent", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!DrawingColorUtilities.TryParseColorString(hex, out var parsed))
+                continue;
+            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
+            if (!seenHexes.Add(tag))
+                continue;
+            items.Items.Add(MakeColorChoiceItem(tag));
+        }
+    }
+
+    public static string GetSelectedHex(ItemsControl items)
+    {
+        if (items is ComboBox cb)
+        {
+            if (cb.SelectedItem is ComboBoxItem item && item.Tag is string s) return s;
+            if (cb.SelectedItem is string s2) return s2;
+        }
+        else if (items is ListBox lb && lb.SelectedItem is ComboBoxItem li && li.Tag is string s3)
+            return s3;
+        return "#000000";
+    }
+
+    public static void SelectColor(ItemsControl items, string? value)
+    {
+        var key = string.IsNullOrWhiteSpace(value) ? "Transparent" : value.Trim();
+        foreach (var obj in items.Items)
+        {
+            if (obj is ComboBoxItem item && item.Tag is string s
+                && string.Equals(s, key, StringComparison.OrdinalIgnoreCase))
+            {
+                if (items is ComboBox cb)
+                    cb.SelectedItem = item;
+                else if (items is ListBox lb)
+                    lb.SelectedItem = item;
+                return;
             }
         }
 
-        if (_selected != null)
+        var extra = MakeColorChoiceItem(key);
+        items.Items.Add(extra);
+        if (items is ComboBox cb2)
+            cb2.SelectedItem = extra;
+        else if (items is ListBox lb2)
+            lb2.SelectedItem = extra;
+    }
+
+    private static ComboBoxItem MakeColorChoiceItem(string value)
+    {
+        var item = new ComboBoxItem { Tag = value };
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        sp.Children.Add(MakeSwatchBorder(value, 20, 14));
+        sp.Children.Add(new TextBlock { Text = value, VerticalAlignment = VerticalAlignment.Center });
+        item.Content = sp;
+        return item;
+    }
+
+    private static ComboBoxItem MakeNamedColorItem(string paletteName, string colorName, string tagHex)
+    {
+        var displayName = string.IsNullOrWhiteSpace(paletteName)
+            ? colorName
+            : $"{paletteName} · {colorName}";
+        var item = new ComboBoxItem { Tag = tagHex };
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        sp.Children.Add(MakeSwatchBorder(tagHex, 20, 14));
+        sp.Children.Add(new TextBlock { Text = displayName, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+        sp.Children.Add(new TextBlock { Text = tagHex, VerticalAlignment = VerticalAlignment.Center, FontSize = 11, Foreground = Brushes.Gray });
+        item.Content = sp;
+        return item;
+    }
+
+    private static ComboBoxItem MakePaletteHeaderItem(string paletteName)
+    {
+        return new ComboBoxItem
         {
-            _selected.BorderBrush = Brushes.DimGray;
-            _selected.BorderThickness = new Thickness(1);
-            _selected = null;
+            Content = paletteName,
+            IsEnabled = false,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.Gray,
+            Padding = new Thickness(4, 6, 4, 2),
+        };
+    }
+
+    internal static Border MakeSwatchBorder(string hex, double width, double height)
+    {
+        Brush background = string.Equals(hex, "Transparent", StringComparison.OrdinalIgnoreCase)
+            ? CompactColorPicker.CreateCheckeredBrush()
+            : DrawingWindow.ParseBrush(hex);
+        return new Border
+        {
+            Width = width,
+            Height = height,
+            Margin = new Thickness(0, 0, 6, 0),
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            Background = background,
+        };
+    }
+}
+
+internal sealed class CompactColorPicker : Border
+{
+    private readonly ComboBox _combo;
+    private readonly Border _swatch;
+    private readonly Action<Brush> _onChanged;
+    private bool _suppress;
+    private string _currentHex = "#000000";
+
+    public CompactColorPicker(Brush initial, Action<Brush> onChanged)
+    {
+        _onChanged = onChanged;
+        Width = 52;
+        Height = 28;
+        BorderThickness = new Thickness(0);
+        Background = Brushes.Transparent;
+        HorizontalAlignment = HorizontalAlignment.Left;
+        ToolTip = "Click to choose a color";
+
+        _swatch = new Border
+        {
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(3),
+            IsHitTestVisible = false,
+        };
+
+        _combo = DrawingPaletteColorPicker.CreateCombo();
+        _combo.Background = Brushes.Transparent;
+        _combo.BorderThickness = new Thickness(0);
+        _combo.Opacity = 0;
+        _combo.IsHitTestVisible = true;
+        _combo.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _combo.VerticalAlignment = VerticalAlignment.Stretch;
+        _combo.MaxDropDownHeight = 320;
+        _combo.MinWidth = 280;
+
+        _combo.SelectionChanged += (_, _) =>
+        {
+            if (_suppress) return;
+            if (_combo.SelectedItem is ComboBoxItem { IsEnabled: false })
+                return;
+            var hex = DrawingPaletteColorPicker.GetSelectedHex(_combo);
+            if (string.Equals(hex, _currentHex, StringComparison.OrdinalIgnoreCase))
+                return;
+            _currentHex = hex;
+            UpdateSwatch(DrawingWindow.ParseBrush(hex));
+            _onChanged(DrawingWindow.ParseBrush(hex));
+        };
+
+        var grid = new Grid();
+        grid.Children.Add(_swatch);
+        grid.Children.Add(_combo);
+        Child = grid;
+
+        SetSelected(initial);
+    }
+
+    public void Refresh() => DrawingPaletteColorPicker.Populate(_combo);
+
+    public void SetSelected(Brush brush)
+    {
+        _suppress = true;
+        try
+        {
+            _currentHex = DrawingWindow.BrushToHex(brush);
+            DrawingPaletteColorPicker.SelectColor(_combo, _currentHex);
+            UpdateSwatch(brush);
+        }
+        finally
+        {
+            _suppress = false;
         }
     }
 
-    private static DrawingBrush CreateCheckeredBrush()
+    private void UpdateSwatch(Brush brush)
+    {
+        _swatch.Background = string.Equals(_currentHex, "Transparent", StringComparison.OrdinalIgnoreCase)
+            ? CreateCheckeredBrush()
+            : brush;
+    }
+
+    internal static DrawingBrush CreateCheckeredBrush()
     {
         var dg = new DrawingGroup();
         using (var dc = dg.Open())
@@ -2776,16 +2912,6 @@ internal sealed class ThemeSettingsWindow : Window
     private TextBox? _fFreeThickness;
 
     private Canvas? _previewCanvas;
-
-    private static readonly string[] ColorChoices =
-    {
-        "Transparent",
-        "#000000", "#FFFFFF", "#555555", "#BBBBBB",
-        "#E53935", "#F68A1E", "#FFD700", "#FFF6A9",
-        "#4CAF50", "#A8E6A1", "#2196F3", "#B3E5FC",
-        "#673AB7", "#D1C4E9", "#795548", "#3F51B5",
-        "#F5F5DC",
-    };
 
     private static readonly string[] FontChoices =
     {
@@ -3085,130 +3211,29 @@ internal sealed class ThemeSettingsWindow : Window
             RebuildThemePreview();
         }
 
-        _rFill!.SelectionChanged += (_, _) => R(s => s.Fill = ColorString(_rFill));
-        _rStroke!.SelectionChanged += (_, _) => R(s => s.Stroke = ColorString(_rStroke));
-        _rTextColor!.SelectionChanged += (_, _) => R(s => s.TextColor = ColorString(_rTextColor));
+        _rFill!.SelectionChanged += (_, _) => R(s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(_rFill));
+        _rStroke!.SelectionChanged += (_, _) => R(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_rStroke));
+        _rTextColor!.SelectionChanged += (_, _) => R(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_rTextColor));
         _rFont!.SelectionChanged += (_, _) => R(s => s.FontFamilyName = _rFont.SelectedItem as string ?? s.FontFamilyName);
         _rFontSize!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
         _rThickness!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
         _rCorner!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rCorner.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
 
-        _eFill!.SelectionChanged += (_, _) => E(s => s.Fill = ColorString(_eFill));
-        _eStroke!.SelectionChanged += (_, _) => E(s => s.Stroke = ColorString(_eStroke));
+        _eFill!.SelectionChanged += (_, _) => E(s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(_eFill));
+        _eStroke!.SelectionChanged += (_, _) => E(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_eStroke));
         _eThickness!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
 
-        _aStroke!.SelectionChanged += (_, _) => A(s => s.Stroke = ColorString(_aStroke));
+        _aStroke!.SelectionChanged += (_, _) => A(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_aStroke));
         _aThickness!.TextChanged += (_, _) => A(s => { if (double.TryParse(_aThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
         _aArrow!.SelectionChanged += (_, _) => A(s => s.ArrowHead = _aArrow.SelectedItem as string ?? "Simple");
 
-        _tTextColor!.SelectionChanged += (_, _) => Tx(s => s.TextColor = ColorString(_tTextColor));
+        _tTextColor!.SelectionChanged += (_, _) => Tx(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_tTextColor));
         _tFont!.SelectionChanged += (_, _) => Tx(s => s.FontFamilyName = _tFont.SelectedItem as string ?? s.FontFamilyName);
         _tFontSize!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
         _tThickness!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
 
-        _fStroke!.SelectionChanged += (_, _) => F(s => s.Stroke = ColorString(_fStroke));
+        _fStroke!.SelectionChanged += (_, _) => F(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_fStroke));
         _fFreeThickness!.TextChanged += (_, _) => F(s => { if (double.TryParse(_fFreeThickness.Text, out var v)) s.FreeThickness = Math.Max(1, v); });
-    }
-
-    private static string ColorString(ComboBox cb)
-    {
-        if (cb.SelectedItem is ComboBoxItem item && item.Tag is string s) return s;
-        if (cb.SelectedItem is string s2) return s2;
-        return "#000000";
-    }
-
-    private ComboBoxItem MakeColorChoiceItem(string value)
-    {
-        var item = new ComboBoxItem { Tag = value };
-        var sp = new StackPanel { Orientation = Orientation.Horizontal };
-        var sw = new Border
-        {
-            Width = 20,
-            Height = 14,
-            Margin = new Thickness(0, 0, 6, 0),
-            BorderBrush = Brushes.DimGray,
-            BorderThickness = new Thickness(1),
-            Background = DrawingWindow.ParseBrush(value),
-        };
-        sp.Children.Add(sw);
-        sp.Children.Add(new TextBlock { Text = value, VerticalAlignment = VerticalAlignment.Center });
-        item.Content = sp;
-        return item;
-    }
-
-    private ComboBoxItem MakeNamedColorItem(string paletteName, string colorName, string tagHex)
-    {
-        var displayName = string.IsNullOrWhiteSpace(paletteName)
-            ? colorName
-            : $"{paletteName} · {colorName}";
-        var item = new ComboBoxItem { Tag = tagHex };
-        var sp = new StackPanel { Orientation = Orientation.Horizontal };
-        var sw = new Border
-        {
-            Width = 20,
-            Height = 14,
-            Margin = new Thickness(0, 0, 6, 0),
-            BorderBrush = Brushes.DimGray,
-            BorderThickness = new Thickness(1),
-            Background = DrawingWindow.ParseBrush(tagHex),
-        };
-        sp.Children.Add(sw);
-        sp.Children.Add(new TextBlock { Text = displayName, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
-        sp.Children.Add(new TextBlock { Text = tagHex, VerticalAlignment = VerticalAlignment.Center, FontSize = 11, Foreground = Brushes.Gray });
-        item.Content = sp;
-        return item;
-    }
-
-    private static ComboBoxItem MakePaletteHeaderItem(string paletteName)
-    {
-        return new ComboBoxItem
-        {
-            Content = paletteName,
-            IsEnabled = false,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brushes.Gray,
-            Padding = new Thickness(4, 6, 4, 2),
-        };
-    }
-
-    private void PopulateColorCombo(ComboBox cb)
-    {
-        cb.Items.Clear();
-        var seenHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        cb.Items.Add(MakeColorChoiceItem("Transparent"));
-        seenHexes.Add("Transparent");
-
-        var service = new ColorPaletteService();
-        string? lastPalette = null;
-        foreach (var (paletteName, color) in service.EnumeratePaletteColors())
-        {
-            if (!DrawingColorUtilities.TryParseColorString(color.Hex, out var parsed) || parsed.A == 0)
-                continue;
-            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
-            if (!seenHexes.Add(tag))
-                continue;
-
-            if (!string.Equals(lastPalette, paletteName, StringComparison.OrdinalIgnoreCase))
-            {
-                cb.Items.Add(MakePaletteHeaderItem(paletteName));
-                lastPalette = paletteName;
-            }
-
-            cb.Items.Add(MakeNamedColorItem(paletteName, color.Name, tag));
-        }
-
-        foreach (var hex in ColorChoices)
-        {
-            if (string.Equals(hex, "Transparent", StringComparison.OrdinalIgnoreCase))
-                continue;
-            if (!DrawingColorUtilities.TryParseColorString(hex, out var parsed))
-                continue;
-            var tag = DrawingColorUtilities.FormatHexForTheme(parsed);
-            if (!seenHexes.Add(tag))
-                continue;
-            cb.Items.Add(MakeColorChoiceItem(tag));
-        }
     }
 
     private void RefreshThemeColorCombosFromEditing()
@@ -3223,22 +3248,22 @@ internal sealed class ThemeSettingsWindow : Window
             var a = _editing.Arrow!;
             var tx = _editing.Text!;
             var fh = _editing.Freehand!;
-            PopulateColorCombo(_rFill!);
-            PopulateColorCombo(_rStroke!);
-            PopulateColorCombo(_rTextColor!);
-            PopulateColorCombo(_eFill!);
-            PopulateColorCombo(_eStroke!);
-            PopulateColorCombo(_aStroke!);
-            PopulateColorCombo(_tTextColor!);
-            PopulateColorCombo(_fStroke!);
-            SelectColor(_rFill!, r.Fill);
-            SelectColor(_rStroke!, r.Stroke);
-            SelectColor(_rTextColor!, r.TextColor);
-            SelectColor(_eFill!, e.Fill);
-            SelectColor(_eStroke!, e.Stroke);
-            SelectColor(_aStroke!, a.Stroke);
-            SelectColor(_tTextColor!, tx.TextColor);
-            SelectColor(_fStroke!, fh.Stroke);
+            DrawingPaletteColorPicker.Populate(_rFill!);
+            DrawingPaletteColorPicker.Populate(_rStroke!);
+            DrawingPaletteColorPicker.Populate(_rTextColor!);
+            DrawingPaletteColorPicker.Populate(_eFill!);
+            DrawingPaletteColorPicker.Populate(_eStroke!);
+            DrawingPaletteColorPicker.Populate(_aStroke!);
+            DrawingPaletteColorPicker.Populate(_tTextColor!);
+            DrawingPaletteColorPicker.Populate(_fStroke!);
+            DrawingPaletteColorPicker.SelectColor(_rFill!, r.Fill);
+            DrawingPaletteColorPicker.SelectColor(_rStroke!, r.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_rTextColor!, r.TextColor);
+            DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
+            DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_tTextColor!, tx.TextColor);
+            DrawingPaletteColorPicker.SelectColor(_fStroke!, fh.Stroke);
             RebuildThemePreview();
         }
         finally
@@ -3247,12 +3272,7 @@ internal sealed class ThemeSettingsWindow : Window
         }
     }
 
-    private ComboBox MakeColorCombo()
-    {
-        var cb = new ComboBox { Margin = new Thickness(0) };
-        PopulateColorCombo(cb);
-        return cb;
-    }
+    private static ComboBox MakeColorCombo() => DrawingPaletteColorPicker.CreateCombo();
 
     private Grid MakeThemeColorRow(ComboBox cb)
     {
@@ -3278,7 +3298,7 @@ internal sealed class ThemeSettingsWindow : Window
 
         void UpdateSwatch()
         {
-            var key = ColorString(cb);
+            var key = DrawingPaletteColorPicker.GetSelectedHex(cb);
             swatch.Background = DrawingWindow.ParseBrush(key);
         }
 
@@ -3286,10 +3306,10 @@ internal sealed class ThemeSettingsWindow : Window
 
         swatch.MouseLeftButtonDown += (_, _) =>
         {
-            var dlg = new DrawingColorPickerWindow(ColorString(cb)) { Owner = this };
+            var dlg = new DrawingColorPickerWindow(DrawingPaletteColorPicker.GetSelectedHex(cb)) { Owner = this };
             if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.ResultHex))
             {
-                SelectColor(cb, dlg.ResultHex!);
+                DrawingPaletteColorPicker.SelectColor(cb, dlg.ResultHex!);
                 UpdateSwatch();
             }
         };
@@ -3319,39 +3339,39 @@ internal sealed class ThemeSettingsWindow : Window
             var a = _editing.Arrow!;
             var tx = _editing.Text!;
             var fh = _editing.Freehand!;
-            PopulateColorCombo(_rFill!);
-            PopulateColorCombo(_rStroke!);
-            PopulateColorCombo(_rTextColor!);
-            PopulateColorCombo(_eFill!);
-            PopulateColorCombo(_eStroke!);
-            PopulateColorCombo(_aStroke!);
-            PopulateColorCombo(_tTextColor!);
-            PopulateColorCombo(_fStroke!);
-            SelectColor(_rFill!, r.Fill);
-            SelectColor(_rStroke!, r.Stroke);
-            SelectColor(_rTextColor!, r.TextColor);
+            DrawingPaletteColorPicker.Populate(_rFill!);
+            DrawingPaletteColorPicker.Populate(_rStroke!);
+            DrawingPaletteColorPicker.Populate(_rTextColor!);
+            DrawingPaletteColorPicker.Populate(_eFill!);
+            DrawingPaletteColorPicker.Populate(_eStroke!);
+            DrawingPaletteColorPicker.Populate(_aStroke!);
+            DrawingPaletteColorPicker.Populate(_tTextColor!);
+            DrawingPaletteColorPicker.Populate(_fStroke!);
+            DrawingPaletteColorPicker.SelectColor(_rFill!, r.Fill);
+            DrawingPaletteColorPicker.SelectColor(_rStroke!, r.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_rTextColor!, r.TextColor);
             _rFont!.SelectedItem = r.FontFamilyName;
             if (_rFont.SelectedItem == null) _rFont.SelectedIndex = 0;
             _rFontSize!.Text = r.FontSize.ToString();
             _rThickness!.Text = r.Thickness.ToString();
             _rCorner!.Text = r.CornerRadius.ToString();
 
-            SelectColor(_eFill!, e.Fill);
-            SelectColor(_eStroke!, e.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
+            DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
             _eThickness!.Text = e.Thickness.ToString();
 
-            SelectColor(_aStroke!, a.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
             _aThickness!.Text = a.Thickness.ToString();
             _aArrow!.SelectedItem = a.ArrowHead;
             if (_aArrow.SelectedItem == null) _aArrow.SelectedIndex = 1;
 
-            SelectColor(_tTextColor!, tx.TextColor);
+            DrawingPaletteColorPicker.SelectColor(_tTextColor!, tx.TextColor);
             _tFont!.SelectedItem = tx.FontFamilyName;
             if (_tFont.SelectedItem == null) _tFont.SelectedIndex = 0;
             _tFontSize!.Text = tx.FontSize.ToString();
             _tThickness!.Text = tx.Thickness.ToString();
 
-            SelectColor(_fStroke!, fh.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_fStroke!, fh.Stroke);
             _fFreeThickness!.Text = fh.FreeThickness.ToString();
             RebuildThemePreview();
         }
@@ -3359,24 +3379,6 @@ internal sealed class ThemeSettingsWindow : Window
         {
             _suppressUpdate = false;
         }
-    }
-
-    private void SelectColor(ComboBox cb, string? value)
-    {
-        var key = string.IsNullOrWhiteSpace(value) ? "Transparent" : value.Trim();
-        foreach (var obj in cb.Items)
-        {
-            if (obj is ComboBoxItem item && item.Tag is string s
-                && string.Equals(s, key, StringComparison.OrdinalIgnoreCase))
-            {
-                cb.SelectedItem = item;
-                return;
-            }
-        }
-
-        var extra = MakeColorChoiceItem(key);
-        cb.Items.Add(extra);
-        cb.SelectedItem = extra;
     }
 
     private void RebuildThemePreview()
