@@ -1265,6 +1265,7 @@ internal sealed class DrawingWindow : Window
     private const double CanvasWidth = 2000;
     private const double CanvasHeight = 1400;
     private const double InsertPaddingPx = 20;
+    private const double EllipseInscribedFactor = 0.70710678118654752;
 
     private readonly MainWindow _host;
     private readonly DrawingEditContext? _editContext;
@@ -2201,7 +2202,7 @@ internal sealed class DrawingWindow : Window
         if (e.ClickCount == 2)
         {
             var hitDbl = HitTestTop(p);
-            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "text"))
+            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "text"))
             {
                 SetSingleSelection(hitDbl);
                 Redraw();
@@ -2686,6 +2687,17 @@ internal sealed class DrawingWindow : Window
                 preservedEditor.Width = Math.Max(40, b.Width - 8);
                 preservedEditor.Height = Math.Max(20, b.Height - 8);
             }
+            else if (_editingItem.Kind == "ellipse")
+            {
+                var innerW = Math.Max(40, b.Width * EllipseInscribedFactor - 8);
+                var innerH = Math.Max(20, b.Height * EllipseInscribedFactor - 8);
+                Canvas.SetLeft(preservedEditor, b.Left + (b.Width - innerW) / 2);
+                Canvas.SetTop(preservedEditor, b.Top + (b.Height - innerH) / 2);
+                preservedEditor.Width = innerW;
+                preservedEditor.Height = innerH;
+            }
+            if (_editingItem.Kind is "rect" or "ellipse")
+                ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
             _canvas.Children.Add(preservedEditor);
         }
 
@@ -2758,7 +2770,7 @@ internal sealed class DrawingWindow : Window
                 Canvas.SetTop(rect, b.Top);
                 surface.Children.Add(rect);
 
-                if (!string.IsNullOrEmpty(it.Text))
+                if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
                 {
                     var tb = new TextBlock
                     {
@@ -2794,6 +2806,27 @@ internal sealed class DrawingWindow : Window
                 Canvas.SetLeft(el, b.Left);
                 Canvas.SetTop(el, b.Top);
                 surface.Children.Add(el);
+
+                if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
+                {
+                    var innerWidth = Math.Max(0, b.Width * EllipseInscribedFactor - 8);
+                    var tb = new TextBlock
+                    {
+                        Text = it.Text,
+                        FontSize = it.FontSize,
+                        FontFamily = it.FontFamily,
+                        Foreground = it.TextColor,
+                        TextAlignment = TextAlignment.Center,
+                        TextWrapping = TextWrapping.Wrap,
+                        Width = innerWidth,
+                        IsHitTestVisible = false,
+                    };
+                    tb.Measure(new Size(innerWidth, b.Height));
+                    var th = tb.DesiredSize.Height;
+                    Canvas.SetLeft(tb, b.Left + (b.Width - innerWidth) / 2);
+                    Canvas.SetTop(tb, b.Top + Math.Max(0, (b.Height - th) / 2));
+                    surface.Children.Add(tb);
+                }
                 break;
             }
             case "arrow":
@@ -2955,6 +2988,19 @@ internal sealed class DrawingWindow : Window
 
     // ---------------- Text editor ----------------
 
+    private static void ApplyShapeTextEditorChrome(TextBox box, DrawItem it)
+    {
+        box.Background = Brushes.Transparent;
+        if (it.Kind == "ellipse" && box.Width > 0 && box.Height > 0)
+        {
+            var w = box.Width;
+            var h = box.Height;
+            box.Clip = new EllipseGeometry(new Point(w / 2, h / 2), w / 2, h / 2);
+        }
+        else
+            box.Clip = null;
+    }
+
     private void StartTextEdit(DrawItem it, bool takeSnapshot = true)
     {
         CommitTextEdit();
@@ -2964,13 +3010,14 @@ internal sealed class DrawingWindow : Window
         _editingItem = it;
         var b = GetBounds(it);
         var isFreshTextItem = it.Kind == "text" && string.IsNullOrEmpty(it.Text);
+        var isShapeContainer = it.Kind == "rect" || it.Kind == "ellipse";
 
         Brush boxBackground;
         Brush boxBorder;
         Thickness boxBorderThickness;
-        if (it.Kind == "rect")
+        if (isShapeContainer)
         {
-            boxBackground = new SolidColorBrush(Color.FromArgb(0xE8, 0xFF, 0xFF, 0xFF));
+            boxBackground = Brushes.Transparent;
             boxBorder = Brushes.Transparent;
             boxBorderThickness = new Thickness(0);
         }
@@ -2998,9 +3045,9 @@ internal sealed class DrawingWindow : Window
             BorderThickness = boxBorderThickness,
             Padding = new Thickness(0),
             AcceptsReturn = true,
-            TextWrapping = it.Kind == "rect" ? TextWrapping.Wrap : TextWrapping.NoWrap,
-            HorizontalContentAlignment = it.Kind == "rect" ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-            VerticalContentAlignment = it.Kind == "rect" ? VerticalAlignment.Center : VerticalAlignment.Top,
+            TextWrapping = isShapeContainer ? TextWrapping.Wrap : TextWrapping.NoWrap,
+            HorizontalContentAlignment = isShapeContainer ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+            VerticalContentAlignment = isShapeContainer ? VerticalAlignment.Center : VerticalAlignment.Top,
         };
         double left, top, w, h;
         if (it.Kind == "rect")
@@ -3009,6 +3056,15 @@ internal sealed class DrawingWindow : Window
             top = b.Top + 4;
             w = Math.Max(40, b.Width - 8);
             h = Math.Max(20, b.Height - 8);
+        }
+        else if (it.Kind == "ellipse")
+        {
+            var innerW = Math.Max(40, b.Width * EllipseInscribedFactor - 8);
+            var innerH = Math.Max(20, b.Height * EllipseInscribedFactor - 8);
+            left = b.Left + (b.Width - innerW) / 2;
+            top = b.Top + (b.Height - innerH) / 2;
+            w = innerW;
+            h = innerH;
         }
         else if (isFreshTextItem)
         {
@@ -3028,6 +3084,8 @@ internal sealed class DrawingWindow : Window
         Canvas.SetTop(box, top);
         box.Width = w;
         box.Height = h;
+        if (isShapeContainer)
+            ApplyShapeTextEditorChrome(box, it);
 
         var originalText = it.Text ?? "";
 
@@ -3053,6 +3111,26 @@ internal sealed class DrawingWindow : Window
                 if (neededRectHeight > currentRectHeight)
                 {
                     it.P2 = new Point(it.P2.X, it.P1.Y + neededRectHeight);
+                    _editChangedAnything = true;
+                    Redraw();
+                }
+            }
+            else if (it.Kind == "ellipse")
+            {
+                var availWidth = Math.Max(40, GetBounds(it).Width * EllipseInscribedFactor - 8);
+                var ft = new FormattedText(
+                    string.IsNullOrEmpty(text) ? " " : text,
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    typeface, box.FontSize, Brushes.Black, dpi)
+                {
+                    MaxTextWidth = availWidth,
+                };
+                var neededEllipseHeight = (ft.Height + 16) / EllipseInscribedFactor;
+                var currentEllipseHeight = GetBounds(it).Height;
+                if (neededEllipseHeight > currentEllipseHeight)
+                {
+                    it.P2 = new Point(it.P2.X, it.P1.Y + neededEllipseHeight);
                     _editChangedAnything = true;
                     Redraw();
                 }
