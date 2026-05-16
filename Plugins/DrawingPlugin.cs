@@ -728,6 +728,115 @@ internal sealed class DrawingNamedColorsWindow : Window
     }
 }
 
+internal static class DrawingFreehandGeometry
+{
+    public static Geometry CreateSmoothGeometry(IReadOnlyList<Point> points) => CreateSmoothFreehandGeometry(points);
+
+    public static List<Point> Flatten(IReadOnlyList<Point> points) => FlattenFreehandGeometry(points);
+
+    public static double PathLength(IReadOnlyList<Point> points) => FreehandPathLength(points);
+
+    private static double FreehandPathLength(IReadOnlyList<Point> points)
+    {
+        var len = 0.0;
+        for (var i = 1; i < points.Count; i++)
+            len += (points[i] - points[i - 1]).Length;
+        return len;
+    }
+
+    private static Geometry CreateSmoothFreehandGeometry(IReadOnlyList<Point> points)
+    {
+        if (points.Count == 0)
+            return Geometry.Empty;
+        if (points.Count == 1)
+            return new EllipseGeometry(points[0], 1, 1);
+
+        var figure = new PathFigure
+        {
+            StartPoint = points[0],
+            IsClosed = false,
+            IsFilled = false,
+        };
+        var segments = new PathSegmentCollection();
+
+        if (points.Count == 2)
+        {
+            segments.Add(new LineSegment(points[1], true));
+            figure.Segments = segments;
+            return new PathGeometry(new[] { figure });
+        }
+
+        for (var i = 0; i < points.Count - 1; i++)
+        {
+            var current = points[i];
+            var next = points[i + 1];
+            var mid = new Point((current.X + next.X) * 0.5, (current.Y + next.Y) * 0.5);
+            if (i == 0)
+                segments.Add(new LineSegment(mid, true));
+            else
+                segments.Add(new QuadraticBezierSegment(current, mid, true));
+        }
+
+        segments.Add(new LineSegment(points[^1], true));
+        figure.Segments = segments;
+        return new PathGeometry(new[] { figure });
+    }
+
+    private static List<Point> FlattenFreehandGeometry(IReadOnlyList<Point> points, int stepsPerCurve = 10)
+    {
+        var result = new List<Point>();
+        if (points.Count == 0)
+            return result;
+        result.Add(points[0]);
+        if (points.Count == 1)
+            return result;
+        if (points.Count == 2)
+        {
+            result.Add(points[1]);
+            return result;
+        }
+
+        for (var i = 0; i < points.Count - 1; i++)
+        {
+            var current = points[i];
+            var next = points[i + 1];
+            var mid = new Point((current.X + next.X) * 0.5, (current.Y + next.Y) * 0.5);
+            if (i == 0)
+                SampleLine(result, points[0], mid, stepsPerCurve);
+            else
+                SampleQuadratic(result, result[^1], current, mid, stepsPerCurve);
+        }
+
+        var end = points[^1];
+        if ((result[^1] - end).Length > 0.01)
+            SampleLine(result, result[^1], end, stepsPerCurve);
+        return result;
+    }
+
+    private static void SampleLine(List<Point> result, Point start, Point end, int steps)
+    {
+        for (var j = 1; j <= steps; j++)
+        {
+            var t = (double)j / steps;
+            result.Add(new Point(
+                start.X + (end.X - start.X) * t,
+                start.Y + (end.Y - start.Y) * t));
+        }
+    }
+
+    private static void SampleQuadratic(List<Point> result, Point start, Point control, Point end, int steps)
+    {
+        for (var j = 1; j <= steps; j++)
+        {
+            var t = (double)j / steps;
+            var u = 1 - t;
+            result.Add(new Point(
+                u * u * start.X + 2 * u * t * control.X + t * t * end.X,
+                u * u * start.Y + 2 * u * t * control.Y + t * t * end.Y));
+        }
+    }
+}
+
 internal sealed class DrawingWindow : Window
 {
     private enum Tool { Select, Rectangle, Ellipse, Arrow, Text, Freehand }
@@ -1606,7 +1715,7 @@ internal sealed class DrawingWindow : Window
         {
             if (_drawingItem.Kind == "freehand")
             {
-                if (_drawingItem.Points.Count == 0 || (_drawingItem.Points[^1] - p).Length > 1.0)
+                if (_drawingItem.Points.Count == 0 || (_drawingItem.Points[^1] - p).Length > 0.75)
                     _drawingItem.Points.Add(p);
             }
             else
@@ -1682,6 +1791,14 @@ internal sealed class DrawingWindow : Window
                     _selected = null;
                 }
             }
+            else if (_drawingItem.Kind == "freehand")
+            {
+                if (_drawingItem.Points.Count < 2 || DrawingFreehandGeometry.PathLength(_drawingItem.Points) < 4)
+                {
+                    _items.Remove(_drawingItem);
+                    _selected = null;
+                }
+            }
         }
         _isDrawing = false;
         _drawingItem = null;
@@ -1709,11 +1826,12 @@ internal sealed class DrawingWindow : Window
             case "freehand":
                 if (it.Points.Count == 0)
                     return new Rect(it.P1, it.P1);
-                var minX = it.Points.Min(p => p.X);
-                var minY = it.Points.Min(p => p.Y);
-                var maxX = it.Points.Max(p => p.X);
-                var maxY = it.Points.Max(p => p.Y);
-                return new Rect(minX, minY, maxX - minX, maxY - minY);
+                if (it.Points.Count == 1)
+                    return new Rect(it.Points[0], new Size(0, 0));
+                var geomBounds = DrawingFreehandGeometry.CreateSmoothGeometry(it.Points).Bounds;
+                return geomBounds.IsEmpty
+                    ? new Rect(it.Points[0], new Size(0, 0))
+                    : geomBounds;
         }
         return Rect.Empty;
     }
@@ -1752,10 +1870,16 @@ internal sealed class DrawingWindow : Window
             case "arrow":
                 return PointNearSegment(p, it.P1, it.P2, Math.Max(6, it.StrokeThickness + 4));
             case "freehand":
-                for (var i = 1; i < it.Points.Count; i++)
-                    if (PointNearSegment(p, it.Points[i - 1], it.Points[i], Math.Max(6, it.StrokeThickness + 2)))
+            {
+                var outline = DrawingFreehandGeometry.Flatten(it.Points);
+                var tol = Math.Max(6, it.StrokeThickness + 2);
+                for (var i = 1; i < outline.Count; i++)
+                {
+                    if (PointNearSegment(p, outline[i - 1], outline[i], tol))
                         return true;
+                }
                 return false;
+            }
         }
         return false;
     }
@@ -1871,7 +1995,7 @@ internal sealed class DrawingWindow : Window
             _canvas.Children.Add(preservedEditor);
         }
 
-        if (_selected != null && _items.Contains(_selected))
+        if (_selected != null && _items.Contains(_selected) && !_isDrawing)
             RenderSelectionAdorner(_selected);
     }
 
@@ -1973,19 +2097,16 @@ internal sealed class DrawingWindow : Window
             case "freehand":
             {
                 if (it.Points.Count < 2) return;
-                var poly = new Polyline
+                surface.Children.Add(new System.Windows.Shapes.Path
                 {
+                    Data = DrawingFreehandGeometry.CreateSmoothGeometry(it.Points),
                     Stroke = it.Stroke,
                     StrokeThickness = it.StrokeThickness,
                     StrokeLineJoin = PenLineJoin.Round,
                     StrokeStartLineCap = PenLineCap.Round,
                     StrokeEndLineCap = PenLineCap.Round,
-                    StrokeDashCap = PenLineCap.Round,
                     IsHitTestVisible = false,
-                };
-                foreach (var pt in it.Points)
-                    poly.Points.Add(pt);
-                surface.Children.Add(poly);
+                });
                 break;
             }
         }
@@ -2043,7 +2164,10 @@ internal sealed class DrawingWindow : Window
         var b = GetBounds(it);
         var accent = new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3));
 
-        if (it.Kind == "text" || it.Kind == "freehand")
+        if (it.Kind == "freehand")
+            return;
+
+        if (it.Kind == "text")
         {
             var underline = new Line
             {
@@ -3278,23 +3402,24 @@ internal sealed class ThemeSettingsWindow : Window
     {
         var stroke = DrawingWindow.ParseBrush(st.Stroke);
         var th = Math.Max(2, st.FreeThickness);
-        var poly = new Polyline
+        const int steps = 26;
+        var amp = Math.Clamp(th * 1.8, 5, 14);
+        var samples = new List<Point>(steps + 1);
+        for (var i = 0; i <= steps; i++)
         {
+            var t = (double)i / steps;
+            samples.Add(new Point(x + t * width, yTop + amp * Math.Sin(t * Math.PI * 3)));
+        }
+        c.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = DrawingFreehandGeometry.CreateSmoothGeometry(samples),
             Stroke = stroke,
             StrokeThickness = th,
             StrokeLineJoin = PenLineJoin.Round,
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
             IsHitTestVisible = false,
-        };
-        const int steps = 26;
-        var amp = Math.Clamp(th * 1.8, 5, 14);
-        for (var i = 0; i <= steps; i++)
-        {
-            var t = (double)i / steps;
-            poly.Points.Add(new Point(x + t * width, yTop + amp * Math.Sin(t * Math.PI * 3)));
-        }
-        c.Children.Add(poly);
+        });
     }
 
     private void CommitEditor()
