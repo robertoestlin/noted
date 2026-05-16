@@ -8,19 +8,263 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using ICSharpCode.AvalonEdit;
 using Microsoft.Win32;
+using Noted.Models;
 using Noted.Services;
+using Path = System.IO.Path;
 
 namespace Noted;
 
 public partial class MainWindow
 {
+    private const string DrawingsSubfolderName = "drawings";
+    private const string DrawingFileNamePrefix = "drawing-";
+
     private string? _lastDrawingThemeName;
 
     private void ShowDrawingDialog()
     {
         var dlg = new DrawingWindow(this, _lastDrawingThemeName) { Owner = this };
         dlg.Show();
+    }
+
+    private void ShowDrawingEditDialog(DrawingEditContext context, DrawingWorkspaceDto workspace)
+    {
+        var dlg = new DrawingWindow(this, _lastDrawingThemeName, workspace, context) { Owner = this };
+        dlg.Show();
+    }
+
+    /// <summary>Returns the active <see cref="TabDocument"/> for the current app mode (short-term tab, long-term
+    /// page, or documentation page). Used by the drawing dialog to decide where to insert.</summary>
+    private TabDocument? GetActiveEditorTabDocument()
+    {
+        return _appMode switch
+        {
+            AppMode.Documentation =>
+                _docCurrentNode != null && _docNodeDocs.TryGetValue(_docCurrentNode.Id, out var d) ? d : null,
+            AppMode.LongTerm => GetActiveLongTermTabDocument(),
+            _ => CurrentDoc(),
+        };
+    }
+
+    private string GetDrawingsFolderPath()
+        => Path.Combine(GetBackupImagesFolderPath(), DrawingsSubfolderName);
+
+    /// <summary>Called by <see cref="DrawingWindow"/> when the user clicks "Insert into editor" or "Save new version".
+    /// Writes the PNG (to the images folder or doc package zip) and the workspace JSON (to a sibling drawings folder
+    /// or doc package zip), then inserts/updates the image marker in the active editor.</summary>
+    internal bool InsertDrawingIntoActiveEditor(byte[] pngBytes, string workspaceJson,
+        DrawingEditContext? editContext)
+    {
+        var doc = editContext?.Doc ?? GetActiveEditorTabDocument();
+        if (doc == null)
+        {
+            MessageBox.Show(this,
+                "Open a tab or page before inserting a drawing.",
+                "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+
+        string baseName;
+        if (editContext != null)
+        {
+            baseName = editContext.BaseName;
+        }
+        else
+        {
+            baseName = DrawingFileNamePrefix + DateTime.Now.ToString("yyyy-MM-dd-HHmmss",
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        bool isDocPackage = editContext != null
+            ? !string.IsNullOrEmpty(editContext.PackageId)
+            : TryGetDocPackageIdForEditor(doc.Editor, out _);
+
+        try
+        {
+            string fileName;
+            if (isDocPackage)
+            {
+                if (!TryWriteDrawingIntoPackage(doc, editContext, baseName, pngBytes, workspaceJson, out fileName))
+                    return false;
+            }
+            else
+            {
+                if (!TryWriteDrawingIntoImagesFolder(editContext, baseName, pngBytes, workspaceJson, out fileName))
+                    return false;
+            }
+
+            int scalePercent = editContext?.ScalePercent ?? 100;
+            if (editContext != null)
+                UpdateExistingMarkerLine(doc.Editor, editContext, fileName, scalePercent);
+            else
+                InsertImageMarkerLine(doc.Editor, BuildInlineImageMarkerText(fileName, scalePercent));
+
+            doc.Editor.TextArea.TextView.Redraw();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Could not insert drawing:\n" + ex.Message,
+                "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private bool TryWriteDrawingIntoImagesFolder(DrawingEditContext? editContext, string baseName,
+        byte[] pngBytes, string workspaceJson, out string fileName)
+    {
+        var imagesFolder = GetBackupImagesFolderPath();
+        Directory.CreateDirectory(imagesFolder);
+        var drawingsFolder = GetDrawingsFolderPath();
+        Directory.CreateDirectory(drawingsFolder);
+
+        fileName = PickNextDrawingFileName(baseName, editContext != null,
+            candidate =>
+                File.Exists(Path.Combine(imagesFolder, candidate))
+                || File.Exists(Path.Combine(drawingsFolder, Path.ChangeExtension(candidate, ".json"))));
+
+        var imagePath = Path.Combine(imagesFolder, fileName);
+        File.WriteAllBytes(imagePath, pngBytes);
+
+        var workspacePath = Path.Combine(drawingsFolder, Path.ChangeExtension(fileName, ".json"));
+        File.WriteAllText(workspacePath, workspaceJson);
+
+        _inlineImageCache.Remove(fileName);
+        return true;
+    }
+
+    private bool TryWriteDrawingIntoPackage(TabDocument doc, DrawingEditContext? editContext, string baseName,
+        byte[] pngBytes, string workspaceJson, out string fileName)
+    {
+        fileName = string.Empty;
+        var packageId = editContext?.PackageId;
+        if (string.IsNullOrEmpty(packageId)
+            && !TryGetDocPackageIdForEditor(doc.Editor, out packageId))
+        {
+            return false;
+        }
+
+        var ownerPackage = _docPackages.FirstOrDefault(p => p.Id == packageId);
+        if (ownerPackage != null && _documentationService.FindPackagePath(_backupFolder, packageId!) == null)
+            _documentationService.SavePackage(_backupFolder, ownerPackage);
+
+        fileName = PickNextDrawingFileName(baseName, editContext != null,
+            candidate =>
+                _documentationService.ImageExists(_backupFolder, packageId!, candidate)
+                || _documentationService.DrawingExists(_backupFolder, packageId!,
+                    Path.ChangeExtension(candidate, ".json")));
+
+        _documentationService.WriteImage(_backupFolder, packageId!, fileName, pngBytes);
+        _documentationService.WriteDrawing(_backupFolder, packageId!,
+            Path.ChangeExtension(fileName, ".json"), workspaceJson);
+
+        _inlineImageCache.Remove(BuildDocPackageImageCacheKey(packageId!, fileName));
+        return true;
+    }
+
+    /// <summary>Picks <c>{base}.png</c>, or <c>{base}-1.png</c>, <c>{base}-2.png</c>, … so each save creates a fresh
+    /// versioned file. When <paramref name="alwaysVersion"/> is true (edit mode), <c>{base}.png</c> is skipped so the
+    /// original is never overwritten.</summary>
+    private static string PickNextDrawingFileName(string baseName, bool alwaysVersion,
+        Func<string, bool> existsPredicate)
+    {
+        if (!alwaysVersion)
+        {
+            var firstCandidate = baseName + ".png";
+            if (!existsPredicate(firstCandidate))
+                return firstCandidate;
+        }
+
+        for (int suffix = 1; suffix < 100000; suffix++)
+        {
+            var candidate = $"{baseName}-{suffix}.png";
+            if (!existsPredicate(candidate))
+                return candidate;
+        }
+
+        return $"{baseName}-{Guid.NewGuid():N}.png";
+    }
+
+    private static void UpdateExistingMarkerLine(TextEditor editor, DrawingEditContext context,
+        string newFileName, int scalePercent)
+    {
+        if (editor.Document == null)
+            return;
+
+        var replacement = BuildInlineImageMarkerText(newFileName, scalePercent);
+        var lineNumber = context.LineNumber;
+
+        if (lineNumber >= 1 && lineNumber <= editor.Document.LineCount)
+        {
+            var line = editor.Document.GetLineByNumber(lineNumber);
+            var lineText = editor.Document.GetText(line.Offset, line.Length);
+            if (TryGetInlineImageMarker(lineText, out var marker)
+                && string.Equals(marker.FileName, context.OriginalFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                editor.Document.Replace(line.Offset, line.Length, replacement);
+                return;
+            }
+        }
+
+        for (int i = 1; i <= editor.Document.LineCount; i++)
+        {
+            var line = editor.Document.GetLineByNumber(i);
+            var lineText = editor.Document.GetText(line.Offset, line.Length);
+            if (TryGetInlineImageMarker(lineText, out var marker)
+                && string.Equals(marker.FileName, context.OriginalFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                editor.Document.Replace(line.Offset, line.Length, replacement);
+                return;
+            }
+        }
+    }
+
+    /// <summary>Loads a drawing workspace JSON from disk (or doc package zip) given the marker filename it accompanies.
+    /// Returns null when no workspace was saved alongside this image.</summary>
+    internal DrawingWorkspaceDto? TryLoadDrawingWorkspace(TextEditor editor, string imageFileName)
+    {
+        var workspaceFileName = Path.ChangeExtension(imageFileName, ".json");
+        if (string.IsNullOrEmpty(workspaceFileName))
+            return null;
+
+        string? json;
+        if (TryGetDocPackageIdForEditor(editor, out var packageId))
+        {
+            json = _documentationService.TryReadDrawing(_backupFolder, packageId, workspaceFileName);
+        }
+        else
+        {
+            var workspacePath = Path.Combine(GetDrawingsFolderPath(), workspaceFileName);
+            json = File.Exists(workspacePath) ? File.ReadAllText(workspacePath) : null;
+        }
+
+        return DrawingWindow.TryDeserialize(json);
+    }
+
+    /// <summary>Extracts the version-less base from a drawing filename: <c>drawing-2026-05-16-143000-3.png</c> →
+    /// <c>drawing-2026-05-16-143000</c>. Files that don't match the <c>drawing-</c> convention return their stem
+    /// unchanged.</summary>
+    internal static string ExtractDrawingBaseName(string fileName)
+    {
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrEmpty(stem))
+            return stem;
+
+        var dashIndex = stem.LastIndexOf('-');
+        if (dashIndex > 0 && dashIndex < stem.Length - 1)
+        {
+            var tail = stem.AsSpan(dashIndex + 1);
+            bool allDigits = true;
+            foreach (var ch in tail)
+            {
+                if (!char.IsDigit(ch)) { allDigits = false; break; }
+            }
+            if (allDigits)
+                return stem.Substring(0, dashIndex);
+        }
+        return stem;
     }
 }
 
@@ -837,6 +1081,51 @@ internal static class DrawingFreehandGeometry
     }
 }
 
+// ---------------- Drawing workspace (serializable) ----------------
+
+/// <summary>JSON-serializable snapshot of a <see cref="DrawingWindow"/> canvas. Stored next to the PNG so the
+/// drawing can be re-opened and edited later via the "Edit drawing" context-menu action.</summary>
+internal sealed class DrawingWorkspaceDto
+{
+    public int Version { get; set; } = 1;
+    public double CanvasWidth { get; set; } = 2000;
+    public double CanvasHeight { get; set; } = 1400;
+    public List<DrawItemDto> Items { get; set; } = new();
+}
+
+internal sealed class DrawItemDto
+{
+    public string Kind { get; set; } = "rect";
+    public double P1X { get; set; }
+    public double P1Y { get; set; }
+    public double P2X { get; set; }
+    public double P2Y { get; set; }
+    public double CornerRadius { get; set; } = 14;
+    public string Fill { get; set; } = "Transparent";
+    public string Stroke { get; set; } = "#000000";
+    public double StrokeThickness { get; set; } = 2;
+    public string Text { get; set; } = "";
+    public double FontSize { get; set; } = 22;
+    public string FontFamilyName { get; set; } = "Segoe UI";
+    public string TextColor { get; set; } = "#000000";
+    public string ArrowHead { get; set; } = "Simple";
+    public List<double> PointsX { get; set; } = new();
+    public List<double> PointsY { get; set; } = new();
+    public int FreehandGroupId { get; set; }
+}
+
+/// <summary>Context passed to <see cref="DrawingWindow"/> when re-opening a previously-saved drawing via the
+/// "Edit drawing" context-menu action. Saving creates a new <c>-N</c> versioned file next to the original.</summary>
+internal sealed class DrawingEditContext
+{
+    public required TabDocument Doc { get; init; }
+    public required string OriginalFileName { get; init; }
+    public required string BaseName { get; init; }
+    public required int LineNumber { get; init; }
+    public int ScalePercent { get; init; } = 100;
+    public string? PackageId { get; init; }
+}
+
 internal sealed class DrawingWindow : Window
 {
     private enum Tool { Select, Rectangle, Ellipse, Arrow, Text, Freehand }
@@ -973,13 +1262,29 @@ internal sealed class DrawingWindow : Window
 
     private const double HandleSize = 8;
     private const double HitPadding = 6;
+    private const double CanvasWidth = 2000;
+    private const double CanvasHeight = 1400;
+    private const double InsertPaddingPx = 20;
 
     private readonly MainWindow _host;
+    private readonly DrawingEditContext? _editContext;
+    private ScrollViewer? _canvasScroll;
+    private bool _isPanning;
+    private Point _panStartScreen;
+    private double _panStartHOffset;
+    private double _panStartVOffset;
 
     public DrawingWindow(MainWindow host, string? preferredThemeName)
+        : this(host, preferredThemeName, null, null)
+    {
+    }
+
+    public DrawingWindow(MainWindow host, string? preferredThemeName,
+        DrawingWorkspaceDto? initialWorkspace, DrawingEditContext? editContext)
     {
         _host = host;
-        Title = "Drawing";
+        _editContext = editContext;
+        Title = editContext == null ? "Drawing" : $"Edit drawing — {editContext.BaseName}";
         Width = 1280;
         Height = 860;
         MinWidth = 780;
@@ -1078,6 +1383,10 @@ internal sealed class DrawingWindow : Window
         btnSave.Click += (_, _) => SavePng();
         actions.Children.Add(btnSave);
 
+        var btnInsert = MakeButton(_editContext == null ? "Insert into editor" : "Save new version");
+        btnInsert.Click += (_, _) => InsertIntoEditor();
+        actions.Children.Add(btnInsert);
+
         topBar.Children.Add(actions);
         root.Children.Add(topBar);
 
@@ -1103,19 +1412,20 @@ internal sealed class DrawingWindow : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Background = Brushes.White,
         };
+        _canvasScroll = scroll;
         var canvasHost = new Grid();
         _canvas = new Canvas
         {
             Background = Brushes.White,
-            Width = 2400,
-            Height = 1600,
+            Width = CanvasWidth,
+            Height = CanvasHeight,
             ClipToBounds = true,
         };
         _overlay = new Canvas
         {
             Background = null,
-            Width = 2400,
-            Height = 1600,
+            Width = CanvasWidth,
+            Height = CanvasHeight,
             IsHitTestVisible = false,
         };
         canvasHost.Children.Add(_canvas);
@@ -1131,9 +1441,17 @@ internal sealed class DrawingWindow : Window
         _canvas.MouseLeftButtonUp += Canvas_MouseUp;
         _canvas.MouseRightButtonDown += (_, _) => SelectTool(Tool.Select);
 
+        scroll.PreviewMouseDown += CanvasScroll_PreviewMouseDown;
+        scroll.PreviewMouseMove += CanvasScroll_PreviewMouseMove;
+        scroll.PreviewMouseUp += CanvasScroll_PreviewMouseUp;
+        scroll.LostMouseCapture += (_, _) => _isPanning = false;
+
         PreviewKeyDown += DrawingWindow_PreviewKeyDown;
 
         SelectTool(Tool.Select);
+
+        if (initialWorkspace != null)
+            LoadWorkspace(initialWorkspace);
 
         Closed += (_, _) => _host.PersistLastDrawingThemeName(_activeTheme.Name);
     }
@@ -2152,6 +2470,38 @@ internal sealed class DrawingWindow : Window
         Redraw();
     }
 
+    // ---------------- Middle-mouse pan ----------------
+
+    private void CanvasScroll_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle || _canvasScroll == null) return;
+        _isPanning = true;
+        _panStartScreen = e.GetPosition(_canvasScroll);
+        _panStartHOffset = _canvasScroll.HorizontalOffset;
+        _panStartVOffset = _canvasScroll.VerticalOffset;
+        _canvasScroll.CaptureMouse();
+        Mouse.OverrideCursor = Cursors.ScrollAll;
+        e.Handled = true;
+    }
+
+    private void CanvasScroll_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_isPanning || _canvasScroll == null) return;
+        var p = e.GetPosition(_canvasScroll);
+        _canvasScroll.ScrollToHorizontalOffset(_panStartHOffset - (p.X - _panStartScreen.X));
+        _canvasScroll.ScrollToVerticalOffset(_panStartVOffset - (p.Y - _panStartScreen.Y));
+        e.Handled = true;
+    }
+
+    private void CanvasScroll_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isPanning || e.ChangedButton != MouseButton.Middle) return;
+        _isPanning = false;
+        _canvasScroll?.ReleaseMouseCapture();
+        Mouse.OverrideCursor = null;
+        e.Handled = true;
+    }
+
     // ---------------- Bounds / hit-test / handles ----------------
 
     private static Rect GetBounds(DrawItem it)
@@ -2828,6 +3178,52 @@ internal sealed class DrawingWindow : Window
         };
         if (dlg.ShowDialog(this) != true) return;
 
+        if (!TryRenderPngBytes(out var bytes, out var error))
+        {
+            MessageBox.Show(this, error, "Save failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        try
+        {
+            File.WriteAllBytes(dlg.FileName, bytes);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Save failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void InsertIntoEditor()
+    {
+        if (_items.Count == 0)
+        {
+            MessageBox.Show(this, "Nothing to insert — the canvas is empty.",
+                "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryRenderPngBytes(out var pngBytes, out var error))
+        {
+            MessageBox.Show(this, error, "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var workspaceJson = JsonSerializer.Serialize(BuildWorkspaceDto(),
+            new JsonSerializerOptions { WriteIndented = true });
+
+        var ok = _host.InsertDrawingIntoActiveEditor(pngBytes, workspaceJson, _editContext);
+        if (!ok)
+            return;
+
+        Close();
+    }
+
+    private bool TryRenderPngBytes(out byte[] bytes, out string error)
+    {
+        bytes = Array.Empty<byte>();
+        error = string.Empty;
+
         var prevSelection = _selection.ToHashSet();
         ClearSelection();
         Redraw();
@@ -2838,14 +3234,26 @@ internal sealed class DrawingWindow : Window
             _canvas.Arrange(new Rect(size));
             var rtb = new RenderTargetBitmap((int)size.Width, (int)size.Height, 96, 96, PixelFormats.Pbgra32);
             rtb.Render(_canvas);
+
+            BitmapSource source = rtb;
+            var crop = ComputeContentCropRect(size);
+            if (crop.Width > 0 && crop.Height > 0
+                && (crop.Width < (int)size.Width || crop.Height < (int)size.Height))
+            {
+                source = new CroppedBitmap(rtb, crop);
+            }
+
             var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(rtb));
-            using var fs = File.OpenWrite(dlg.FileName);
-            encoder.Save(fs);
+            encoder.Frames.Add(BitmapFrame.Create(source));
+            using var ms = new MemoryStream();
+            encoder.Save(ms);
+            bytes = ms.ToArray();
+            return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Save failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            error = ex.Message;
+            return false;
         }
         finally
         {
@@ -2854,6 +3262,138 @@ internal sealed class DrawingWindow : Window
                 _selection.Add(it);
             UpdatePropertyPanelForSelection();
             Redraw();
+        }
+    }
+
+    /// <summary>Union of item bounding boxes, inflated by stroke thickness + a small padding, clamped to the canvas.
+    /// Used to crop the rendered PNG so it isn't padded with empty whitespace from the working area.</summary>
+    private Int32Rect ComputeContentCropRect(Size canvasSize)
+    {
+        if (_items.Count == 0)
+            return new Int32Rect(0, 0, (int)canvasSize.Width, (int)canvasSize.Height);
+
+        double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
+        double maxX = double.NegativeInfinity, maxY = double.NegativeInfinity;
+        double maxStroke = 0;
+        bool anyValid = false;
+        foreach (var it in _items)
+        {
+            var b = GetBounds(it);
+            if (b.IsEmpty) continue;
+            anyValid = true;
+            if (b.Left < minX) minX = b.Left;
+            if (b.Top < minY) minY = b.Top;
+            if (b.Right > maxX) maxX = b.Right;
+            if (b.Bottom > maxY) maxY = b.Bottom;
+            if (it.StrokeThickness > maxStroke) maxStroke = it.StrokeThickness;
+        }
+        if (!anyValid)
+            return new Int32Rect(0, 0, (int)canvasSize.Width, (int)canvasSize.Height);
+
+        double pad = InsertPaddingPx + maxStroke / 2 + 2;
+        double left = Math.Max(0, Math.Floor(minX - pad));
+        double top = Math.Max(0, Math.Floor(minY - pad));
+        double right = Math.Min(canvasSize.Width, Math.Ceiling(maxX + pad));
+        double bottom = Math.Min(canvasSize.Height, Math.Ceiling(maxY + pad));
+        int w = (int)Math.Max(1, right - left);
+        int h = (int)Math.Max(1, bottom - top);
+        return new Int32Rect((int)left, (int)top, w, h);
+    }
+
+    private DrawingWorkspaceDto BuildWorkspaceDto()
+    {
+        var dto = new DrawingWorkspaceDto
+        {
+            CanvasWidth = _canvas.Width,
+            CanvasHeight = _canvas.Height,
+        };
+        foreach (var it in _items)
+            dto.Items.Add(ItemToDto(it));
+        return dto;
+    }
+
+    private static DrawItemDto ItemToDto(DrawItem it)
+    {
+        var dto = new DrawItemDto
+        {
+            Kind = it.Kind,
+            P1X = it.P1.X,
+            P1Y = it.P1.Y,
+            P2X = it.P2.X,
+            P2Y = it.P2.Y,
+            CornerRadius = it.CornerRadius,
+            Fill = BrushToHex(it.Fill),
+            Stroke = BrushToHex(it.Stroke),
+            StrokeThickness = it.StrokeThickness,
+            Text = it.Text,
+            FontSize = it.FontSize,
+            FontFamilyName = it.FontFamily.Source,
+            TextColor = BrushToHex(it.TextColor),
+            ArrowHead = it.ArrowHead.ToString(),
+            FreehandGroupId = it.FreehandGroupId,
+        };
+        foreach (var p in it.Points)
+        {
+            dto.PointsX.Add(p.X);
+            dto.PointsY.Add(p.Y);
+        }
+        return dto;
+    }
+
+    private static DrawItem ItemFromDto(DrawItemDto dto)
+    {
+        var item = new DrawItem
+        {
+            Kind = string.IsNullOrEmpty(dto.Kind) ? "rect" : dto.Kind,
+            P1 = new Point(dto.P1X, dto.P1Y),
+            P2 = new Point(dto.P2X, dto.P2Y),
+            CornerRadius = dto.CornerRadius,
+            Fill = ParseBrush(dto.Fill),
+            Stroke = ParseBrush(dto.Stroke),
+            StrokeThickness = dto.StrokeThickness,
+            Text = dto.Text ?? "",
+            FontSize = dto.FontSize > 0 ? dto.FontSize : 22,
+            FontFamily = new FontFamily(string.IsNullOrWhiteSpace(dto.FontFamilyName) ? "Segoe UI" : dto.FontFamilyName),
+            TextColor = ParseBrush(dto.TextColor),
+            ArrowHead = Enum.TryParse<ArrowHeadStyle>(dto.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple,
+            FreehandGroupId = dto.FreehandGroupId,
+        };
+        int pointCount = Math.Min(dto.PointsX.Count, dto.PointsY.Count);
+        for (int i = 0; i < pointCount; i++)
+            item.Points.Add(new Point(dto.PointsX[i], dto.PointsY[i]));
+        return item;
+    }
+
+    private void LoadWorkspace(DrawingWorkspaceDto workspace)
+    {
+        _items.Clear();
+        _selection.Clear();
+        _undoStack.Clear();
+        _redoStack.Clear();
+        int maxGroupId = 0;
+        foreach (var dto in workspace.Items)
+        {
+            var item = ItemFromDto(dto);
+            _items.Add(item);
+            if (item.FreehandGroupId > maxGroupId)
+                maxGroupId = item.FreehandGroupId;
+        }
+        _nextFreehandGroupId = maxGroupId + 1;
+        UpdatePropertyPanelForSelection();
+        Redraw();
+    }
+
+    public static DrawingWorkspaceDto? TryDeserialize(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<DrawingWorkspaceDto>(json);
+        }
+        catch
+        {
+            return null;
         }
     }
 }

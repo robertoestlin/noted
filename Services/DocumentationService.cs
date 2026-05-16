@@ -32,6 +32,7 @@ public sealed class DocumentationService
     public const string ZipPackageEntryName = "package.json";
     public const string ZipPagesFolder = "pages/";
     public const string ZipImagesFolder = "images/";
+    public const string ZipDrawingsFolder = "drawings/";
 
     static readonly JsonSerializerOptions WriteOptions = new()
     {
@@ -264,6 +265,66 @@ public sealed class DocumentationService
         using var zip = new ZipArchive(fs, ZipArchiveMode.Update);
         zip.GetEntry(ZipImagesFolder + fileName)?.Delete();
         WriteZipEntryBytes(zip, ZipImagesFolder + fileName, bytes);
+    }
+
+    /// <summary>Reads a drawing workspace JSON stored under <c>drawings/{fileName}</c> inside the package zip.</summary>
+    public string? TryReadDrawing(string backupFolder, string packageId, string fileName)
+    {
+        if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
+            return null;
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
+            return null;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            var entry = zip.GetEntry(ZipDrawingsFolder + fileName);
+            if (entry == null)
+                return null;
+            using var entryStream = entry.Open();
+            using var reader = new StreamReader(entryStream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>True when the package zip contains a drawing entry with the given filename.</summary>
+    public bool DrawingExists(string backupFolder, string packageId, string fileName)
+    {
+        if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
+            return false;
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
+            return false;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            return zip.GetEntry(ZipDrawingsFolder + fileName) != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Writes (or overwrites) <paramref name="json"/> as <c>drawings/{fileName}</c> inside the package zip.</summary>
+    public void WriteDrawing(string backupFolder, string packageId, string fileName, string json)
+    {
+        if (string.IsNullOrEmpty(packageId) || string.IsNullOrEmpty(fileName))
+            return;
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        using var zip = new ZipArchive(fs, ZipArchiveMode.Update);
+        zip.GetEntry(ZipDrawingsFolder + fileName)?.Delete();
+        WriteZipEntryText(zip, ZipDrawingsFolder + fileName, json);
     }
 
     static bool IsLegacyIndexFile(string filePath)

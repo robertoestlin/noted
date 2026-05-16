@@ -2338,6 +2338,8 @@ public partial class MainWindow : Window
         resetImageSizeItem.Click += (_, _) => ResetInlineImageSizeToOriginal(editor);
         var openImageFolderItem = new MenuItem { Header = "Show Image in Folder" };
         openImageFolderItem.Click += (_, _) => ShowInlineImageInFolder(editor);
+        var editDrawingItem = new MenuItem { Header = "Edit drawing" };
+        editDrawingItem.Click += (_, _) => EditDrawingAtCaret(editor);
 
         var sepSpreadsheet = new Separator();
         var addSpreadsheetItem = new MenuItem { Header = "Add spreadsheet" };
@@ -2361,6 +2363,7 @@ public partial class MainWindow : Window
         menu.Items.Add(sepAfterTransfer);
         menu.Items.Add(resetImageSizeItem);
         menu.Items.Add(openImageFolderItem);
+        menu.Items.Add(editDrawingItem);
         var sepBeforeLineAssign = new Separator();
         menu.Items.Add(sepBeforeLineAssign);
         menu.Items.Add(assignLineOwnerItem);
@@ -2412,6 +2415,9 @@ public partial class MainWindow : Window
             clearLineOwnerItem.IsEnabled = showSelectionAndLineMenus && doc != null;
             resetImageSizeItem.IsEnabled = CanResetInlineImageSizeAtCaret(editor);
             openImageFolderItem.IsEnabled = CanShowInlineImageInFolderAtCaret(editor);
+            bool canEditDrawing = CanEditDrawingAtCaret(editor);
+            editDrawingItem.Visibility = canEditDrawing ? Visibility.Visible : Visibility.Collapsed;
+            editDrawingItem.IsEnabled = canEditDrawing;
 
             var isBulletLine = doc != null && TryGetBulletLineAtCaret(editor, out _, out _, out _);
             bulletInfoItem.IsEnabled = isBulletLine;
@@ -2636,6 +2642,70 @@ public partial class MainWindow : Window
 
         var imagePath = Path.Combine(GetBackupImagesFolderPath(), marker.FileName);
         return File.Exists(imagePath);
+    }
+
+    private bool CanEditDrawingAtCaret(TextEditor editor)
+    {
+        if (!TryGetInlineImageMarkerAtCaret(editor, out _, out var marker))
+            return false;
+
+        var workspaceFileName = Path.ChangeExtension(marker.FileName, ".json");
+        if (string.IsNullOrEmpty(workspaceFileName))
+            return false;
+
+        if (TryGetDocPackageIdForEditor(editor, out var packageId))
+            return _documentationService.DrawingExists(_backupFolder, packageId, workspaceFileName);
+
+        var workspacePath = Path.Combine(GetDrawingsFolderPath(), workspaceFileName);
+        return File.Exists(workspacePath);
+    }
+
+    private void EditDrawingAtCaret(TextEditor editor)
+    {
+        if (!TryGetInlineImageMarkerAtCaret(editor, out var lineNumber, out var marker))
+            return;
+
+        var workspace = TryLoadDrawingWorkspace(editor, marker.FileName);
+        if (workspace == null)
+        {
+            MessageBox.Show(this,
+                "No saved drawing workspace was found for this image.",
+                "Edit drawing", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var doc = FindEditorDocAcrossModes(editor);
+        if (doc == null)
+            return;
+
+        TryGetDocPackageIdForEditor(editor, out var packageId);
+
+        var context = new DrawingEditContext
+        {
+            Doc = doc,
+            OriginalFileName = marker.FileName,
+            BaseName = ExtractDrawingBaseName(marker.FileName),
+            ScalePercent = marker.ScalePercent,
+            LineNumber = lineNumber,
+            PackageId = packageId,
+        };
+        ShowDrawingEditDialog(context, workspace);
+    }
+
+    private TabDocument? FindEditorDocAcrossModes(TextEditor editor)
+    {
+        var d = FindDocByEditor(editor);
+        if (d != null) return d;
+
+        foreach (var ltDoc in _ltPageDocs.Values)
+            if (ReferenceEquals(ltDoc.Editor, editor))
+                return ltDoc;
+
+        foreach (var docDoc in _docNodeDocs.Values)
+            if (ReferenceEquals(docDoc.Editor, editor))
+                return docDoc;
+
+        return null;
     }
 
     private void ShowInlineImageInFolder(TextEditor editor)
