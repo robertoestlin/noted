@@ -1589,7 +1589,7 @@ internal sealed class DrawingWindow : Window
         _canvas.MouseLeftButtonDown += Canvas_MouseDown;
         _canvas.MouseMove += Canvas_MouseMove;
         _canvas.MouseLeftButtonUp += Canvas_MouseUp;
-        _canvas.MouseRightButtonDown += (_, _) => SelectTool(Tool.Select);
+        _canvas.MouseRightButtonDown += Canvas_MouseRightButtonDown;
 
         scroll.PreviewMouseDown += CanvasScroll_PreviewMouseDown;
         scroll.PreviewMouseMove += CanvasScroll_PreviewMouseMove;
@@ -2629,6 +2629,51 @@ internal sealed class DrawingWindow : Window
     }
 
     // ---------------- Canvas interaction ----------------
+
+    private void ApplyDefaultSizeToShape(DrawItem item)
+    {
+        _host.GetDrawingShapeDefaults(item.Kind, out var stdW, out var stdH);
+        var p1 = item.P1;
+        var dx = item.P2.X - p1.X;
+        var dy = item.P2.Y - p1.Y;
+        var signX = Math.Abs(dx) < 0.001 ? 1 : Math.Sign(dx);
+        var signY = Math.Abs(dy) < 0.001 ? 1 : Math.Sign(dy);
+        item.P2 = new Point(p1.X + signX * stdW, p1.Y + signY * stdH);
+    }
+
+    private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" })
+        {
+            CommitTextEdit();
+            var item = _drawingItem;
+            ApplyDefaultSizeToShape(item);
+            if (_canvas.IsMouseCaptured)
+                _canvas.ReleaseMouseCapture();
+            _isDrawing = false;
+            _drawingItem = null;
+            _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
+            SetSingleSelection(item);
+            Redraw();
+            StartTextEdit(item, takeSnapshot: false);
+            e.Handled = true;
+
+            // The trailing right-button-up would otherwise land on the
+            // newly-added TextBox and open its built-in context menu,
+            // which steals keyboard focus and kills the caret before
+            // the user can type. Swallow that one event.
+            MouseButtonEventHandler? upHandler = null;
+            upHandler = (_, ev) =>
+            {
+                _canvas.PreviewMouseRightButtonUp -= upHandler!;
+                ev.Handled = true;
+            };
+            _canvas.PreviewMouseRightButtonUp += upHandler;
+            return;
+        }
+
+        SelectTool(Tool.Select);
+    }
 
     private void Canvas_MouseDown(object sender, MouseButtonEventArgs e)
     {

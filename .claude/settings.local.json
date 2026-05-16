@@ -21,7 +21,9 @@
       "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug -t:Compile)",
       "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug -t:Compile)",
       "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build Noted.csproj -c Debug -v q)",
-      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug -nologo)"
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug -nologo)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug -v q)",
+      "Bash('/mnt/c/Program Files/dotnet/dotnet.exe' build /mnt/c/git/Noted/Noted.csproj -c Debug -v quiet)"
     ]
   }
 }
