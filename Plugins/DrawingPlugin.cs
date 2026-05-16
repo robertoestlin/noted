@@ -999,18 +999,19 @@ internal sealed class DrawingWindow : Window
         DockPanel.SetDock(topBar, Dock.Top);
 
         var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
-        _btnSelect = MakeToolButton("Select", "Select (S)", Tool.Select);
-        _btnRect = MakeToolButton("Rectangle", "Rectangle (R)", Tool.Rectangle);
-        _btnEllipse = MakeToolButton("Circle", "Circle (C)", Tool.Ellipse);
-        _btnArrow = MakeToolButton("Arrow", "Arrow (A)", Tool.Arrow);
-        _btnText = MakeToolButton("Text", "Text (T)", Tool.Text);
-        _btnFreehand = MakeToolButton("Freeform", "Freeform (F)", Tool.Freehand);
+        _btnFreehand = MakeIconToolButton("Freeform (F)", Tool.Freehand);
+        _btnSelect = MakeIconToolButton("Select (S)", Tool.Select);
+        _btnRect = MakeIconToolButton("Rectangle (R)", Tool.Rectangle);
+        _btnEllipse = MakeIconToolButton("Circle (C)", Tool.Ellipse);
+        _btnArrow = MakeIconToolButton("Arrow (A)", Tool.Arrow);
+        _btnText = MakeIconToolButton("Text (T)", Tool.Text);
         tools.Children.Add(_btnSelect);
         tools.Children.Add(_btnRect);
         tools.Children.Add(_btnEllipse);
         tools.Children.Add(_btnArrow);
-        tools.Children.Add(_btnText);
         tools.Children.Add(_btnFreehand);
+        tools.Children.Add(_btnText);
+        RefreshToolButtonIcons();
         topBar.Children.Add(tools);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
@@ -1160,6 +1161,7 @@ internal sealed class DrawingWindow : Window
         ApplyToolProfileFromTheme(theme, ThemeToolSource());
         if (_propertyPanel != null)
             SyncPropertyControlsFromCurrent();
+        RefreshToolButtonIcons();
     }
 
     private Tool MapDrawKindToTool(string kind) => kind switch
@@ -1219,6 +1221,7 @@ internal sealed class DrawingWindow : Window
             RefreshThemeCombo();
             _host.PersistLastDrawingThemeName(_activeTheme.Name);
         }
+        RefreshToolButtonIcons();
     }
 
     private void RefreshDrawingPalettes()
@@ -1433,6 +1436,156 @@ internal sealed class DrawingWindow : Window
         b.ToolTip = tooltip;
         b.Click += (_, _) => SelectTool(tool);
         return b;
+    }
+
+    private Button MakeIconToolButton(string tooltip, Tool tool)
+    {
+        var b = new Button
+        {
+            Margin = new Thickness(2),
+            Padding = new Thickness(6, 4, 6, 4),
+            MinWidth = 38,
+            MinHeight = 32,
+            ToolTip = tooltip,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        b.Click += (_, _) => SelectTool(tool);
+        return b;
+    }
+
+    private void RefreshToolButtonIcons()
+    {
+        if (_btnSelect == null) return;
+        _activeTheme.EnsureToolStyles();
+        _btnFreehand.Content = BuildFreeformIcon(ParseBrush(_activeTheme.Freehand!.Stroke));
+        _btnSelect.Content = BuildPointerIcon();
+        _btnRect.Content = BuildRectIcon(
+            ParseBrush(_activeTheme.Rectangle!.Stroke),
+            ParseBrush(_activeTheme.Rectangle!.Fill));
+        _btnEllipse.Content = BuildEllipseIcon(
+            ParseBrush(_activeTheme.Ellipse!.Stroke),
+            ParseBrush(_activeTheme.Ellipse!.Fill));
+        _btnArrow.Content = BuildArrowIcon(ParseBrush(_activeTheme.Arrow!.Stroke));
+        _btnText.Content = BuildTextIcon(ParseBrush(_activeTheme.Text!.TextColor));
+    }
+
+    private static FrameworkElement BuildPointerIcon()
+    {
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 1,1 L 1,15 L 5,11 L 8,17 L 10,16 L 7,10 L 12,10 Z"),
+            Fill = new SolidColorBrush(Color.FromRgb(0x2F, 0x2F, 0x2F)),
+            Stroke = Brushes.White,
+            StrokeThickness = 0.7,
+            StrokeLineJoin = PenLineJoin.Round,
+            Width = 18,
+            Height = 18,
+            SnapsToDevicePixels = true,
+        };
+        return WrapIcon(path);
+    }
+
+    private static FrameworkElement BuildFreeformIcon(Brush stroke)
+    {
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 1,12 C 3,3 7,17 10,10 S 17,3 19,11"),
+            Stroke = stroke,
+            StrokeThickness = 2.4,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = null,
+            Width = 20,
+            Height = 18,
+            SnapsToDevicePixels = true,
+        };
+        return WrapIcon(path);
+    }
+
+    private static FrameworkElement BuildRectIcon(Brush stroke, Brush fill)
+    {
+        var r = new System.Windows.Shapes.Rectangle
+        {
+            Width = 18,
+            Height = 14,
+            RadiusX = 2,
+            RadiusY = 2,
+            Stroke = stroke,
+            StrokeThickness = 2,
+            Fill = HasVisibleFill(fill) ? fill : Brushes.Transparent,
+            SnapsToDevicePixels = true,
+        };
+        return WrapIcon(r);
+    }
+
+    private static FrameworkElement BuildEllipseIcon(Brush stroke, Brush fill)
+    {
+        var e = new System.Windows.Shapes.Ellipse
+        {
+            Width = 18,
+            Height = 16,
+            Stroke = stroke,
+            StrokeThickness = 2,
+            Fill = HasVisibleFill(fill) ? fill : Brushes.Transparent,
+        };
+        return WrapIcon(e);
+    }
+
+    private static FrameworkElement BuildArrowIcon(Brush stroke)
+    {
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 1,9 L 17,9 M 12,4 L 17,9 L 12,14"),
+            Stroke = stroke,
+            StrokeThickness = 2,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+            Fill = null,
+            Width = 20,
+            Height = 18,
+            SnapsToDevicePixels = true,
+        };
+        return WrapIcon(path);
+    }
+
+    private static FrameworkElement BuildTextIcon(Brush color)
+    {
+        return new TextBlock
+        {
+            Text = "T",
+            Foreground = color,
+            FontWeight = FontWeights.Bold,
+            FontSize = 16,
+            Width = 18,
+            Height = 20,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+    }
+
+    private static FrameworkElement WrapIcon(FrameworkElement inner)
+    {
+        var grid = new Grid
+        {
+            Width = 22,
+            Height = 20,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        inner.HorizontalAlignment = HorizontalAlignment.Center;
+        inner.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(inner);
+        return grid;
+    }
+
+    private static bool HasVisibleFill(Brush? brush)
+    {
+        if (brush is SolidColorBrush sb)
+            return sb.Color.A > 0;
+        return brush != null;
     }
 
     private static Button MakeButton(string text)
