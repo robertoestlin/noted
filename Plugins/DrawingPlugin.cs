@@ -270,6 +270,7 @@ public partial class MainWindow
 
 internal sealed class ThemeToolStyle
 {
+    public bool Enabled { get; set; }
     public string Fill { get; set; } = "Transparent";
     public string Stroke { get; set; } = "#000000";
     public string TextColor { get; set; } = "#000000";
@@ -282,6 +283,7 @@ internal sealed class ThemeToolStyle
 
     public ThemeToolStyle Clone() => new()
     {
+        Enabled = Enabled,
         Fill = Fill,
         Stroke = Stroke,
         TextColor = TextColor,
@@ -309,9 +311,24 @@ internal sealed class ThemeToolStyle
 
 internal sealed class DrawingTheme
 {
+    public const int VariantSlotCount = 3;
+
     public string Name { get; set; } = "Default";
 
-    /// <summary>Per-tool defaults. Null in JSON means "use legacy root fields" until <see cref="EnsureToolStyles"/> runs.</summary>
+    // 3-slot variant lists per tool kind. Each ThemeToolStyle carries its own Enabled flag.
+    public List<ThemeToolStyle> Rectangles { get; set; } = new();
+    public List<ThemeToolStyle> Ellipses { get; set; } = new();
+    public List<ThemeToolStyle> Arrows { get; set; } = new();
+    public List<ThemeToolStyle> Texts { get; set; } = new();
+    public List<ThemeToolStyle> Freehands { get; set; } = new();
+
+    public int ActiveRectangleIndex { get; set; }
+    public int ActiveEllipseIndex { get; set; }
+    public int ActiveArrowIndex { get; set; }
+    public int ActiveTextIndex { get; set; }
+    public int ActiveFreehandIndex { get; set; }
+
+    // Legacy singletons retained for read-only back-compat from older theme files.
     public ThemeToolStyle? Rectangle { get; set; }
     public ThemeToolStyle? Ellipse { get; set; }
     public ThemeToolStyle? Arrow { get; set; }
@@ -331,21 +348,111 @@ internal sealed class DrawingTheme
 
     public void EnsureToolStyles()
     {
-        if (Rectangle != null && Ellipse != null && Arrow != null && Text != null && Freehand != null)
-            return;
+        // Step 1: ensure legacy singletons are populated from legacy root for very old theme files.
         var seed = ThemeToolStyle.FromLegacyRoot(this);
         Rectangle ??= seed.Clone();
         Ellipse ??= seed.Clone();
         Arrow ??= seed.Clone();
         Text ??= seed.Clone();
         Freehand ??= seed.Clone();
+
+        // Step 2: ensure each kind has exactly VariantSlotCount entries. If empty (older file format),
+        // seed from the legacy singleton with variant 0 enabled, others disabled.
+        EnsureVariantList(Rectangles, Rectangle!);
+        EnsureVariantList(Ellipses, Ellipse!);
+        EnsureVariantList(Arrows, Arrow!);
+        EnsureVariantList(Texts, Text!);
+        EnsureVariantList(Freehands, Freehand!);
+
+        ActiveRectangleIndex = ClampActiveIndex(Rectangles, ActiveRectangleIndex);
+        ActiveEllipseIndex = ClampActiveIndex(Ellipses, ActiveEllipseIndex);
+        ActiveArrowIndex = ClampActiveIndex(Arrows, ActiveArrowIndex);
+        ActiveTextIndex = ClampActiveIndex(Texts, ActiveTextIndex);
+        ActiveFreehandIndex = ClampActiveIndex(Freehands, ActiveFreehandIndex);
     }
 
-    /// <summary>Copies per-tool values back to legacy root properties for JSON consumers that only read flat fields.</summary>
+    private static void EnsureVariantList(List<ThemeToolStyle> list, ThemeToolStyle primary)
+    {
+        if (list.Count == 0)
+        {
+            var first = primary.Clone();
+            first.Enabled = true;
+            list.Add(first);
+        }
+        while (list.Count < VariantSlotCount)
+        {
+            var clone = list[0].Clone();
+            clone.Enabled = false;
+            list.Add(clone);
+        }
+        if (list.Count > VariantSlotCount)
+            list.RemoveRange(VariantSlotCount, list.Count - VariantSlotCount);
+    }
+
+    private static int ClampActiveIndex(List<ThemeToolStyle> list, int idx)
+    {
+        if (list.Count == 0) return 0;
+        if (idx < 0 || idx >= list.Count) idx = 0;
+        if (list[idx].Enabled) return idx;
+        for (var i = 0; i < list.Count; i++)
+            if (list[i].Enabled) return i;
+        return 0;
+    }
+
+    public List<ThemeToolStyle> GetVariants(string kind) => kind switch
+    {
+        "rect" => Rectangles,
+        "ellipse" => Ellipses,
+        "arrow" => Arrows,
+        "text" => Texts,
+        "freehand" => Freehands,
+        _ => Rectangles,
+    };
+
+    public int GetActiveIndex(string kind) => kind switch
+    {
+        "rect" => ActiveRectangleIndex,
+        "ellipse" => ActiveEllipseIndex,
+        "arrow" => ActiveArrowIndex,
+        "text" => ActiveTextIndex,
+        "freehand" => ActiveFreehandIndex,
+        _ => 0,
+    };
+
+    public void SetActiveIndex(string kind, int idx)
+    {
+        switch (kind)
+        {
+            case "rect": ActiveRectangleIndex = idx; break;
+            case "ellipse": ActiveEllipseIndex = idx; break;
+            case "arrow": ActiveArrowIndex = idx; break;
+            case "text": ActiveTextIndex = idx; break;
+            case "freehand": ActiveFreehandIndex = idx; break;
+        }
+    }
+
+    public ThemeToolStyle GetActiveVariant(string kind)
+    {
+        EnsureToolStyles();
+        var variants = GetVariants(kind);
+        var idx = ClampActiveIndex(variants, GetActiveIndex(kind));
+        SetActiveIndex(kind, idx);
+        return variants[idx];
+    }
+
+    /// <summary>Copies the active variant of each kind back to the legacy singletons + flat root fields,
+    /// so older JSON consumers (and any code still reading <see cref="Rectangle"/>) keep working.</summary>
     public void MirrorLegacyFromProfiles()
     {
         EnsureToolStyles();
-        var r = Rectangle!;
+        var r = GetActiveVariant("rect");
+        var a = GetActiveVariant("arrow");
+        var f = GetActiveVariant("freehand");
+        Rectangle = r.Clone();
+        Ellipse = GetActiveVariant("ellipse").Clone();
+        Arrow = a.Clone();
+        Text = GetActiveVariant("text").Clone();
+        Freehand = f.Clone();
         Fill = r.Fill;
         Stroke = r.Stroke;
         TextColor = r.TextColor;
@@ -353,8 +460,8 @@ internal sealed class DrawingTheme
         FontSize = r.FontSize;
         Thickness = r.Thickness;
         CornerRadius = r.CornerRadius;
-        ArrowHead = Arrow!.ArrowHead;
-        FreeThickness = Freehand!.FreeThickness;
+        ArrowHead = a.ArrowHead;
+        FreeThickness = f.FreeThickness;
     }
 
     public DrawingTheme Clone() => new()
@@ -374,6 +481,16 @@ internal sealed class DrawingTheme
         Arrow = Arrow?.Clone(),
         Text = Text?.Clone(),
         Freehand = Freehand?.Clone(),
+        Rectangles = Rectangles.Select(s => s.Clone()).ToList(),
+        Ellipses = Ellipses.Select(s => s.Clone()).ToList(),
+        Arrows = Arrows.Select(s => s.Clone()).ToList(),
+        Texts = Texts.Select(s => s.Clone()).ToList(),
+        Freehands = Freehands.Select(s => s.Clone()).ToList(),
+        ActiveRectangleIndex = ActiveRectangleIndex,
+        ActiveEllipseIndex = ActiveEllipseIndex,
+        ActiveArrowIndex = ActiveArrowIndex,
+        ActiveTextIndex = ActiveTextIndex,
+        ActiveFreehandIndex = ActiveFreehandIndex,
     };
 }
 
@@ -1233,7 +1350,9 @@ internal sealed class DrawingWindow : Window
     private TextBlock? _fontSizeHeader;
     private TextBlock? _arrowStyleHeader;
 
-    private readonly Button _btnSelect, _btnRect, _btnEllipse, _btnArrow, _btnText, _btnFreehand;
+    private StackPanel? _toolsPanel;
+
+    private sealed record ToolBarTag(Tool Tool, string? Kind, int VariantIndex);
 
     private readonly HashSet<DrawItem> _selection = new();
     private List<DrawItem>? _clipboard;
@@ -1307,7 +1426,7 @@ internal sealed class DrawingWindow : Window
             ?? _themes.FirstOrDefault()
             ?? new DrawingTheme();
         _activeTheme.EnsureToolStyles();
-        ApplyTheme(_activeTheme, syncUiOnly: false);
+        ApplyToolProfileFromTheme(_activeTheme, _tool);
 
         var root = new DockPanel();
 
@@ -1319,21 +1438,8 @@ internal sealed class DrawingWindow : Window
         };
         DockPanel.SetDock(topBar, Dock.Top);
 
-        var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
-        _btnFreehand = MakeIconToolButton("Freeform (F)", Tool.Freehand);
-        _btnSelect = MakeIconToolButton("Select (S)", Tool.Select);
-        _btnRect = MakeIconToolButton("Rectangle (R)", Tool.Rectangle);
-        _btnEllipse = MakeIconToolButton("Circle (C)", Tool.Ellipse);
-        _btnArrow = MakeIconToolButton("Arrow (A)", Tool.Arrow);
-        _btnText = MakeIconToolButton("Text (T)", Tool.Text);
-        tools.Children.Add(_btnSelect);
-        tools.Children.Add(_btnRect);
-        tools.Children.Add(_btnEllipse);
-        tools.Children.Add(_btnArrow);
-        tools.Children.Add(_btnFreehand);
-        tools.Children.Add(_btnText);
-        RefreshToolButtonIcons();
-        topBar.Children.Add(tools);
+        _toolsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
+        topBar.Children.Add(_toolsPanel);
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 4, 6, 4) };
         DockPanel.SetDock(actions, Dock.Right);
@@ -1413,6 +1519,7 @@ internal sealed class DrawingWindow : Window
         _propertyPanel = new StackPanel { Margin = new Thickness(10) };
         _leftScroll.Content = _propertyPanel;
         BuildPropertyPanel();
+        ApplyTheme(_activeTheme, syncUiOnly: false);
         root.Children.Add(_leftScroll);
 
         // ---- Center canvas ----
@@ -1464,7 +1571,11 @@ internal sealed class DrawingWindow : Window
         if (initialWorkspace != null)
             LoadWorkspace(initialWorkspace);
 
-        Closed += (_, _) => _host.PersistLastDrawingThemeName(_activeTheme.Name);
+        Closed += (_, _) =>
+        {
+            _host.PersistLastDrawingThemeName(_activeTheme.Name);
+            DrawingThemeStore.Save(_themes);
+        };
     }
 
     private static DrawingTheme? ResolveThemeByName(List<DrawingTheme> themes, string? name)
@@ -1498,7 +1609,7 @@ internal sealed class DrawingWindow : Window
             SyncPropertyControlsFromCurrent();
             UpdatePropertyPanelVisibility();
         }
-        RefreshToolButtonIcons();
+        RefreshToolBar();
     }
 
     private Tool MapDrawKindToTool(string kind) => kind switch
@@ -1509,6 +1620,16 @@ internal sealed class DrawingWindow : Window
         "text" => Tool.Text,
         "freehand" => Tool.Freehand,
         _ => Tool.Rectangle,
+    };
+
+    private static string ToolToKind(Tool tool) => tool switch
+    {
+        Tool.Rectangle => "rect",
+        Tool.Ellipse => "ellipse",
+        Tool.Arrow => "arrow",
+        Tool.Text => "text",
+        Tool.Freehand => "freehand",
+        _ => "rect",
     };
 
     private Tool ThemeToolSource()
@@ -1523,15 +1644,7 @@ internal sealed class DrawingWindow : Window
     private void ApplyToolProfileFromTheme(DrawingTheme theme, Tool profileTool)
     {
         theme.EnsureToolStyles();
-        var st = profileTool switch
-        {
-            Tool.Rectangle => theme.Rectangle!,
-            Tool.Ellipse => theme.Ellipse!,
-            Tool.Arrow => theme.Arrow!,
-            Tool.Text => theme.Text!,
-            Tool.Freehand => theme.Freehand!,
-            _ => theme.Rectangle!,
-        };
+        var st = theme.GetActiveVariant(ToolToKind(profileTool));
         _fill = ParseBrush(st.Fill);
         _stroke = ParseBrush(st.Stroke);
         _textColor = ParseBrush(st.TextColor);
@@ -1556,9 +1669,13 @@ internal sealed class DrawingWindow : Window
             _themes = dlg.Themes;
             DrawingThemeStore.Save(_themes);
             RefreshThemeCombo();
+            ApplyTheme(_activeTheme, syncUiOnly: false);
             _host.PersistLastDrawingThemeName(_activeTheme.Name);
         }
-        RefreshToolButtonIcons();
+        else
+        {
+            RefreshToolBar();
+        }
     }
 
     private void RefreshDrawingPalettes()
@@ -1737,6 +1854,8 @@ internal sealed class DrawingWindow : Window
 
     private void UpdatePropertyPanelVisibility()
     {
+        if (_leftScroll != null)
+            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
         var kind = PropertyPanelContextKind();
         if (kind == null)
         {
@@ -1853,7 +1972,7 @@ internal sealed class DrawingWindow : Window
         return b;
     }
 
-    private Button MakeIconToolButton(string tooltip, Tool tool)
+    private static Button MakeToolbarButton(string tooltip, ToolBarTag tag, FrameworkElement icon, Action onClick)
     {
         var b = new Button
         {
@@ -1862,27 +1981,89 @@ internal sealed class DrawingWindow : Window
             MinWidth = 38,
             MinHeight = 32,
             ToolTip = tooltip,
+            Tag = tag,
+            Content = icon,
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
         };
-        b.Click += (_, _) => SelectTool(tool);
+        b.Click += (_, _) => onClick();
         return b;
     }
 
-    private void RefreshToolButtonIcons()
+    private void RefreshToolBar()
     {
-        if (_btnSelect == null) return;
+        if (_toolsPanel == null) return;
+        _toolsPanel.Children.Clear();
         _activeTheme.EnsureToolStyles();
-        _btnFreehand.Content = BuildFreeformIcon(ParseBrush(_activeTheme.Freehand!.Stroke));
-        _btnSelect.Content = BuildPointerIcon();
-        _btnRect.Content = BuildRectIcon(
-            ParseBrush(_activeTheme.Rectangle!.Stroke),
-            ParseBrush(_activeTheme.Rectangle!.Fill));
-        _btnEllipse.Content = BuildEllipseIcon(
-            ParseBrush(_activeTheme.Ellipse!.Stroke),
-            ParseBrush(_activeTheme.Ellipse!.Fill));
-        _btnArrow.Content = BuildArrowIcon(ParseBrush(_activeTheme.Arrow!.Stroke));
-        _btnText.Content = BuildTextIcon(ParseBrush(_activeTheme.Text!.TextColor));
+
+        _toolsPanel.Children.Add(MakeToolbarButton(
+            "Select (S)",
+            new ToolBarTag(Tool.Select, null, 0),
+            BuildPointerIcon(),
+            () => SelectTool(Tool.Select)));
+
+        AddVariantToolButtons(Tool.Rectangle, "rect", "Rectangle (R)");
+        AddVariantToolButtons(Tool.Ellipse, "ellipse", "Circle (C)");
+        AddVariantToolButtons(Tool.Arrow, "arrow", "Arrow (A)");
+        AddVariantToolButtons(Tool.Freehand, "freehand", "Freeform (F)");
+        AddVariantToolButtons(Tool.Text, "text", "Text (T)");
+
+        UpdateToolBarHighlight();
+    }
+
+    private void AddVariantToolButtons(Tool tool, string kind, string tooltipBase)
+    {
+        if (_toolsPanel == null) return;
+        var variants = _activeTheme.GetVariants(kind);
+        var enabledIndexes = new List<int>();
+        for (var i = 0; i < variants.Count; i++)
+        {
+            if (variants[i].Enabled)
+                enabledIndexes.Add(i);
+        }
+        if (enabledIndexes.Count == 0)
+            enabledIndexes.Add(_activeTheme.GetActiveIndex(kind));
+
+        var multi = enabledIndexes.Count > 1;
+        foreach (var index in enabledIndexes)
+        {
+            var st = variants[index];
+            var tooltip = multi ? $"{tooltipBase} — variant {index + 1}" : tooltipBase;
+            var captured = index;
+            _toolsPanel.Children.Add(MakeToolbarButton(
+                tooltip,
+                new ToolBarTag(tool, kind, captured),
+                BuildToolIcon(tool, st),
+                () => SelectTool(tool, captured)));
+        }
+    }
+
+    private static FrameworkElement BuildToolIcon(Tool tool, ThemeToolStyle st) => tool switch
+    {
+        Tool.Rectangle => BuildRectIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill)),
+        Tool.Ellipse => BuildEllipseIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill)),
+        Tool.Arrow => BuildArrowIcon(ParseBrush(st.Stroke)),
+        Tool.Text => BuildTextIcon(ParseBrush(st.TextColor)),
+        Tool.Freehand => BuildFreeformIcon(ParseBrush(st.Stroke)),
+        _ => BuildPointerIcon(),
+    };
+
+    private void UpdateToolBarHighlight()
+    {
+        if (_toolsPanel == null) return;
+        var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
+        var brushOff = SystemColors.ControlBrush;
+        foreach (var child in _toolsPanel.Children)
+        {
+            if (child is not Button btn || btn.Tag is not ToolBarTag tag) continue;
+            if (tag.Tool == Tool.Select)
+                btn.Background = _tool == Tool.Select ? brushOn : brushOff;
+            else
+            {
+                var activeIdx = _activeTheme.GetActiveIndex(tag.Kind!);
+                btn.Background = _tool == tag.Tool && activeIdx == tag.VariantIndex ? brushOn : brushOff;
+            }
+        }
     }
 
     private static FrameworkElement BuildPointerIcon()
@@ -2047,21 +2228,26 @@ internal sealed class DrawingWindow : Window
             Margin = new Thickness(0, 0, 0, 4),
         };
 
-    private void SelectTool(Tool tool)
+    private void SelectTool(Tool tool, int? variantIndex = null)
     {
         if (tool == Tool.Freehand && _tool != Tool.Freehand)
             _currentFreehandGroupId = _nextFreehandGroupId++;
 
+        if (variantIndex.HasValue && tool != Tool.Select)
+        {
+            _activeTheme.EnsureToolStyles();
+            var kind = ToolToKind(tool);
+            var variants = _activeTheme.GetVariants(kind);
+            if (variantIndex.Value >= 0 && variantIndex.Value < variants.Count && variants[variantIndex.Value].Enabled)
+            {
+                _activeTheme.SetActiveIndex(kind, variantIndex.Value);
+                _host.PersistLastDrawingThemeName(_activeTheme.Name);
+            }
+        }
+
         _tool = tool;
-        var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
-        Brush brushOff = SystemColors.ControlBrush;
-        _btnSelect.Background = tool == Tool.Select ? brushOn : brushOff;
-        _btnRect.Background = tool == Tool.Rectangle ? brushOn : brushOff;
-        _btnEllipse.Background = tool == Tool.Ellipse ? brushOn : brushOff;
-        _btnArrow.Background = tool == Tool.Arrow ? brushOn : brushOff;
-        _btnText.Background = tool == Tool.Text ? brushOn : brushOff;
-        _btnFreehand.Background = tool == Tool.Freehand ? brushOn : brushOff;
-        Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
+        UpdateToolBarHighlight();
+        _canvas.Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
         if (_tool == Tool.Select)
         {
             if (SelectionPropertySource() != null)
@@ -2188,7 +2374,7 @@ internal sealed class DrawingWindow : Window
     private void UpdatePropertyPanelForSelection()
     {
         if (_leftScroll != null)
-            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null;
+            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
         if (SelectionPropertySource() != null)
             SyncFromSelected();
         UpdatePropertyPanelVisibility();
@@ -2512,19 +2698,19 @@ internal sealed class DrawingWindow : Window
         if (_tool == Tool.Select && PrimarySelection != null && !IsMultiSelection)
         {
             var h = GetHandleAt(PrimarySelection, p);
-            Cursor = h >= 0 ? CursorForHandle(PrimarySelection, h) : (HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow);
+            _canvas.Cursor = h >= 0 ? CursorForHandle(PrimarySelection, h) : (HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow);
         }
         else if (_tool == Tool.Select && HasSelection)
         {
-            Cursor = HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow;
+            _canvas.Cursor = HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow;
         }
         else if (_tool != Tool.Select)
         {
-            Cursor = Cursors.Cross;
+            _canvas.Cursor = Cursors.Cross;
         }
         else
         {
-            Cursor = Cursors.Arrow;
+            _canvas.Cursor = Cursors.Arrow;
         }
     }
 
@@ -3844,6 +4030,201 @@ internal sealed class CompactColorPicker : Border
 
 // ---------------- Theme settings dialog ----------------
 
+internal static class DrawingThemePreview
+{
+    public static FontFamily SafeFont(string name)
+    {
+        try { return new FontFamily(name); }
+        catch { return new FontFamily("Segoe UI"); }
+    }
+
+    public static void AppendCaption(Canvas c, double left, double top, string text)
+    {
+        var tb = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            Foreground = Brushes.DimGray,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(tb, left);
+        Canvas.SetTop(tb, top);
+        c.Children.Add(tb);
+    }
+
+    public static void AppendRect(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
+    {
+        var fill = DrawingWindow.ParseBrush(st.Fill);
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var radius = Math.Min(Math.Max(0, st.CornerRadius), Math.Min(w, h) / 2);
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Width = w,
+            Height = h,
+            Fill = fill,
+            Stroke = stroke,
+            StrokeThickness = st.Thickness,
+            RadiusX = radius,
+            RadiusY = radius,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(rect, x);
+        Canvas.SetTop(rect, y);
+        c.Children.Add(rect);
+        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
+        var label = new TextBlock
+        {
+            Text = "Aa",
+            FontSize = fs,
+            FontFamily = SafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            TextAlignment = TextAlignment.Center,
+            IsHitTestVisible = false,
+        };
+        label.Measure(new Size(w - 8, h - 8));
+        Canvas.SetLeft(label, x + 4);
+        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
+        c.Children.Add(label);
+    }
+
+    public static void AppendEllipse(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
+    {
+        var el = new Ellipse
+        {
+            Width = w,
+            Height = h,
+            Fill = DrawingWindow.ParseBrush(st.Fill),
+            Stroke = DrawingWindow.ParseBrush(st.Stroke),
+            StrokeThickness = st.Thickness,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(el, x);
+        Canvas.SetTop(el, y);
+        c.Children.Add(el);
+        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
+        var innerW = Math.Max(0, w * 0.70710678118654752 - 8);
+        var label = new TextBlock
+        {
+            Text = "Aa",
+            FontSize = fs,
+            FontFamily = SafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            TextAlignment = TextAlignment.Center,
+            IsHitTestVisible = false,
+        };
+        label.Measure(new Size(innerW, h - 8));
+        Canvas.SetLeft(label, x + (w - innerW) / 2);
+        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
+        c.Children.Add(label);
+    }
+
+    public static void AppendArrow(Canvas c, ThemeToolStyle st, Point p1, Point p2)
+    {
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var th = Math.Max(1.5, st.Thickness);
+        c.Children.Add(new Line
+        {
+            X1 = p1.X,
+            Y1 = p1.Y,
+            X2 = p2.X,
+            Y2 = p2.Y,
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        });
+        AddArrowHeads(c, p1, p2, stroke, th, st.ArrowHead);
+    }
+
+    private static void AddArrowHeads(Canvas c, Point p1, Point p2, Brush stroke, double thickness, string arrowHead)
+    {
+        if (string.Equals(arrowHead, "None", StringComparison.OrdinalIgnoreCase)) return;
+        var headSize = Math.Max(8, thickness * 3.5);
+        if (string.Equals(arrowHead, "Double", StringComparison.OrdinalIgnoreCase))
+        {
+            DrawArrowHead(c, p2, p1, stroke, thickness, headSize);
+            DrawArrowHead(c, p1, p2, stroke, thickness, headSize);
+            return;
+        }
+        DrawArrowHead(c, p1, p2, stroke, thickness, headSize);
+    }
+
+    private static void DrawArrowHead(Canvas c, Point from, Point to, Brush stroke, double thickness, double size)
+    {
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        if (len <= 0.001) return;
+        var ux = dx / len;
+        var uy = dy / len;
+        var angle = Math.PI / 7;
+        var cos = Math.Cos(angle);
+        var sin = Math.Sin(angle);
+        var leftX = to.X - size * (ux * cos + uy * sin);
+        var leftY = to.Y - size * (uy * cos - ux * sin);
+        var rightX = to.X - size * (ux * cos - uy * sin);
+        var rightY = to.Y - size * (uy * cos + ux * sin);
+        AddHeadLine(c, to.X, to.Y, leftX, leftY, stroke, thickness);
+        AddHeadLine(c, to.X, to.Y, rightX, rightY, stroke, thickness);
+    }
+
+    private static void AddHeadLine(Canvas c, double x1, double y1, double x2, double y2, Brush stroke, double th)
+    {
+        c.Children.Add(new Line
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        });
+    }
+
+    public static void AppendText(Canvas c, ThemeToolStyle st, double x, double y, string sample)
+    {
+        var tb = new TextBlock
+        {
+            Text = sample,
+            FontSize = Math.Clamp(st.FontSize * 0.55, 8, 28),
+            FontFamily = SafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(tb, x);
+        Canvas.SetTop(tb, y);
+        c.Children.Add(tb);
+    }
+
+    public static void AppendFreehand(Canvas c, ThemeToolStyle st, double x, double yTop, double width)
+    {
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var th = Math.Max(2, st.FreeThickness);
+        const int steps = 26;
+        var amp = Math.Clamp(th * 1.8, 5, 14);
+        var samples = new List<Point>(steps + 1);
+        for (var i = 0; i <= steps; i++)
+        {
+            var t = (double)i / steps;
+            samples.Add(new Point(x + t * width, yTop + amp * Math.Sin(t * Math.PI * 3)));
+        }
+        c.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = DrawingFreehandGeometry.CreateSmoothGeometry(samples),
+            Stroke = stroke,
+            StrokeThickness = th,
+            StrokeLineJoin = PenLineJoin.Round,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            IsHitTestVisible = false,
+        });
+    }
+}
+
 internal sealed class ThemeSettingsWindow : Window
 {
     public List<DrawingTheme> Themes { get; private set; }
@@ -3855,20 +4236,18 @@ internal sealed class ThemeSettingsWindow : Window
 
     private TextBox? _nameBox;
 
-    private ComboBox? _rFill, _rStroke, _rTextColor, _rFont;
-    private TextBox? _rFontSize, _rThickness, _rCorner;
+    private sealed class VariantUi
+    {
+        public CheckBox? Enabled;
+        public ComboBox? Fill, Stroke, TextColor, Font, ArrowHead;
+        public TextBox? FontSize, Thickness, Corner, FreeThickness;
+    }
 
-    private ComboBox? _eFill, _eStroke, _eTextColor, _eFont;
-    private TextBox? _eFontSize, _eThickness;
-
-    private ComboBox? _aStroke, _aArrow;
-    private TextBox? _aThickness;
-
-    private ComboBox? _tTextColor, _tFont;
-    private TextBox? _tFontSize, _tThickness;
-
-    private ComboBox? _fStroke;
-    private TextBox? _fFreeThickness;
+    private readonly VariantUi[] _rect = { new(), new(), new() };
+    private readonly VariantUi[] _ell = { new(), new(), new() };
+    private readonly VariantUi[] _arr = { new(), new(), new() };
+    private readonly VariantUi[] _txt = { new(), new(), new() };
+    private readonly VariantUi[] _free = { new(), new(), new() };
 
     private Canvas? _previewCanvas;
 
@@ -3883,8 +4262,8 @@ internal sealed class ThemeSettingsWindow : Window
     {
         Themes = existing.Select(t => t.Clone()).ToList();
         Title = "Drawing Themes";
-        Width = 1000;
-        Height = 560;
+        Width = 1240;
+        Height = 760;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         var root = new DockPanel { Margin = new Thickness(10) };
@@ -3987,23 +4366,31 @@ internal sealed class ThemeSettingsWindow : Window
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
         };
-        var previewStack = new StackPanel();
-        previewStack.Children.Add(EditorLabel("Live preview"));
-        previewStack.Children.Add(new TextBlock
+        var previewStack = new DockPanel();
+        var previewHeader = new StackPanel();
+        DockPanel.SetDock(previewHeader, Dock.Top);
+        previewHeader.Children.Add(EditorLabel("Live preview"));
+        previewHeader.Children.Add(new TextBlock
         {
-            Text = "All tools use the values on the left.",
+            Text = "Shows every enabled variant for the selected theme.",
             FontSize = 11,
             Foreground = Brushes.Gray,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 8),
         });
+        previewStack.Children.Add(previewHeader);
         _previewCanvas = new Canvas
         {
             Width = 220,
-            Height = 286,
             Background = Brushes.White,
         };
-        previewStack.Children.Add(_previewCanvas);
+        var previewScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = _previewCanvas,
+        };
+        previewStack.Children.Add(previewScroll);
         previewWrap.Child = previewStack;
         Grid.SetColumn(previewWrap, 1);
         centerGrid.Children.Add(previewWrap);
@@ -4042,170 +4429,203 @@ internal sealed class ThemeSettingsWindow : Window
         customColorsRow.Children.Add(btnCustomColors);
         customColorsRow.Children.Add(new TextBlock
         {
-            Text = "Colors are listed by palette (Color Palettes plugin).",
+            Text = "Up to 3 variants per tool. Untick a variant to hide it from the toolbar.",
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = Brushes.Gray,
             FontSize = 11,
         });
         _editor.Children.Add(customColorsRow);
 
-        var tabs = new TabControl { MinHeight = 380, Margin = new Thickness(0, 4, 0, 0) };
-
-        var spR = new StackPanel { Margin = new Thickness(8) };
-        spR.Children.Add(EditorLabel("Fill"));
-        _rFill = MakeColorCombo();
-        spR.Children.Add(MakeThemeColorRow(_rFill));
-        spR.Children.Add(EditorLabel("Stroke / frame"));
-        _rStroke = MakeColorCombo();
-        spR.Children.Add(MakeThemeColorRow(_rStroke));
-        spR.Children.Add(EditorLabel("Text color (rectangle label)"));
-        _rTextColor = MakeColorCombo();
-        spR.Children.Add(MakeThemeColorRow(_rTextColor));
-        spR.Children.Add(EditorLabel("Font family"));
-        _rFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var n in FontChoices) _rFont.Items.Add(n);
-        spR.Children.Add(_rFont);
-        spR.Children.Add(EditorLabel("Font size"));
-        _rFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spR.Children.Add(_rFontSize);
-        spR.Children.Add(EditorLabel("Stroke thickness"));
-        _rThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spR.Children.Add(_rThickness);
-        spR.Children.Add(EditorLabel("Corner radius"));
-        _rCorner = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spR.Children.Add(_rCorner);
-        tabs.Items.Add(new TabItem { Header = "Rectangle", Content = spR });
-
-        var spE = new StackPanel { Margin = new Thickness(8) };
-        spE.Children.Add(EditorLabel("Fill"));
-        _eFill = MakeColorCombo();
-        spE.Children.Add(MakeThemeColorRow(_eFill));
-        spE.Children.Add(EditorLabel("Stroke / frame"));
-        _eStroke = MakeColorCombo();
-        spE.Children.Add(MakeThemeColorRow(_eStroke));
-        spE.Children.Add(EditorLabel("Text color (circle label)"));
-        _eTextColor = MakeColorCombo();
-        spE.Children.Add(MakeThemeColorRow(_eTextColor));
-        spE.Children.Add(EditorLabel("Font family"));
-        _eFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var n in FontChoices) _eFont.Items.Add(n);
-        spE.Children.Add(_eFont);
-        spE.Children.Add(EditorLabel("Font size"));
-        _eFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spE.Children.Add(_eFontSize);
-        spE.Children.Add(EditorLabel("Stroke thickness"));
-        _eThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spE.Children.Add(_eThickness);
-        tabs.Items.Add(new TabItem { Header = "Circle", Content = spE });
-
-        var spA = new StackPanel { Margin = new Thickness(8) };
-        spA.Children.Add(EditorLabel("Stroke"));
-        _aStroke = MakeColorCombo();
-        spA.Children.Add(MakeThemeColorRow(_aStroke));
-        spA.Children.Add(EditorLabel("Thickness"));
-        _aThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spA.Children.Add(_aThickness);
-        spA.Children.Add(EditorLabel("Arrow head"));
-        _aArrow = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        _aArrow.Items.Add("None");
-        _aArrow.Items.Add("Simple");
-        _aArrow.Items.Add("Double");
-        spA.Children.Add(_aArrow);
-        tabs.Items.Add(new TabItem { Header = "Arrow", Content = spA });
-
-        var spT = new StackPanel { Margin = new Thickness(8) };
-        spT.Children.Add(EditorLabel("Text color"));
-        _tTextColor = MakeColorCombo();
-        spT.Children.Add(MakeThemeColorRow(_tTextColor));
-        spT.Children.Add(EditorLabel("Font family"));
-        _tFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
-        foreach (var n in FontChoices) _tFont.Items.Add(n);
-        spT.Children.Add(_tFont);
-        spT.Children.Add(EditorLabel("Font size"));
-        _tFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spT.Children.Add(_tFontSize);
-        spT.Children.Add(EditorLabel("Thickness (outline)"));
-        _tThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spT.Children.Add(_tThickness);
-        tabs.Items.Add(new TabItem { Header = "Text", Content = spT });
-
-        var spF = new StackPanel { Margin = new Thickness(8) };
-        spF.Children.Add(EditorLabel("Stroke"));
-        _fStroke = MakeColorCombo();
-        spF.Children.Add(MakeThemeColorRow(_fStroke));
-        spF.Children.Add(EditorLabel("Free draw thickness"));
-        _fFreeThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-        spF.Children.Add(_fFreeThickness);
-        tabs.Items.Add(new TabItem { Header = "Freeform", Content = spF });
-
+        var tabs = new TabControl { MinHeight = 460, Margin = new Thickness(0, 4, 0, 0) };
+        tabs.Items.Add(new TabItem { Header = "Rectangle", Content = BuildVariantsRow(_rect, "rect") });
+        tabs.Items.Add(new TabItem { Header = "Circle", Content = BuildVariantsRow(_ell, "ellipse") });
+        tabs.Items.Add(new TabItem { Header = "Arrow", Content = BuildVariantsRow(_arr, "arrow") });
+        tabs.Items.Add(new TabItem { Header = "Text", Content = BuildVariantsRow(_txt, "text") });
+        tabs.Items.Add(new TabItem { Header = "Freeform", Content = BuildVariantsRow(_free, "freehand") });
         _editor.Children.Add(tabs);
+    }
 
-        void R(Action<ThemeToolStyle> set)
+    private UIElement BuildVariantsRow(VariantUi[] uiArr, string kind)
+    {
+        var grid = new Grid { Margin = new Thickness(4) };
+        for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
         {
-            if (_suppressUpdate || _editing == null) return;
-            _editing.EnsureToolStyles();
-            set(_editing.Rectangle!);
-            RebuildThemePreview();
+            var card = BuildVariantCard(uiArr, i, kind);
+            Grid.SetColumn(card, i);
+            grid.Children.Add(card);
+        }
+        return new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = grid,
+        };
+    }
+
+    private FrameworkElement BuildVariantCard(VariantUi[] uiArr, int index, string kind)
+    {
+        var ui = uiArr[index];
+        var sp = new StackPanel { Margin = new Thickness(2) };
+        sp.Children.Add(new TextBlock
+        {
+            Text = $"Variant {index + 1}",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        ui.Enabled = new CheckBox { Content = "Enabled", Margin = new Thickness(0, 0, 0, 8) };
+        ui.Enabled.Checked += (_, _) => OnEnabledChanged(kind, index, true);
+        ui.Enabled.Unchecked += (_, _) => OnEnabledChanged(kind, index, false);
+        sp.Children.Add(ui.Enabled);
+
+        switch (kind)
+        {
+            case "rect":
+                BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: true, kind, index);
+                break;
+            case "ellipse":
+                BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: false, kind, index);
+                break;
+            case "arrow":
+                sp.Children.Add(EditorLabel("Stroke"));
+                ui.Stroke = MakeColorCombo();
+                sp.Children.Add(MakeThemeColorRow(ui.Stroke));
+                sp.Children.Add(EditorLabel("Thickness"));
+                ui.Thickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+                sp.Children.Add(ui.Thickness);
+                sp.Children.Add(EditorLabel("Arrow head"));
+                ui.ArrowHead = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+                ui.ArrowHead.Items.Add("None");
+                ui.ArrowHead.Items.Add("Simple");
+                ui.ArrowHead.Items.Add("Double");
+                sp.Children.Add(ui.ArrowHead);
+
+                ui.Stroke.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(ui.Stroke!));
+                ui.Thickness.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Thickness!.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+                ui.ArrowHead.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.ArrowHead = ui.ArrowHead!.SelectedItem as string ?? "Simple");
+                break;
+            case "text":
+                sp.Children.Add(EditorLabel("Text color"));
+                ui.TextColor = MakeColorCombo();
+                sp.Children.Add(MakeThemeColorRow(ui.TextColor));
+                sp.Children.Add(EditorLabel("Font family"));
+                ui.Font = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+                foreach (var n in FontChoices) ui.Font.Items.Add(n);
+                sp.Children.Add(ui.Font);
+                sp.Children.Add(EditorLabel("Font size"));
+                ui.FontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+                sp.Children.Add(ui.FontSize);
+                sp.Children.Add(EditorLabel("Thickness (outline)"));
+                ui.Thickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+                sp.Children.Add(ui.Thickness);
+
+                ui.TextColor.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(ui.TextColor!));
+                ui.Font.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.FontFamilyName = ui.Font!.SelectedItem as string ?? s.FontFamilyName);
+                ui.FontSize.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.FontSize!.Text, out var v)) s.FontSize = Math.Max(4, v); });
+                ui.Thickness.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Thickness!.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+                break;
+            case "freehand":
+                sp.Children.Add(EditorLabel("Stroke"));
+                ui.Stroke = MakeColorCombo();
+                sp.Children.Add(MakeThemeColorRow(ui.Stroke));
+                sp.Children.Add(EditorLabel("Free draw thickness"));
+                ui.FreeThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+                sp.Children.Add(ui.FreeThickness);
+
+                ui.Stroke.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(ui.Stroke!));
+                ui.FreeThickness.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.FreeThickness!.Text, out var v)) s.FreeThickness = Math.Max(1, v); });
+                break;
         }
 
-        void E(Action<ThemeToolStyle> set)
+        return new Border
         {
-            if (_suppressUpdate || _editing == null) return;
-            _editing.EnsureToolStyles();
-            set(_editing.Ellipse!);
-            RebuildThemePreview();
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xDD, 0xDD, 0xDD)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(4),
+            Padding = new Thickness(8),
+            Child = sp,
+        };
+    }
+
+    private void BuildShapeFields(StackPanel sp, VariantUi ui, bool includeFill, bool includeText, bool includeCorner, string kind, int index)
+    {
+        if (includeFill)
+        {
+            sp.Children.Add(EditorLabel("Fill"));
+            ui.Fill = MakeColorCombo();
+            sp.Children.Add(MakeThemeColorRow(ui.Fill));
+            ui.Fill.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(ui.Fill!));
         }
 
-        void A(Action<ThemeToolStyle> set)
+        sp.Children.Add(EditorLabel("Stroke / frame"));
+        ui.Stroke = MakeColorCombo();
+        sp.Children.Add(MakeThemeColorRow(ui.Stroke));
+        ui.Stroke.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(ui.Stroke!));
+
+        if (includeText)
         {
-            if (_suppressUpdate || _editing == null) return;
-            _editing.EnsureToolStyles();
-            set(_editing.Arrow!);
-            RebuildThemePreview();
+            sp.Children.Add(EditorLabel("Text color"));
+            ui.TextColor = MakeColorCombo();
+            sp.Children.Add(MakeThemeColorRow(ui.TextColor));
+            sp.Children.Add(EditorLabel("Font family"));
+            ui.Font = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+            foreach (var n in FontChoices) ui.Font.Items.Add(n);
+            sp.Children.Add(ui.Font);
+            sp.Children.Add(EditorLabel("Font size"));
+            ui.FontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+            sp.Children.Add(ui.FontSize);
+            ui.TextColor.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(ui.TextColor!));
+            ui.Font.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.FontFamilyName = ui.Font!.SelectedItem as string ?? s.FontFamilyName);
+            ui.FontSize.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.FontSize!.Text, out var v)) s.FontSize = Math.Max(4, v); });
         }
 
-        void Tx(Action<ThemeToolStyle> set)
+        sp.Children.Add(EditorLabel("Stroke thickness"));
+        ui.Thickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        sp.Children.Add(ui.Thickness);
+        ui.Thickness.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Thickness!.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
+
+        if (includeCorner)
         {
-            if (_suppressUpdate || _editing == null) return;
-            _editing.EnsureToolStyles();
-            set(_editing.Text!);
-            RebuildThemePreview();
+            sp.Children.Add(EditorLabel("Corner radius"));
+            ui.Corner = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+            sp.Children.Add(ui.Corner);
+            ui.Corner.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Corner!.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
         }
+    }
 
-        void F(Action<ThemeToolStyle> set)
+    private void MutateVariant(string kind, int index, Action<ThemeToolStyle> set)
+    {
+        if (_suppressUpdate || _editing == null) return;
+        _editing.EnsureToolStyles();
+        var variants = _editing.GetVariants(kind);
+        if (index < 0 || index >= variants.Count) return;
+        set(variants[index]);
+        RebuildThemePreview();
+    }
+
+    private void OnEnabledChanged(string kind, int index, bool enabled)
+    {
+        if (_suppressUpdate || _editing == null) return;
+        _editing.EnsureToolStyles();
+        var variants = _editing.GetVariants(kind);
+        if (index < 0 || index >= variants.Count) return;
+        variants[index].Enabled = enabled;
+        var activeIdx = _editing.GetActiveIndex(kind);
+        if (!enabled && activeIdx == index)
         {
-            if (_suppressUpdate || _editing == null) return;
-            _editing.EnsureToolStyles();
-            set(_editing.Freehand!);
-            RebuildThemePreview();
+            for (var i = 0; i < variants.Count; i++)
+            {
+                if (variants[i].Enabled)
+                {
+                    _editing.SetActiveIndex(kind, i);
+                    break;
+                }
+            }
         }
-
-        _rFill!.SelectionChanged += (_, _) => R(s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(_rFill));
-        _rStroke!.SelectionChanged += (_, _) => R(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_rStroke));
-        _rTextColor!.SelectionChanged += (_, _) => R(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_rTextColor));
-        _rFont!.SelectionChanged += (_, _) => R(s => s.FontFamilyName = _rFont.SelectedItem as string ?? s.FontFamilyName);
-        _rFontSize!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
-        _rThickness!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
-        _rCorner!.TextChanged += (_, _) => R(s => { if (double.TryParse(_rCorner.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
-
-        _eFill!.SelectionChanged += (_, _) => E(s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(_eFill));
-        _eStroke!.SelectionChanged += (_, _) => E(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_eStroke));
-        _eTextColor!.SelectionChanged += (_, _) => E(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_eTextColor));
-        _eFont!.SelectionChanged += (_, _) => E(s => s.FontFamilyName = _eFont.SelectedItem as string ?? s.FontFamilyName);
-        _eFontSize!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
-        _eThickness!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
-
-        _aStroke!.SelectionChanged += (_, _) => A(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_aStroke));
-        _aThickness!.TextChanged += (_, _) => A(s => { if (double.TryParse(_aThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
-        _aArrow!.SelectionChanged += (_, _) => A(s => s.ArrowHead = _aArrow.SelectedItem as string ?? "Simple");
-
-        _tTextColor!.SelectionChanged += (_, _) => Tx(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_tTextColor));
-        _tFont!.SelectionChanged += (_, _) => Tx(s => s.FontFamilyName = _tFont.SelectedItem as string ?? s.FontFamilyName);
-        _tFontSize!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
-        _tThickness!.TextChanged += (_, _) => Tx(s => { if (double.TryParse(_tThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
-
-        _fStroke!.SelectionChanged += (_, _) => F(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_fStroke));
-        _fFreeThickness!.TextChanged += (_, _) => F(s => { if (double.TryParse(_fFreeThickness.Text, out var v)) s.FreeThickness = Math.Max(1, v); });
+        RebuildThemePreview();
     }
 
     private void RefreshThemeColorCombosFromEditing()
@@ -4215,35 +4635,27 @@ internal sealed class ThemeSettingsWindow : Window
         try
         {
             _editing.EnsureToolStyles();
-            var r = _editing.Rectangle!;
-            var e = _editing.Ellipse!;
-            var a = _editing.Arrow!;
-            var tx = _editing.Text!;
-            var fh = _editing.Freehand!;
-            DrawingPaletteColorPicker.Populate(_rFill!);
-            DrawingPaletteColorPicker.Populate(_rStroke!);
-            DrawingPaletteColorPicker.Populate(_rTextColor!);
-            DrawingPaletteColorPicker.Populate(_eFill!);
-            DrawingPaletteColorPicker.Populate(_eStroke!);
-            DrawingPaletteColorPicker.Populate(_eTextColor!);
-            DrawingPaletteColorPicker.Populate(_aStroke!);
-            DrawingPaletteColorPicker.Populate(_tTextColor!);
-            DrawingPaletteColorPicker.Populate(_fStroke!);
-            DrawingPaletteColorPicker.SelectColor(_rFill!, r.Fill);
-            DrawingPaletteColorPicker.SelectColor(_rStroke!, r.Stroke);
-            DrawingPaletteColorPicker.SelectColor(_rTextColor!, r.TextColor);
-            DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
-            DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
-            DrawingPaletteColorPicker.SelectColor(_eTextColor!, e.TextColor);
-            DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
-            DrawingPaletteColorPicker.SelectColor(_tTextColor!, tx.TextColor);
-            DrawingPaletteColorPicker.SelectColor(_fStroke!, fh.Stroke);
+            for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+            {
+                RepopulateColorCombos(_rect[i], _editing.Rectangles[i]);
+                RepopulateColorCombos(_ell[i], _editing.Ellipses[i]);
+                RepopulateColorCombos(_arr[i], _editing.Arrows[i]);
+                RepopulateColorCombos(_txt[i], _editing.Texts[i]);
+                RepopulateColorCombos(_free[i], _editing.Freehands[i]);
+            }
             RebuildThemePreview();
         }
         finally
         {
             _suppressUpdate = false;
         }
+    }
+
+    private static void RepopulateColorCombos(VariantUi ui, ThemeToolStyle style)
+    {
+        if (ui.Fill != null) { DrawingPaletteColorPicker.Populate(ui.Fill); DrawingPaletteColorPicker.SelectColor(ui.Fill, style.Fill); }
+        if (ui.Stroke != null) { DrawingPaletteColorPicker.Populate(ui.Stroke); DrawingPaletteColorPicker.SelectColor(ui.Stroke, style.Stroke); }
+        if (ui.TextColor != null) { DrawingPaletteColorPicker.Populate(ui.TextColor); DrawingPaletteColorPicker.SelectColor(ui.TextColor, style.TextColor); }
     }
 
     private static ComboBox MakeColorCombo() => DrawingPaletteColorPicker.CreateCombo();
@@ -4308,50 +4720,14 @@ internal sealed class ThemeSettingsWindow : Window
             }
             _nameBox!.Text = _editing.Name;
             _editing.EnsureToolStyles();
-            var r = _editing.Rectangle!;
-            var e = _editing.Ellipse!;
-            var a = _editing.Arrow!;
-            var tx = _editing.Text!;
-            var fh = _editing.Freehand!;
-            DrawingPaletteColorPicker.Populate(_rFill!);
-            DrawingPaletteColorPicker.Populate(_rStroke!);
-            DrawingPaletteColorPicker.Populate(_rTextColor!);
-            DrawingPaletteColorPicker.Populate(_eFill!);
-            DrawingPaletteColorPicker.Populate(_eStroke!);
-            DrawingPaletteColorPicker.Populate(_eTextColor!);
-            DrawingPaletteColorPicker.Populate(_aStroke!);
-            DrawingPaletteColorPicker.Populate(_tTextColor!);
-            DrawingPaletteColorPicker.Populate(_fStroke!);
-            DrawingPaletteColorPicker.SelectColor(_rFill!, r.Fill);
-            DrawingPaletteColorPicker.SelectColor(_rStroke!, r.Stroke);
-            DrawingPaletteColorPicker.SelectColor(_rTextColor!, r.TextColor);
-            _rFont!.SelectedItem = r.FontFamilyName;
-            if (_rFont.SelectedItem == null) _rFont.SelectedIndex = 0;
-            _rFontSize!.Text = r.FontSize.ToString();
-            _rThickness!.Text = r.Thickness.ToString();
-            _rCorner!.Text = r.CornerRadius.ToString();
-
-            DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
-            DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
-            DrawingPaletteColorPicker.SelectColor(_eTextColor!, e.TextColor);
-            _eFont!.SelectedItem = e.FontFamilyName;
-            if (_eFont.SelectedItem == null) _eFont.SelectedIndex = 0;
-            _eFontSize!.Text = e.FontSize.ToString();
-            _eThickness!.Text = e.Thickness.ToString();
-
-            DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
-            _aThickness!.Text = a.Thickness.ToString();
-            _aArrow!.SelectedItem = a.ArrowHead;
-            if (_aArrow.SelectedItem == null) _aArrow.SelectedIndex = 1;
-
-            DrawingPaletteColorPicker.SelectColor(_tTextColor!, tx.TextColor);
-            _tFont!.SelectedItem = tx.FontFamilyName;
-            if (_tFont.SelectedItem == null) _tFont.SelectedIndex = 0;
-            _tFontSize!.Text = tx.FontSize.ToString();
-            _tThickness!.Text = tx.Thickness.ToString();
-
-            DrawingPaletteColorPicker.SelectColor(_fStroke!, fh.Stroke);
-            _fFreeThickness!.Text = fh.FreeThickness.ToString();
+            for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+            {
+                LoadVariantUi(_rect[i], _editing.Rectangles[i]);
+                LoadVariantUi(_ell[i], _editing.Ellipses[i]);
+                LoadVariantUi(_arr[i], _editing.Arrows[i]);
+                LoadVariantUi(_txt[i], _editing.Texts[i]);
+                LoadVariantUi(_free[i], _editing.Freehands[i]);
+            }
             RebuildThemePreview();
         }
         finally
@@ -4360,230 +4736,65 @@ internal sealed class ThemeSettingsWindow : Window
         }
     }
 
+    private static void LoadVariantUi(VariantUi ui, ThemeToolStyle style)
+    {
+        if (ui.Enabled != null) ui.Enabled.IsChecked = style.Enabled;
+        if (ui.Fill != null) { DrawingPaletteColorPicker.Populate(ui.Fill); DrawingPaletteColorPicker.SelectColor(ui.Fill, style.Fill); }
+        if (ui.Stroke != null) { DrawingPaletteColorPicker.Populate(ui.Stroke); DrawingPaletteColorPicker.SelectColor(ui.Stroke, style.Stroke); }
+        if (ui.TextColor != null) { DrawingPaletteColorPicker.Populate(ui.TextColor); DrawingPaletteColorPicker.SelectColor(ui.TextColor, style.TextColor); }
+        if (ui.Font != null)
+        {
+            ui.Font.SelectedItem = style.FontFamilyName;
+            if (ui.Font.SelectedItem == null) ui.Font.SelectedIndex = 0;
+        }
+        if (ui.FontSize != null) ui.FontSize.Text = style.FontSize.ToString();
+        if (ui.Thickness != null) ui.Thickness.Text = style.Thickness.ToString();
+        if (ui.Corner != null) ui.Corner.Text = style.CornerRadius.ToString();
+        if (ui.ArrowHead != null)
+        {
+            ui.ArrowHead.SelectedItem = style.ArrowHead;
+            if (ui.ArrowHead.SelectedItem == null) ui.ArrowHead.SelectedIndex = 1;
+        }
+        if (ui.FreeThickness != null) ui.FreeThickness.Text = style.FreeThickness.ToString();
+    }
+
     private void RebuildThemePreview()
     {
         if (_previewCanvas == null) return;
         _previewCanvas.Children.Clear();
-        if (_editing == null) return;
-        _editing.EnsureToolStyles();
-        var r = _editing.Rectangle!;
-        var e = _editing.Ellipse!;
-        var a = _editing.Arrow!;
-        var tx = _editing.Text!;
-        var f = _editing.Freehand!;
-
-        PreviewAppendCaption(_previewCanvas, 0, "Rectangle");
-        PreviewAppendRect(_previewCanvas, r, 4, 14, 208, 40);
-
-        PreviewAppendCaption(_previewCanvas, 58, "Circle");
-        PreviewAppendEllipse(_previewCanvas, e, 4, 72, 208, 38);
-
-        PreviewAppendCaption(_previewCanvas, 116, "Arrow");
-        PreviewAppendArrow(_previewCanvas, a, new Point(18, 148), new Point(202, 134));
-
-        PreviewAppendCaption(_previewCanvas, 168, "Text");
-        PreviewAppendText(_previewCanvas, tx, 6, 184, "Sample text");
-
-        PreviewAppendCaption(_previewCanvas, 218, "Freeform");
-        PreviewAppendFreehand(_previewCanvas, f, 4, 234, 210);
-    }
-
-    private static void PreviewAppendCaption(Canvas c, double top, string text)
-    {
-        var tb = new TextBlock
+        if (_editing == null)
         {
-            Text = text,
-            FontSize = 10,
-            Foreground = Brushes.DimGray,
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(tb, 4);
-        Canvas.SetTop(tb, top);
-        c.Children.Add(tb);
-    }
-
-    private static FontFamily PreviewSafeFont(string name)
-    {
-        try
-        {
-            return new FontFamily(name);
-        }
-        catch
-        {
-            return new FontFamily("Segoe UI");
-        }
-    }
-
-    private static void PreviewAppendRect(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
-    {
-        var fill = DrawingWindow.ParseBrush(st.Fill);
-        var stroke = DrawingWindow.ParseBrush(st.Stroke);
-        var radius = Math.Min(Math.Max(0, st.CornerRadius), Math.Min(w, h) / 2);
-        var rect = new System.Windows.Shapes.Rectangle
-        {
-            Width = w,
-            Height = h,
-            Fill = fill,
-            Stroke = stroke,
-            StrokeThickness = st.Thickness,
-            RadiusX = radius,
-            RadiusY = radius,
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(rect, x);
-        Canvas.SetTop(rect, y);
-        c.Children.Add(rect);
-        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
-        var label = new TextBlock
-        {
-            Text = "Aa",
-            FontSize = fs,
-            FontFamily = PreviewSafeFont(st.FontFamilyName),
-            Foreground = DrawingWindow.ParseBrush(st.TextColor),
-            TextAlignment = TextAlignment.Center,
-            IsHitTestVisible = false,
-        };
-        label.Measure(new Size(w - 8, h - 8));
-        Canvas.SetLeft(label, x + 4);
-        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
-        c.Children.Add(label);
-    }
-
-    private static void PreviewAppendEllipse(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
-    {
-        var el = new Ellipse
-        {
-            Width = w,
-            Height = h,
-            Fill = DrawingWindow.ParseBrush(st.Fill),
-            Stroke = DrawingWindow.ParseBrush(st.Stroke),
-            StrokeThickness = st.Thickness,
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(el, x);
-        Canvas.SetTop(el, y);
-        c.Children.Add(el);
-        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
-        var innerW = Math.Max(0, w * 0.70710678118654752 - 8);
-        var label = new TextBlock
-        {
-            Text = "Aa",
-            FontSize = fs,
-            FontFamily = PreviewSafeFont(st.FontFamilyName),
-            Foreground = DrawingWindow.ParseBrush(st.TextColor),
-            TextAlignment = TextAlignment.Center,
-            IsHitTestVisible = false,
-        };
-        label.Measure(new Size(innerW, h - 8));
-        Canvas.SetLeft(label, x + (w - innerW) / 2);
-        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
-        c.Children.Add(label);
-    }
-
-    private static void PreviewAppendArrow(Canvas c, ThemeToolStyle st, Point p1, Point p2)
-    {
-        var stroke = DrawingWindow.ParseBrush(st.Stroke);
-        var th = Math.Max(1.5, st.Thickness);
-        c.Children.Add(new Line
-        {
-            X1 = p1.X,
-            Y1 = p1.Y,
-            X2 = p2.X,
-            Y2 = p2.Y,
-            Stroke = stroke,
-            StrokeThickness = th,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            IsHitTestVisible = false,
-        });
-        PreviewAddArrowHeads(c, p1, p2, stroke, th, st.ArrowHead);
-    }
-
-    private static void PreviewAddArrowHeads(Canvas c, Point p1, Point p2, Brush stroke, double thickness, string arrowHead)
-    {
-        if (string.Equals(arrowHead, "None", StringComparison.OrdinalIgnoreCase)) return;
-        var headSize = Math.Max(8, thickness * 3.5);
-        if (string.Equals(arrowHead, "Double", StringComparison.OrdinalIgnoreCase))
-        {
-            PreviewDrawArrowHead(c, p2, p1, stroke, thickness, headSize);
-            PreviewDrawArrowHead(c, p1, p2, stroke, thickness, headSize);
+            _previewCanvas.Height = 0;
             return;
         }
-        PreviewDrawArrowHead(c, p1, p2, stroke, thickness, headSize);
-    }
+        _editing.EnsureToolStyles();
 
-    private static void PreviewDrawArrowHead(Canvas c, Point from, Point to, Brush stroke, double thickness, double size)
-    {
-        var dx = to.X - from.X;
-        var dy = to.Y - from.Y;
-        var len = Math.Sqrt(dx * dx + dy * dy);
-        if (len <= 0.001) return;
-        var ux = dx / len;
-        var uy = dy / len;
-        var angle = Math.PI / 7;
-        var cos = Math.Cos(angle);
-        var sin = Math.Sin(angle);
-        var leftX = to.X - size * (ux * cos + uy * sin);
-        var leftY = to.Y - size * (uy * cos - ux * sin);
-        var rightX = to.X - size * (ux * cos - uy * sin);
-        var rightY = to.Y - size * (uy * cos + ux * sin);
-        PreviewAddHeadLine(c, to.X, to.Y, leftX, leftY, stroke, thickness);
-        PreviewAddHeadLine(c, to.X, to.Y, rightX, rightY, stroke, thickness);
-    }
+        const double x = 4;
+        const double w = 208;
+        var y = 4d;
 
-    private static void PreviewAddHeadLine(Canvas c, double x1, double y1, double x2, double y2, Brush stroke, double th)
-    {
-        c.Children.Add(new Line
+        void Section(string caption, IReadOnlyList<ThemeToolStyle> variants, Action<ThemeToolStyle, double> drawOne, double itemHeight)
         {
-            X1 = x1,
-            Y1 = y1,
-            X2 = x2,
-            Y2 = y2,
-            Stroke = stroke,
-            StrokeThickness = th,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            IsHitTestVisible = false,
-        });
-    }
-
-    private static void PreviewAppendText(Canvas c, ThemeToolStyle st, double x, double y, string sample)
-    {
-        var tb = new TextBlock
-        {
-            Text = sample,
-            FontSize = Math.Clamp(st.FontSize * 0.55, 8, 28),
-            FontFamily = PreviewSafeFont(st.FontFamilyName),
-            Foreground = DrawingWindow.ParseBrush(st.TextColor),
-            IsHitTestVisible = false,
-        };
-        Canvas.SetLeft(tb, x);
-        Canvas.SetTop(tb, y);
-        c.Children.Add(tb);
-    }
-
-    private static void PreviewAppendFreehand(Canvas c, ThemeToolStyle st, double x, double yTop, double width)
-    {
-        var stroke = DrawingWindow.ParseBrush(st.Stroke);
-        var th = Math.Max(2, st.FreeThickness);
-        const int steps = 26;
-        var amp = Math.Clamp(th * 1.8, 5, 14);
-        var samples = new List<Point>(steps + 1);
-        for (var i = 0; i <= steps; i++)
-        {
-            var t = (double)i / steps;
-            samples.Add(new Point(x + t * width, yTop + amp * Math.Sin(t * Math.PI * 3)));
+            var enabled = variants.Where(v => v.Enabled).ToList();
+            if (enabled.Count == 0) return;
+            DrawingThemePreview.AppendCaption(_previewCanvas!, x, y, caption);
+            y += 14;
+            foreach (var st in enabled)
+            {
+                var rowTop = y;
+                drawOne(st, rowTop);
+                y += itemHeight;
+            }
+            y += 8;
         }
-        c.Children.Add(new System.Windows.Shapes.Path
-        {
-            Data = DrawingFreehandGeometry.CreateSmoothGeometry(samples),
-            Stroke = stroke,
-            StrokeThickness = th,
-            StrokeLineJoin = PenLineJoin.Round,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            IsHitTestVisible = false,
-        });
+
+        Section("Rectangle", _editing.Rectangles, (st, top) => DrawingThemePreview.AppendRect(_previewCanvas!, st, x, top, w, 36), 42);
+        Section("Circle", _editing.Ellipses, (st, top) => DrawingThemePreview.AppendEllipse(_previewCanvas!, st, x, top, w, 36), 42);
+        Section("Arrow", _editing.Arrows, (st, top) => DrawingThemePreview.AppendArrow(_previewCanvas!, st, new Point(x + 12, top + 14), new Point(x + w - 4, top + 4)), 22);
+        Section("Text", _editing.Texts, (st, top) => DrawingThemePreview.AppendText(_previewCanvas!, st, x + 2, top, "Sample text"), 26);
+        Section("Freeform", _editing.Freehands, (st, top) => DrawingThemePreview.AppendFreehand(_previewCanvas!, st, x, top + 10, w), 26);
+
+        _previewCanvas.Height = Math.Max(80, y + 4);
     }
 
     private void CommitEditor()
