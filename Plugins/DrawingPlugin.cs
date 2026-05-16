@@ -1222,6 +1222,10 @@ internal sealed class DrawingWindow : Window
     private Slider? _fontSizeSlider;
     private ComboBox? _fontFamilyCombo;
     private ComboBox? _arrowHeadCombo;
+    private TextBlock? _cornerRadiusHeader;
+    private TextBlock? _fontHeader;
+    private TextBlock? _fontSizeHeader;
+    private TextBlock? _arrowStyleHeader;
 
     private readonly Button _btnSelect, _btnRect, _btnEllipse, _btnArrow, _btnText, _btnFreehand;
 
@@ -1484,7 +1488,10 @@ internal sealed class DrawingWindow : Window
     {
         ApplyToolProfileFromTheme(theme, ThemeToolSource());
         if (_propertyPanel != null)
+        {
             SyncPropertyControlsFromCurrent();
+            UpdatePropertyPanelVisibility();
+        }
         RefreshToolButtonIcons();
     }
 
@@ -1599,7 +1606,8 @@ internal sealed class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_thicknessSlider);
 
-        _propertyPanel.Children.Add(SectionHeader("Corner radius (rect)"));
+        _cornerRadiusHeader = SectionHeader("Corner radius (rect)");
+        _propertyPanel.Children.Add(_cornerRadiusHeader);
         _cornerSlider = MakeSlider(0, 80, _cornerRadius);
         _cornerSlider.ValueChanged += (_, _) =>
         {
@@ -1613,7 +1621,8 @@ internal sealed class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_cornerSlider);
 
-        _propertyPanel.Children.Add(SectionHeader("Font"));
+        _fontHeader = SectionHeader("Font");
+        _propertyPanel.Children.Add(_fontHeader);
         _fontFamilyCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
         foreach (var n in FontChoices) _fontFamilyCombo.Items.Add(n);
         _fontFamilyCombo.SelectedItem = _fontFamily.Source;
@@ -1624,7 +1633,7 @@ internal sealed class DrawingWindow : Window
             if (_fontFamilyCombo.SelectedItem is string s)
             {
                 _fontFamily = new FontFamily(s);
-                if (PrimarySelection != null && (PrimarySelection.Kind == "text" || PrimarySelection.Kind == "rect"))
+                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse")
                 {
                     PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
@@ -1633,13 +1642,14 @@ internal sealed class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_fontFamilyCombo);
 
-        _propertyPanel.Children.Add(SectionHeader("Font size"));
+        _fontSizeHeader = SectionHeader("Font size");
+        _propertyPanel.Children.Add(_fontSizeHeader);
         _fontSizeSlider = MakeSlider(8, 96, _fontSize);
         _fontSizeSlider.ValueChanged += (_, _) =>
         {
             if (_suppressPropertyChanges) return;
             _fontSize = _fontSizeSlider!.Value;
-            if (PrimarySelection != null && (PrimarySelection.Kind == "text" || PrimarySelection.Kind == "rect"))
+            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse")
             {
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
@@ -1647,7 +1657,8 @@ internal sealed class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_fontSizeSlider);
 
-        _propertyPanel.Children.Add(SectionHeader("Arrow style"));
+        _arrowStyleHeader = SectionHeader("Arrow style");
+        _propertyPanel.Children.Add(_arrowStyleHeader);
         _arrowHeadCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
         foreach (var v in Enum.GetValues<ArrowHeadStyle>())
             _arrowHeadCombo.Items.Add(v.ToString());
@@ -1663,6 +1674,41 @@ internal sealed class DrawingWindow : Window
             }
         };
         _propertyPanel.Children.Add(_arrowHeadCombo);
+        UpdatePropertyPanelVisibility();
+    }
+
+    private static void SetPropertySectionVisibility(UIElement? element, bool visible)
+    {
+        if (element == null) return;
+        element.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private string? PropertyPanelContextKind()
+    {
+        if (_selection.Count == 1)
+            return PrimarySelection!.Kind;
+        return _tool switch
+        {
+            Tool.Rectangle => "rect",
+            Tool.Ellipse => "ellipse",
+            Tool.Arrow => "arrow",
+            Tool.Text => "text",
+            Tool.Freehand => "freehand",
+            _ => "rect",
+        };
+    }
+
+    private void UpdatePropertyPanelVisibility()
+    {
+        var kind = PropertyPanelContextKind();
+        SetPropertySectionVisibility(_cornerRadiusHeader, kind == "rect");
+        SetPropertySectionVisibility(_cornerSlider, kind == "rect");
+        SetPropertySectionVisibility(_fontHeader, kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontFamilyCombo, kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontSizeHeader, kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontSizeSlider, kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_arrowStyleHeader, kind == "arrow");
+        SetPropertySectionVisibility(_arrowHeadCombo, kind == "arrow");
     }
 
     private void SyncPropertyControlsFromCurrent()
@@ -1956,6 +2002,7 @@ internal sealed class DrawingWindow : Window
             SyncFromSelected();
         else
             ApplyToolProfileFromTheme(_activeTheme, _tool == Tool.Select ? Tool.Rectangle : _tool);
+        UpdatePropertyPanelVisibility();
     }
 
     private void DrawingWindow_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -2077,6 +2124,7 @@ internal sealed class DrawingWindow : Window
             _leftScroll.IsEnabled = _selection.Count <= 1;
         if (_selection.Count == 1)
             SyncFromSelected();
+        UpdatePropertyPanelVisibility();
     }
 
     private IEnumerable<DrawItem> ExpandItemMembers(DrawItem item)
@@ -2307,6 +2355,7 @@ internal sealed class DrawingWindow : Window
                 P1 = p, P2 = p,
                 Fill = _fill, Stroke = _stroke,
                 StrokeThickness = _thickness,
+                FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
             },
             Tool.Arrow => new DrawItem
             {
@@ -3742,8 +3791,8 @@ internal sealed class ThemeSettingsWindow : Window
     private ComboBox? _rFill, _rStroke, _rTextColor, _rFont;
     private TextBox? _rFontSize, _rThickness, _rCorner;
 
-    private ComboBox? _eFill, _eStroke;
-    private TextBox? _eThickness;
+    private ComboBox? _eFill, _eStroke, _eTextColor, _eFont;
+    private TextBox? _eFontSize, _eThickness;
 
     private ComboBox? _aStroke, _aArrow;
     private TextBox? _aThickness;
@@ -3967,6 +4016,16 @@ internal sealed class ThemeSettingsWindow : Window
         spE.Children.Add(EditorLabel("Stroke / frame"));
         _eStroke = MakeColorCombo();
         spE.Children.Add(MakeThemeColorRow(_eStroke));
+        spE.Children.Add(EditorLabel("Text color (circle label)"));
+        _eTextColor = MakeColorCombo();
+        spE.Children.Add(MakeThemeColorRow(_eTextColor));
+        spE.Children.Add(EditorLabel("Font family"));
+        _eFont = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+        foreach (var n in FontChoices) _eFont.Items.Add(n);
+        spE.Children.Add(_eFont);
+        spE.Children.Add(EditorLabel("Font size"));
+        _eFontSize = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
+        spE.Children.Add(_eFontSize);
         spE.Children.Add(EditorLabel("Stroke thickness"));
         _eThickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
         spE.Children.Add(_eThickness);
@@ -4064,6 +4123,9 @@ internal sealed class ThemeSettingsWindow : Window
 
         _eFill!.SelectionChanged += (_, _) => E(s => s.Fill = DrawingPaletteColorPicker.GetSelectedHex(_eFill));
         _eStroke!.SelectionChanged += (_, _) => E(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_eStroke));
+        _eTextColor!.SelectionChanged += (_, _) => E(s => s.TextColor = DrawingPaletteColorPicker.GetSelectedHex(_eTextColor));
+        _eFont!.SelectionChanged += (_, _) => E(s => s.FontFamilyName = _eFont.SelectedItem as string ?? s.FontFamilyName);
+        _eFontSize!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eFontSize.Text, out var v)) s.FontSize = Math.Max(4, v); });
         _eThickness!.TextChanged += (_, _) => E(s => { if (double.TryParse(_eThickness.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
 
         _aStroke!.SelectionChanged += (_, _) => A(s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(_aStroke));
@@ -4096,6 +4158,7 @@ internal sealed class ThemeSettingsWindow : Window
             DrawingPaletteColorPicker.Populate(_rTextColor!);
             DrawingPaletteColorPicker.Populate(_eFill!);
             DrawingPaletteColorPicker.Populate(_eStroke!);
+            DrawingPaletteColorPicker.Populate(_eTextColor!);
             DrawingPaletteColorPicker.Populate(_aStroke!);
             DrawingPaletteColorPicker.Populate(_tTextColor!);
             DrawingPaletteColorPicker.Populate(_fStroke!);
@@ -4104,6 +4167,7 @@ internal sealed class ThemeSettingsWindow : Window
             DrawingPaletteColorPicker.SelectColor(_rTextColor!, r.TextColor);
             DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
             DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_eTextColor!, e.TextColor);
             DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
             DrawingPaletteColorPicker.SelectColor(_tTextColor!, tx.TextColor);
             DrawingPaletteColorPicker.SelectColor(_fStroke!, fh.Stroke);
@@ -4187,6 +4251,7 @@ internal sealed class ThemeSettingsWindow : Window
             DrawingPaletteColorPicker.Populate(_rTextColor!);
             DrawingPaletteColorPicker.Populate(_eFill!);
             DrawingPaletteColorPicker.Populate(_eStroke!);
+            DrawingPaletteColorPicker.Populate(_eTextColor!);
             DrawingPaletteColorPicker.Populate(_aStroke!);
             DrawingPaletteColorPicker.Populate(_tTextColor!);
             DrawingPaletteColorPicker.Populate(_fStroke!);
@@ -4201,6 +4266,10 @@ internal sealed class ThemeSettingsWindow : Window
 
             DrawingPaletteColorPicker.SelectColor(_eFill!, e.Fill);
             DrawingPaletteColorPicker.SelectColor(_eStroke!, e.Stroke);
+            DrawingPaletteColorPicker.SelectColor(_eTextColor!, e.TextColor);
+            _eFont!.SelectedItem = e.FontFamilyName;
+            if (_eFont.SelectedItem == null) _eFont.SelectedIndex = 0;
+            _eFontSize!.Text = e.FontSize.ToString();
             _eThickness!.Text = e.Thickness.ToString();
 
             DrawingPaletteColorPicker.SelectColor(_aStroke!, a.Stroke);
@@ -4327,6 +4396,21 @@ internal sealed class ThemeSettingsWindow : Window
         Canvas.SetLeft(el, x);
         Canvas.SetTop(el, y);
         c.Children.Add(el);
+        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.55));
+        var innerW = Math.Max(0, w * 0.70710678118654752 - 8);
+        var label = new TextBlock
+        {
+            Text = "Aa",
+            FontSize = fs,
+            FontFamily = PreviewSafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            TextAlignment = TextAlignment.Center,
+            IsHitTestVisible = false,
+        };
+        label.Measure(new Size(innerW, h - 8));
+        Canvas.SetLeft(label, x + (w - innerW) / 2);
+        Canvas.SetTop(label, y + Math.Max(0, (h - label.DesiredSize.Height) / 2));
+        c.Children.Add(label);
     }
 
     private static void PreviewAppendArrow(Canvas c, ThemeToolStyle st, Point p1, Point p2)
