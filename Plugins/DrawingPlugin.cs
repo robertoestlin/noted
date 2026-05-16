@@ -936,7 +936,8 @@ internal sealed class DrawingWindow : Window
 
     private readonly Button _btnSelect, _btnRect, _btnEllipse, _btnArrow, _btnText, _btnFreehand;
 
-    private DrawItem? _selected;
+    private readonly HashSet<DrawItem> _selection = new();
+    private List<DrawItem>? _clipboard;
     private Tool _tool = Tool.Select;
 
     private Brush _fill = Brushes.Transparent;
@@ -956,6 +957,10 @@ internal sealed class DrawingWindow : Window
     private Point _moveLast;
     private int _activeHandle = -1;
     private bool _pendingUndoForGesture;
+
+    private bool _isMarqueeSelecting;
+    private Point _marqueeStart;
+    private Point _marqueeCurrent;
 
     private TextBox? _activeEditor;
     private DrawItem? _editingItem;
@@ -1063,7 +1068,7 @@ internal sealed class DrawingWindow : Window
             {
                 SnapshotForUndo();
                 _items.Clear();
-                _selected = null;
+                ClearSelection();
                 Redraw();
             }
         };
@@ -1176,8 +1181,8 @@ internal sealed class DrawingWindow : Window
 
     private Tool ThemeToolSource()
     {
-        if (_tool == Tool.Select && _selected != null)
-            return MapDrawKindToTool(_selected.Kind);
+        if (_tool == Tool.Select && PrimarySelection != null)
+            return MapDrawKindToTool(PrimarySelection.Kind);
         if (_tool == Tool.Select)
             return Tool.Rectangle;
         return _tool;
@@ -1267,9 +1272,9 @@ internal sealed class DrawingWindow : Window
         {
             if (_suppressPropertyChanges) return;
             _thickness = _thicknessSlider!.Value;
-            if (_selected != null && _selected.Kind != "freehand")
+            if (PrimarySelection != null && PrimarySelection.Kind != "freehand")
             {
-                _selected.StrokeThickness = _thickness;
+                PrimarySelection.StrokeThickness = _thickness;
                 Redraw();
             }
         };
@@ -1281,9 +1286,9 @@ internal sealed class DrawingWindow : Window
         {
             if (_suppressPropertyChanges) return;
             _cornerRadius = _cornerSlider!.Value;
-            if (_selected != null && _selected.Kind == "rect")
+            if (PrimarySelection != null && PrimarySelection.Kind == "rect")
             {
-                _selected.CornerRadius = _cornerRadius;
+                PrimarySelection.CornerRadius = _cornerRadius;
                 Redraw();
             }
         };
@@ -1300,9 +1305,9 @@ internal sealed class DrawingWindow : Window
             if (_fontFamilyCombo.SelectedItem is string s)
             {
                 _fontFamily = new FontFamily(s);
-                if (_selected != null && (_selected.Kind == "text" || _selected.Kind == "rect"))
+                if (PrimarySelection != null && (PrimarySelection.Kind == "text" || PrimarySelection.Kind == "rect"))
                 {
-                    _selected.FontFamily = _fontFamily;
+                    PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
                 }
             }
@@ -1315,9 +1320,9 @@ internal sealed class DrawingWindow : Window
         {
             if (_suppressPropertyChanges) return;
             _fontSize = _fontSizeSlider!.Value;
-            if (_selected != null && (_selected.Kind == "text" || _selected.Kind == "rect"))
+            if (PrimarySelection != null && (PrimarySelection.Kind == "text" || PrimarySelection.Kind == "rect"))
             {
-                _selected.FontSize = _fontSize;
+                PrimarySelection.FontSize = _fontSize;
                 Redraw();
             }
         };
@@ -1332,9 +1337,9 @@ internal sealed class DrawingWindow : Window
         {
             if (_suppressPropertyChanges) return;
             _arrowHead = (ArrowHeadStyle)_arrowHeadCombo.SelectedIndex;
-            if (_selected != null && _selected.Kind == "arrow")
+            if (PrimarySelection != null && PrimarySelection.Kind == "arrow")
             {
-                _selected.ArrowHead = _arrowHead;
+                PrimarySelection.ArrowHead = _arrowHead;
                 Redraw();
             }
         };
@@ -1369,29 +1374,31 @@ internal sealed class DrawingWindow : Window
 
     private void SyncFromSelected()
     {
-        if (_selected == null) return;
-        _fill = _selected.Fill;
-        _stroke = _selected.Stroke;
-        _textColor = _selected.TextColor;
-        _thickness = _selected.StrokeThickness;
-        _cornerRadius = _selected.CornerRadius;
-        _fontSize = _selected.FontSize;
-        _fontFamily = _selected.FontFamily;
-        if (_selected.Kind == "arrow") _arrowHead = _selected.ArrowHead;
+        var sel = PrimarySelection;
+        if (sel == null) return;
+        _fill = sel.Fill;
+        _stroke = sel.Stroke;
+        _textColor = sel.TextColor;
+        _thickness = sel.StrokeThickness;
+        _cornerRadius = sel.CornerRadius;
+        _fontSize = sel.FontSize;
+        _fontFamily = sel.FontFamily;
+        if (sel.Kind == "arrow") _arrowHead = sel.ArrowHead;
         SyncPropertyControlsFromCurrent();
     }
 
     private void ApplyColorToSelected()
     {
-        if (_selected == null) return;
+        var sel = PrimarySelection;
+        if (sel == null) return;
         SnapshotForUndo();
-        if (_selected.Kind == "rect" || _selected.Kind == "ellipse")
+        if (sel.Kind == "rect" || sel.Kind == "ellipse")
         {
-            _selected.Fill = _fill;
-            _selected.Stroke = _stroke;
-            _selected.TextColor = _textColor;
+            sel.Fill = _fill;
+            sel.Stroke = _stroke;
+            sel.TextColor = _textColor;
         }
-        else if (_selected.Kind == "arrow" || _selected.Kind == "freehand")
+        else if (sel.Kind == "arrow" || sel.Kind == "freehand")
         {
             foreach (var it in GetSelectionMembers())
             {
@@ -1399,10 +1406,10 @@ internal sealed class DrawingWindow : Window
                     it.Stroke = _stroke;
             }
         }
-        else if (_selected.Kind == "text")
+        else if (sel.Kind == "text")
         {
-            _selected.TextColor = _textColor;
-            _selected.Stroke = _textColor;
+            sel.TextColor = _textColor;
+            sel.Stroke = _textColor;
         }
         Redraw();
     }
@@ -1626,7 +1633,7 @@ internal sealed class DrawingWindow : Window
         _btnText.Background = tool == Tool.Text ? brushOn : brushOff;
         _btnFreehand.Background = tool == Tool.Freehand ? brushOn : brushOff;
         Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
-        if (_tool == Tool.Select && _selected != null)
+        if (_tool == Tool.Select && PrimarySelection != null)
             SyncFromSelected();
         else
             ApplyToolProfileFromTheme(_activeTheme, _tool == Tool.Select ? Tool.Rectangle : _tool);
@@ -1649,6 +1656,18 @@ internal sealed class DrawingWindow : Window
             e.Handled = true;
             return;
         }
+        if (ctrl && e.Key == Key.C)
+        {
+            CopySelection();
+            e.Handled = true;
+            return;
+        }
+        if (ctrl && e.Key == Key.V)
+        {
+            PasteSelection();
+            e.Handled = true;
+            return;
+        }
 
         if (_activeEditor != null) return;
         if (Keyboard.FocusedElement is TextBox) return;
@@ -1666,7 +1685,7 @@ internal sealed class DrawingWindow : Window
                 e.Handled = true;
                 break;
             case Key.D:
-                if (_selected != null)
+                if (HasSelection)
                 {
                     DeleteSelected();
                     e.Handled = true;
@@ -1674,7 +1693,7 @@ internal sealed class DrawingWindow : Window
                 break;
             case Key.Escape:
                 CommitTextEdit();
-                _selected = null;
+                ClearSelection();
                 Redraw();
                 e.Handled = true;
                 break;
@@ -1688,29 +1707,126 @@ internal sealed class DrawingWindow : Window
         _leftScroll.Visibility = _propertiesVisible ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private DrawItem? PrimarySelection => _selection.Count == 1 ? _selection.FirstOrDefault() : null;
+
+    private bool HasSelection => _selection.Count > 0;
+
+    private bool IsMultiSelection => _selection.Count > 1;
+
+    private void ClearSelection()
+    {
+        _selection.Clear();
+        UpdatePropertyPanelForSelection();
+    }
+
+    private void SetSingleSelection(DrawItem? item)
+    {
+        _selection.Clear();
+        if (item != null)
+        {
+            foreach (var m in ExpandItemMembers(item))
+                _selection.Add(m);
+        }
+        UpdatePropertyPanelForSelection();
+    }
+
+    private void ToggleSelection(DrawItem item)
+    {
+        var members = ExpandItemMembers(item).ToList();
+        if (members.Any(m => _selection.Contains(m)))
+        {
+            foreach (var m in members)
+                _selection.Remove(m);
+        }
+        else
+        {
+            foreach (var m in members)
+                _selection.Add(m);
+        }
+        UpdatePropertyPanelForSelection();
+    }
+
+    private void PruneSelection()
+    {
+        _selection.RemoveWhere(it => !_items.Contains(it));
+        UpdatePropertyPanelForSelection();
+    }
+
+    private void UpdatePropertyPanelForSelection()
+    {
+        if (_leftScroll != null)
+            _leftScroll.IsEnabled = _selection.Count <= 1;
+        if (_selection.Count == 1)
+            SyncFromSelected();
+    }
+
+    private IEnumerable<DrawItem> ExpandItemMembers(DrawItem item)
+    {
+        if (item.Kind == "freehand" && item.FreehandGroupId != 0)
+        {
+            foreach (var it in _items)
+            {
+                if (it.Kind == "freehand" && it.FreehandGroupId == item.FreehandGroupId)
+                    yield return it;
+            }
+            yield break;
+        }
+        yield return item;
+    }
+
     private void DeleteSelected()
     {
-        if (_selected == null) return;
+        if (!HasSelection) return;
         SnapshotForUndo();
         foreach (var it in GetSelectionMembers().ToList())
             _items.Remove(it);
-        _selected = null;
+        ClearSelection();
+        Redraw();
+    }
+
+    private void CopySelection()
+    {
+        if (!HasSelection) return;
+        _clipboard = GetSelectionMembers().Select(it => it.Clone()).ToList();
+    }
+
+    private void PasteSelection()
+    {
+        if (_clipboard == null || _clipboard.Count == 0) return;
+        SnapshotForUndo();
+        const double offset = 16;
+        _selection.Clear();
+        var groupMap = new Dictionary<int, int>();
+        foreach (var proto in _clipboard)
+        {
+            var copy = proto.Clone();
+            TranslateItem(copy, offset, offset);
+            if (copy.Kind == "freehand" && copy.FreehandGroupId != 0)
+            {
+                if (!groupMap.TryGetValue(copy.FreehandGroupId, out var newId))
+                {
+                    newId = _nextFreehandGroupId++;
+                    groupMap[copy.FreehandGroupId] = newId;
+                }
+                copy.FreehandGroupId = newId;
+            }
+            _items.Add(copy);
+            _selection.Add(copy);
+        }
+        UpdatePropertyPanelForSelection();
         Redraw();
     }
 
     private IEnumerable<DrawItem> GetSelectionMembers()
     {
-        if (_selected == null)
-            yield break;
-        if (_selected.Kind != "freehand" || _selected.FreehandGroupId == 0)
+        var yielded = new HashSet<DrawItem>();
+        foreach (var sel in _selection.ToList())
         {
-            yield return _selected;
-            yield break;
-        }
-        foreach (var it in _items)
-        {
-            if (it.Kind == "freehand" && it.FreehandGroupId == _selected.FreehandGroupId)
-                yield return it;
+            foreach (var it in ExpandItemMembers(sel))
+            {
+                if (yielded.Add(it))
+                    yield return it;
+            }
         }
     }
 
@@ -1741,8 +1857,7 @@ internal sealed class DrawingWindow : Window
         var snapshot = _undoStack.Pop();
         _items.Clear();
         _items.AddRange(snapshot);
-        if (_selected != null && !_items.Contains(_selected))
-            _selected = null;
+        PruneSelection();
         Redraw();
     }
 
@@ -1754,8 +1869,7 @@ internal sealed class DrawingWindow : Window
         var snapshot = _redoStack.Pop();
         _items.Clear();
         _items.AddRange(snapshot);
-        if (_selected != null && !_items.Contains(_selected))
-            _selected = null;
+        PruneSelection();
         Redraw();
     }
 
@@ -1771,8 +1885,7 @@ internal sealed class DrawingWindow : Window
             var hitDbl = HitTestTop(p);
             if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "text"))
             {
-                _selected = hitDbl;
-                SyncFromSelected();
+                SetSingleSelection(hitDbl);
                 Redraw();
                 StartTextEdit(hitDbl);
                 e.Handled = true;
@@ -1784,9 +1897,12 @@ internal sealed class DrawingWindow : Window
 
         if (_tool == Tool.Select)
         {
-            if (_selected != null)
+            var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+            var hit = HitTestTop(p);
+
+            if (!IsMultiSelection && PrimarySelection != null)
             {
-                var handle = GetHandleAt(_selected, p);
+                var handle = GetHandleAt(PrimarySelection, p);
                 if (handle >= 0)
                 {
                     _activeHandle = handle;
@@ -1798,17 +1914,34 @@ internal sealed class DrawingWindow : Window
                 }
             }
 
-            var hit = HitTestTop(p);
-            _selected = hit;
-            if (_selected != null)
+            if (hit != null)
             {
-                SyncFromSelected();
+                if (ctrl)
+                {
+                    ToggleSelection(hit);
+                    Redraw();
+                    return;
+                }
+
+                if (!_selection.Contains(hit))
+                    SetSingleSelection(hit);
+
                 _activeHandle = -1;
                 _isMoving = true;
                 _moveLast = p;
                 _pendingUndoForGesture = true;
                 _canvas.CaptureMouse();
+                Redraw();
+                return;
             }
+
+            if (!ctrl)
+                ClearSelection();
+
+            _marqueeStart = p;
+            _marqueeCurrent = p;
+            _isMarqueeSelecting = true;
+            _canvas.CaptureMouse();
             Redraw();
             return;
         }
@@ -1830,7 +1963,7 @@ internal sealed class DrawingWindow : Window
                 Fill = Brushes.Transparent,
             };
             _items.Add(item);
-            _selected = item;
+            SetSingleSelection(item);
             Redraw();
             StartTextEdit(item, takeSnapshot: false);
             return;
@@ -1879,7 +2012,7 @@ internal sealed class DrawingWindow : Window
         if (_drawingItem != null)
         {
             _items.Add(_drawingItem);
-            _selected = _drawingItem;
+            SetSingleSelection(_drawingItem);
             _canvas.CaptureMouse();
             Redraw();
         }
@@ -1904,19 +2037,26 @@ internal sealed class DrawingWindow : Window
             return;
         }
 
-        if (_tool == Tool.Select && _selected != null && _activeHandle >= 0 && e.LeftButton == MouseButtonState.Pressed)
+        if (_isMarqueeSelecting && e.LeftButton == MouseButtonState.Pressed)
+        {
+            _marqueeCurrent = p;
+            Redraw();
+            return;
+        }
+
+        if (_tool == Tool.Select && PrimarySelection != null && _activeHandle >= 0 && e.LeftButton == MouseButtonState.Pressed)
         {
             if (_pendingUndoForGesture)
             {
                 SnapshotForUndo();
                 _pendingUndoForGesture = false;
             }
-            ResizeSelectedByHandle(_selected, _activeHandle, p);
+            ResizeSelectedByHandle(PrimarySelection, _activeHandle, p);
             Redraw();
             return;
         }
 
-        if (_tool == Tool.Select && _isMoving && _selected != null && e.LeftButton == MouseButtonState.Pressed)
+        if (_tool == Tool.Select && _isMoving && HasSelection && e.LeftButton == MouseButtonState.Pressed)
         {
             var dx = p.X - _moveLast.X;
             var dy = p.Y - _moveLast.Y;
@@ -1934,10 +2074,14 @@ internal sealed class DrawingWindow : Window
             }
         }
 
-        if (_tool == Tool.Select && _selected != null)
+        if (_tool == Tool.Select && PrimarySelection != null && !IsMultiSelection)
         {
-            var h = GetHandleAt(_selected, p);
-            Cursor = h >= 0 ? CursorForHandle(_selected, h) : (HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow);
+            var h = GetHandleAt(PrimarySelection, p);
+            Cursor = h >= 0 ? CursorForHandle(PrimarySelection, h) : (HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow);
+        }
+        else if (_tool == Tool.Select && HasSelection)
+        {
+            Cursor = HitTestTop(p) != null ? Cursors.SizeAll : Cursors.Arrow;
         }
         else if (_tool != Tool.Select)
         {
@@ -1952,13 +2096,34 @@ internal sealed class DrawingWindow : Window
     private void Canvas_MouseUp(object sender, MouseButtonEventArgs e)
     {
         _canvas.ReleaseMouseCapture();
+
+        if (_isMarqueeSelecting)
+        {
+            _isMarqueeSelecting = false;
+            var rect = NormalizeRect(_marqueeStart, _marqueeCurrent);
+            if (rect.Width >= 3 || rect.Height >= 3)
+            {
+                var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+                if (!ctrl)
+                    _selection.Clear();
+                foreach (var it in _items)
+                {
+                    if (!BoundsIntersect(rect, it)) continue;
+                    foreach (var m in ExpandItemMembers(it))
+                        _selection.Add(m);
+                }
+                UpdatePropertyPanelForSelection();
+            }
+            Redraw();
+        }
+
         if (_isDrawing && _drawingItem != null)
         {
             var b = GetBounds(_drawingItem);
             if (_drawingItem.Kind != "freehand" && _drawingItem.Kind != "arrow" && (b.Width < 3 || b.Height < 3))
             {
                 _items.Remove(_drawingItem);
-                _selected = null;
+                _selection.Remove(_drawingItem);
             }
             else if (_drawingItem.Kind == "arrow")
             {
@@ -1967,7 +2132,7 @@ internal sealed class DrawingWindow : Window
                 if (Math.Sqrt(dx * dx + dy * dy) < 4)
                 {
                     _items.Remove(_drawingItem);
-                    _selected = null;
+                    _selection.Remove(_drawingItem);
                 }
             }
             else if (_drawingItem.Kind == "freehand")
@@ -1975,7 +2140,7 @@ internal sealed class DrawingWindow : Window
                 if (_drawingItem.Points.Count < 2 || DrawingFreehandGeometry.PathLength(_drawingItem.Points) < 4)
                 {
                     _items.Remove(_drawingItem);
-                    _selected = null;
+                    _selection.Remove(_drawingItem);
                 }
             }
         }
@@ -2174,8 +2339,51 @@ internal sealed class DrawingWindow : Window
             _canvas.Children.Add(preservedEditor);
         }
 
-        if (_selected != null && _items.Contains(_selected) && !_isDrawing)
-            RenderSelectionAdorner(_selected);
+        if (!_isDrawing)
+        {
+            foreach (var it in _selection.ToList())
+            {
+                if (!_items.Contains(it)) continue;
+                var showHandles = !IsMultiSelection && ReferenceEquals(it, PrimarySelection);
+                RenderSelectionAdorner(it, showHandles);
+            }
+        }
+
+        if (_isMarqueeSelecting)
+            RenderMarqueeRect();
+    }
+
+    private void RenderMarqueeRect()
+    {
+        var rect = NormalizeRect(_marqueeStart, _marqueeCurrent);
+        var accent = new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3));
+        var box = new Rectangle
+        {
+            Width = rect.Width,
+            Height = rect.Height,
+            Stroke = accent,
+            StrokeThickness = 1,
+            StrokeDashArray = new DoubleCollection { 4, 3 },
+            Fill = new SolidColorBrush(Color.FromArgb(0x22, 0x21, 0x96, 0xF3)),
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(box, rect.Left);
+        Canvas.SetTop(box, rect.Top);
+        _overlay.Children.Add(box);
+    }
+
+    private static Rect NormalizeRect(Point a, Point b)
+        => new(
+            Math.Min(a.X, b.X),
+            Math.Min(a.Y, b.Y),
+            Math.Abs(b.X - a.X),
+            Math.Abs(b.Y - a.Y));
+
+    private static bool BoundsIntersect(Rect rect, DrawItem it)
+    {
+        var b = GetBounds(it);
+        b.Inflate(HitPadding, HitPadding);
+        return rect.IntersectsWith(b);
     }
 
     private void RenderItem(DrawItem it, Canvas surface)
@@ -2338,7 +2546,7 @@ internal sealed class DrawingWindow : Window
         surface.Children.Add(l2);
     }
 
-    private void RenderSelectionAdorner(DrawItem it)
+    private void RenderSelectionAdorner(DrawItem it, bool showHandles)
     {
         var b = GetBounds(it);
         var accent = new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3));
@@ -2362,6 +2570,20 @@ internal sealed class DrawingWindow : Window
             Canvas.SetTop(box, b.Top - 2);
             _overlay.Children.Add(box);
         }
+        else
+        {
+            var line = new Line
+            {
+                X1 = it.P1.X, Y1 = it.P1.Y, X2 = it.P2.X, Y2 = it.P2.Y,
+                Stroke = accent,
+                StrokeThickness = 1,
+                StrokeDashArray = new DoubleCollection { 4, 3 },
+                IsHitTestVisible = false,
+            };
+            _overlay.Children.Add(line);
+        }
+
+        if (!showHandles) return;
 
         var handles = GetResizeHandles(it);
         foreach (var h in handles)
@@ -2556,7 +2778,7 @@ internal sealed class DrawingWindow : Window
         if (item.Kind == "text" && string.IsNullOrWhiteSpace(item.Text))
         {
             _items.Remove(item);
-            if (ReferenceEquals(_selected, item)) _selected = null;
+            _selection.Remove(item);
         }
 
         if (!_editChangedAnything && _undoStack.Count > 0)
@@ -2606,8 +2828,8 @@ internal sealed class DrawingWindow : Window
         };
         if (dlg.ShowDialog(this) != true) return;
 
-        var prevSelected = _selected;
-        _selected = null;
+        var prevSelection = _selection.ToHashSet();
+        ClearSelection();
         Redraw();
         try
         {
@@ -2627,7 +2849,10 @@ internal sealed class DrawingWindow : Window
         }
         finally
         {
-            _selected = prevSelected;
+            _selection.Clear();
+            foreach (var it in prevSelection)
+                _selection.Add(it);
+            UpdatePropertyPanelForSelection();
             Redraw();
         }
     }
