@@ -148,7 +148,7 @@ public partial class MainWindow
         var drawingsFolder = GetDrawingsFolderPath();
         Directory.CreateDirectory(drawingsFolder);
 
-        fileName = PickNextDrawingFileName(baseName, editContext != null,
+        fileName = PickNextDrawingFileName(baseName,
             candidate =>
                 File.Exists(Path.Combine(imagesFolder, candidate))
                 || File.Exists(Path.Combine(drawingsFolder, Path.ChangeExtension(candidate, ".json"))));
@@ -178,7 +178,7 @@ public partial class MainWindow
         if (ownerPackage != null && _documentationService.FindPackagePath(_backupFolder, packageId!) == null)
             _documentationService.SavePackage(_backupFolder, ownerPackage);
 
-        fileName = PickNextDrawingFileName(baseName, editContext != null,
+        fileName = PickNextDrawingFileName(baseName,
             candidate =>
                 _documentationService.ImageExists(_backupFolder, packageId!, candidate)
                 || _documentationService.DrawingExists(_backupFolder, packageId!,
@@ -192,19 +192,9 @@ public partial class MainWindow
         return true;
     }
 
-    /// <summary>Picks <c>{base}.png</c>, or <c>{base}-1.png</c>, <c>{base}-2.png</c>, … so each save creates a fresh
-    /// versioned file. When <paramref name="alwaysVersion"/> is true (edit mode), <c>{base}.png</c> is skipped so the
-    /// original is never overwritten.</summary>
-    private static string PickNextDrawingFileName(string baseName, bool alwaysVersion,
-        Func<string, bool> existsPredicate)
+    /// <summary>Picks <c>{base}-1.png</c>, <c>{base}-2.png</c>, … (e.g. <c>drawing-2026-05-16-232532-1.png</c>).</summary>
+    private static string PickNextDrawingFileName(string baseName, Func<string, bool> existsPredicate)
     {
-        if (!alwaysVersion)
-        {
-            var firstCandidate = baseName + ".png";
-            if (!existsPredicate(firstCandidate))
-                return firstCandidate;
-        }
-
         for (int suffix = 1; suffix < 100000; suffix++)
         {
             var candidate = $"{baseName}-{suffix}.png";
@@ -271,8 +261,8 @@ public partial class MainWindow
         return DrawingWindow.TryDeserialize(json);
     }
 
-    /// <summary>Extracts the version-less base from a drawing filename: <c>drawing-2026-05-16-143000-3.png</c> →
-    /// <c>drawing-2026-05-16-143000</c>. Files that don't match the <c>drawing-</c> convention return their stem
+    /// <summary>Extracts the version-less base from a drawing filename: <c>drawing-2026-05-16-232532-2.png</c> →
+    /// <c>drawing-2026-05-16-232532</c>. Files that don't match the <c>drawing-</c> convention return their stem
     /// unchanged.</summary>
     internal static string ExtractDrawingBaseName(string fileName)
     {
@@ -280,19 +270,24 @@ public partial class MainWindow
         if (string.IsNullOrEmpty(stem))
             return stem;
 
+        // "drawing-" + "yyyy-MM-dd-HHmmss"
+        var timeBaseLength = DrawingFileNamePrefix.Length + 17;
+        if (stem.Length <= timeBaseLength)
+            return stem;
+
         var dashIndex = stem.LastIndexOf('-');
-        if (dashIndex > 0 && dashIndex < stem.Length - 1)
+        if (dashIndex <= 0 || dashIndex >= stem.Length - 1)
+            return stem;
+
+        var tail = stem.AsSpan(dashIndex + 1);
+        foreach (var ch in tail)
         {
-            var tail = stem.AsSpan(dashIndex + 1);
-            bool allDigits = true;
-            foreach (var ch in tail)
-            {
-                if (!char.IsDigit(ch)) { allDigits = false; break; }
-            }
-            if (allDigits)
-                return stem.Substring(0, dashIndex);
+            if (!char.IsDigit(ch))
+                return stem;
         }
-        return stem;
+
+        var withoutSuffix = stem.Substring(0, dashIndex);
+        return withoutSuffix.Length == timeBaseLength ? withoutSuffix : stem;
     }
 }
 
