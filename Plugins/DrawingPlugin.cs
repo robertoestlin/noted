@@ -340,6 +340,7 @@ internal sealed class ThemeToolStyle
 internal sealed class DrawingTheme
 {
     public const int VariantSlotCount = 3;
+    public const double DefaultArrowLabelFontSize = 18;
 
     public string Name { get; set; } = "Default";
 
@@ -380,7 +381,11 @@ internal sealed class DrawingTheme
         var seed = ThemeToolStyle.FromLegacyRoot(this);
         Rectangle ??= seed.Clone();
         Ellipse ??= seed.Clone();
-        Arrow ??= seed.Clone();
+        if (Arrow == null)
+        {
+            Arrow = seed.Clone();
+            Arrow.FontSize = DefaultArrowLabelFontSize;
+        }
         Text ??= seed.Clone();
         Freehand ??= seed.Clone();
 
@@ -1838,7 +1843,7 @@ internal sealed partial class DrawingWindow : Window
             if (_fontFamilyCombo.SelectedItem is string s)
             {
                 _fontFamily = new FontFamily(s);
-                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse")
+                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "arrow")
                 {
                     PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
@@ -1852,7 +1857,7 @@ internal sealed partial class DrawingWindow : Window
         _fontSizeBox = MakeNumberBox(_fontSize, FontSizeMin, FontSizeMax, v =>
         {
             _fontSize = v;
-            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse")
+            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "arrow")
             {
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
@@ -1954,10 +1959,10 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_freehandColorRow, isFreehand);
         SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && kind == "rect");
         SetPropertySectionVisibility(_cornerSlider, !isFreehand && kind == "rect");
-        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse");
-        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse");
+        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "arrow");
+        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse" or "arrow");
+        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "arrow");
+        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "arrow");
         SetPropertySectionVisibility(_arrowStyleHeader, !isFreehand && kind == "arrow");
         SetPropertySectionVisibility(_arrowHeadCombo, !isFreehand && kind == "arrow");
         RefreshSizeInfo(kind);
@@ -2100,9 +2105,17 @@ internal sealed partial class DrawingWindow : Window
                 it.TextColor = _textColor;
             }
         }
-        else if (sel.Kind == "arrow" || sel.Kind == "freehand")
+        else if (sel.Kind == "arrow")
         {
-            foreach (var it in _selection.Where(i => i.Kind is "arrow" or "freehand"))
+            foreach (var it in _selection.Where(i => i.Kind is "arrow"))
+            {
+                it.Stroke = _stroke;
+                it.TextColor = _textColor;
+            }
+        }
+        else if (sel.Kind == "freehand")
+        {
+            foreach (var it in _selection.Where(i => i.Kind is "freehand"))
                 it.Stroke = _stroke;
         }
         else if (sel.Kind == "text")
@@ -2793,7 +2806,7 @@ internal sealed partial class DrawingWindow : Window
         if (e.ClickCount == 2)
         {
             var hitDbl = HitTestTop(p);
-            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "text"))
+            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "text" || hitDbl.Kind == "arrow"))
             {
                 SetSingleSelection(hitDbl);
                 Redraw();
@@ -2920,6 +2933,9 @@ internal sealed partial class DrawingWindow : Window
                 Stroke = _stroke,
                 StrokeThickness = Math.Max(1.5, _thickness),
                 ArrowHead = _arrowHead,
+                FontSize = _fontSize,
+                FontFamily = _fontFamily,
+                TextColor = _textColor,
             },
             Tool.Freehand => new DrawItem
             {
@@ -3369,6 +3385,11 @@ internal sealed partial class DrawingWindow : Window
                 preservedEditor.Width = innerW;
                 preservedEditor.Height = innerH;
             }
+            else if (_editingItem.Kind == "arrow")
+            {
+                var size = MeasureArrowLabel(_editingItem, preservedEditor is TextBox tb ? tb.Text : _editingItem.Text, _canvas);
+                LayoutArrowLabelElement(preservedEditor, _editingItem, size);
+            }
             if (_editingItem.Kind is "rect" or "ellipse")
                 ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
             _canvas.Children.Add(preservedEditor);
@@ -3606,17 +3627,9 @@ internal sealed partial class DrawingWindow : Window
             }
             case "arrow":
             {
-                var line = new Line
-                {
-                    X1 = it.P1.X, Y1 = it.P1.Y, X2 = it.P2.X, Y2 = it.P2.Y,
-                    Stroke = it.Stroke,
-                    StrokeThickness = it.StrokeThickness,
-                    StrokeStartLineCap = PenLineCap.Round,
-                    StrokeEndLineCap = PenLineCap.Round,
-                    IsHitTestVisible = false,
-                };
-                surface.Children.Add(line);
+                RenderArrowShaft(it, surface);
                 AddArrowHeads(surface, it);
+                RenderArrowLabel(it, surface);
                 break;
             }
             case "text":
@@ -3786,11 +3799,12 @@ internal sealed partial class DrawingWindow : Window
         var b = GetBounds(it);
         var isFreshTextItem = it.Kind == "text" && string.IsNullOrEmpty(it.Text);
         var isShapeContainer = it.Kind == "rect" || it.Kind == "ellipse";
+        var isArrowLabel = it.Kind == "arrow";
 
         Brush boxBackground;
         Brush boxBorder;
         Thickness boxBorderThickness;
-        if (isShapeContainer)
+        if (isShapeContainer || isArrowLabel)
         {
             boxBackground = Brushes.Transparent;
             boxBorder = Brushes.Transparent;
@@ -3821,8 +3835,8 @@ internal sealed partial class DrawingWindow : Window
             Padding = new Thickness(0),
             AcceptsReturn = true,
             TextWrapping = isShapeContainer ? TextWrapping.Wrap : TextWrapping.NoWrap,
-            HorizontalContentAlignment = isShapeContainer ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-            VerticalContentAlignment = isShapeContainer ? VerticalAlignment.Center : VerticalAlignment.Top,
+            HorizontalContentAlignment = isShapeContainer || isArrowLabel ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+            VerticalContentAlignment = isShapeContainer || isArrowLabel ? VerticalAlignment.Center : VerticalAlignment.Top,
         };
         double left, top, w, h;
         if (it.Kind == "rect")
@@ -3841,6 +3855,14 @@ internal sealed partial class DrawingWindow : Window
             w = innerW;
             h = innerH;
         }
+        else if (isArrowLabel)
+        {
+            var size = MeasureArrowLabel(it, it.Text, _canvas);
+            left = 0;
+            top = 0;
+            w = size.Width;
+            h = size.Height;
+        }
         else if (isFreshTextItem)
         {
             left = it.P1.X;
@@ -3855,10 +3877,15 @@ internal sealed partial class DrawingWindow : Window
             w = Math.Max(160, b.Width + 24);
             h = Math.Max(it.FontSize + 12, b.Height + 8);
         }
-        Canvas.SetLeft(box, left);
-        Canvas.SetTop(box, top);
-        box.Width = w;
-        box.Height = h;
+        if (isArrowLabel)
+            LayoutArrowLabelElement(box, it, new Size(w, h));
+        else
+        {
+            Canvas.SetLeft(box, left);
+            Canvas.SetTop(box, top);
+            box.Width = w;
+            box.Height = h;
+        }
         if (isShapeContainer)
             ApplyShapeTextEditorChrome(box, it);
 
@@ -3928,6 +3955,12 @@ internal sealed partial class DrawingWindow : Window
                 var newH = Math.Max(box.FontSize * 1.6, lines.Length * box.FontSize * 1.4 + 12);
                 box.Width = newW;
                 box.Height = newH;
+            }
+            else if (it.Kind == "arrow")
+            {
+                var size = MeasureArrowLabel(it, text, box);
+                LayoutArrowLabelElement(box, it, size);
+                Redraw();
             }
         }
 
@@ -4210,7 +4243,11 @@ internal sealed partial class DrawingWindow : Window
             Stroke = ParseBrush(dto.Stroke),
             StrokeThickness = dto.StrokeThickness,
             Text = dto.Text ?? "",
-            FontSize = dto.FontSize > 0 ? dto.FontSize : 22,
+            FontSize = dto.FontSize > 0
+                ? dto.FontSize
+                : (string.Equals(dto.Kind, "arrow", StringComparison.OrdinalIgnoreCase)
+                    ? DrawingTheme.DefaultArrowLabelFontSize
+                    : 22),
             FontFamily = new FontFamily(string.IsNullOrWhiteSpace(dto.FontFamilyName) ? "Segoe UI" : dto.FontFamilyName),
             TextColor = ParseBrush(dto.TextColor),
             ArrowHead = Enum.TryParse<ArrowHeadStyle>(dto.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple,
@@ -4978,21 +5015,13 @@ internal sealed class ThemeSettingsWindow : Window
                 BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: false, kind, index);
                 break;
             case "arrow":
-                sp.Children.Add(EditorLabel("Stroke"));
-                ui.Stroke = MakeColorCombo();
-                sp.Children.Add(MakeThemeColorRow(ui.Stroke));
-                sp.Children.Add(EditorLabel("Thickness"));
-                ui.Thickness = new TextBox { Margin = new Thickness(0, 0, 0, 8) };
-                sp.Children.Add(ui.Thickness);
+                BuildShapeFields(sp, ui, includeFill: false, includeText: true, includeCorner: false, kind, index);
                 sp.Children.Add(EditorLabel("Arrow head"));
                 ui.ArrowHead = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
                 ui.ArrowHead.Items.Add("None");
                 ui.ArrowHead.Items.Add("Simple");
                 ui.ArrowHead.Items.Add("Double");
                 sp.Children.Add(ui.ArrowHead);
-
-                ui.Stroke.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.Stroke = DrawingPaletteColorPicker.GetSelectedHex(ui.Stroke!));
-                ui.Thickness.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Thickness!.Text, out var v)) s.Thickness = Math.Max(0.5, v); });
                 ui.ArrowHead.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.ArrowHead = ui.ArrowHead!.SelectedItem as string ?? "Simple");
                 break;
             case "text":
