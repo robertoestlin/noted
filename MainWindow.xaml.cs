@@ -1699,23 +1699,40 @@ public partial class MainWindow : Window
 
         foreach (var fileName in removedReferences)
         {
-            var filePath = Path.Combine(imagesFolder, fileName);
-            if (!File.Exists(filePath))
-                continue;
-
-            var destinationPath = EnsureUniqueImageFilePath(deletedFolder, fileName);
-            try
-            {
-                File.Move(filePath, destinationPath);
-                _inlineImageCache.Remove(fileName);
-            }
-            catch
-            {
-                // Best-effort cleanup; keep the file in place on failure.
-            }
+            TryMoveInlineImageFileToDeleted(imagesFolder, fileName);
+            _inlineImageCache.Remove(fileName);
+            TryMoveDrawingWorkspaceToDeleted(fileName);
         }
 
         PruneDeletedInlineImages();
+    }
+
+    private void TryMoveInlineImageFileToDeleted(string sourceFolder, string fileName)
+    {
+        var filePath = Path.Combine(sourceFolder, fileName);
+        if (!File.Exists(filePath))
+            return;
+
+        var deletedFolder = GetDeletedImagesFolderPath();
+        Directory.CreateDirectory(deletedFolder);
+        var destinationPath = EnsureUniqueImageFilePath(deletedFolder, fileName);
+        try
+        {
+            File.Move(filePath, destinationPath);
+        }
+        catch
+        {
+            // Best-effort cleanup; keep the file in place on failure.
+        }
+    }
+
+    private void TryMoveDrawingWorkspaceToDeleted(string pngFileName)
+    {
+        if (!pngFileName.StartsWith(DrawingFileNamePrefix, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var jsonName = Path.ChangeExtension(pngFileName, ".json");
+        TryMoveInlineImageFileToDeleted(GetDrawingsFolderPath(), jsonName);
     }
 
     private void PruneDeletedInlineImages()
@@ -1724,7 +1741,13 @@ public partial class MainWindow : Window
         if (!Directory.Exists(deletedFolder))
             return;
 
-        var files = Directory.EnumerateFiles(deletedFolder, "*.png", SearchOption.TopDirectoryOnly)
+        var files = Directory.EnumerateFiles(deletedFolder, "*.*", SearchOption.TopDirectoryOnly)
+            .Where(path =>
+            {
+                var ext = Path.GetExtension(path);
+                return ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                    || ext.Equals(".json", StringComparison.OrdinalIgnoreCase);
+            })
             .Select(path => new FileInfo(path))
             .OrderBy(info => info.LastWriteTimeUtc)
             .ThenBy(info => info.Name, StringComparer.OrdinalIgnoreCase)
@@ -1935,11 +1958,37 @@ public partial class MainWindow : Window
         {
             Directory.CreateDirectory(GetBackupImagesFolderPath());
             File.Move(deletedPath, imagePath);
+            TryRestoreDrawingWorkspaceFromDeleted(fileName);
             return true;
         }
         catch
         {
             return false;
+        }
+    }
+
+    private void TryRestoreDrawingWorkspaceFromDeleted(string pngFileName)
+    {
+        if (!pngFileName.StartsWith(DrawingFileNamePrefix, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var jsonName = Path.ChangeExtension(pngFileName, ".json");
+        var workspacePath = Path.Combine(GetDrawingsFolderPath(), jsonName);
+        if (File.Exists(workspacePath))
+            return;
+
+        var deletedPath = Path.Combine(GetDeletedImagesFolderPath(), jsonName);
+        if (!File.Exists(deletedPath))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(GetDrawingsFolderPath());
+            File.Move(deletedPath, workspacePath);
+        }
+        catch
+        {
+            // Best-effort restore for undo/redraw.
         }
     }
 
@@ -2021,6 +2070,18 @@ public partial class MainWindow : Window
         };
         containerGrid.Children.Add(resizeHandle);
         border.Child = containerGrid;
+
+        border.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (editor.Document == null)
+                return;
+
+            editor.Focus();
+            var docLine = editor.Document.GetLineByNumber(lineNumber);
+            editor.TextArea.Caret.Offset = docLine.Offset;
+            editor.Select(docLine.Offset, docLine.Length);
+            e.Handled = true;
+        };
 
         void EndResizeSession(bool commit)
         {
@@ -2745,6 +2806,30 @@ public partial class MainWindow : Window
         var line = editor.Document.GetLineByNumber(lineNumber);
         var lineText = editor.Document.GetText(line.Offset, line.Length);
         return TryGetInlineImageMarker(lineText, out marker);
+    }
+
+    private bool TryDeleteInlineImageAtCaret(TabDocument doc, bool onlyIfLineIsPureMarker = false)
+    {
+        var editor = doc.Editor;
+        if (!TryGetInlineImageMarkerAtCaret(editor, out var lineNumber, out var marker))
+            return false;
+
+        var document = editor.Document;
+        if (document == null)
+            return false;
+
+        var line = document.GetLineByNumber(lineNumber);
+        var lineText = document.GetText(line.Offset, line.Length);
+        if (onlyIfLineIsPureMarker
+            && !string.Equals(lineText.Trim(), marker.ToMarkerText(), StringComparison.Ordinal))
+            return false;
+
+        document.Remove(line.Offset, line.TotalLength);
+        int caretOffset = Math.Min(line.Offset, document.TextLength);
+        editor.Select(caretOffset, 0);
+        MarkDirty(doc);
+        editor.TextArea.TextView.Redraw();
+        return true;
     }
 
     private void FormatJson(TextEditor editor, bool keepOriginal)
@@ -4360,6 +4445,24 @@ public partial class MainWindow : Window
             && TryRemoveHighlightBeforeLineJoin(doc))
         {
             return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.None && key == Key.D)
+        {
+            if (TryDeleteInlineImageAtCaret(doc))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.None && key == Key.Back)
+        {
+            if (TryDeleteInlineImageAtCaret(doc, onlyIfLineIsPureMarker: true))
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         if (Keyboard.Modifiers == ModifierKeys.Alt
