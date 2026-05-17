@@ -5259,6 +5259,7 @@ internal sealed class ThemeSettingsWindow : Window
         var editorScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         _editor = new StackPanel();
         editorScroll.Content = _editor;
+        AttachWheelScroll(editorScroll);
         Grid.SetColumn(editorScroll, 0);
         centerGrid.Children.Add(editorScroll);
 
@@ -5350,16 +5351,14 @@ internal sealed class ThemeSettingsWindow : Window
         {
             var panel = new StackPanel();
             _kindPanels[kind] = panel;
-            tabs.Items.Add(new TabItem
+            var sv = new ScrollViewer
             {
-                Header = header,
-                Content = new ScrollViewer
-                {
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                    Content = panel,
-                },
-            });
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = panel,
+            };
+            AttachWheelScroll(sv);
+            tabs.Items.Add(new TabItem { Header = header, Content = sv });
         }
         _editor.Children.Add(tabs);
     }
@@ -5826,4 +5825,15 @@ internal sealed class ThemeSettingsWindow : Window
         Foreground = Brushes.DimGray,
         Margin = new Thickness(0, 2, 0, 2),
     };
+
+    /// <summary>Force mouse-wheel events on this ScrollViewer to scroll it, even when child
+    /// controls (ComboBox, TextBox) would otherwise capture the wheel.</summary>
+    private static void AttachWheelScroll(ScrollViewer sv)
+    {
+        sv.PreviewMouseWheel += (_, e) =>
+        {
+            sv.ScrollToVerticalOffset(sv.VerticalOffset - e.Delta);
+            e.Handled = true;
+        };
+    }
 }
