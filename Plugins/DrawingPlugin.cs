@@ -334,12 +334,16 @@ internal sealed class ThemeToolStyle
 
 internal sealed class DrawingTheme
 {
-    public const int VariantSlotCount = 3;
+    /// <summary>Number of "toolbar slot" variants per tool kind. The first N variants in each
+    /// list are toolbar candidates (rendered as top-bar buttons when enabled). Additional
+    /// variants beyond this count are valid but only appear in the property panel.</summary>
+    public const int ToolbarSlotCount = 3;
     public const double DefaultArrowLabelFontSize = 18;
 
     public string Name { get; set; } = "Default";
 
-    // 3-slot variant lists per tool kind. Each ThemeToolStyle carries its own Enabled flag.
+    // Per-kind variant lists. Always contains at least ToolbarSlotCount entries; can have more.
+    // Each ThemeToolStyle carries its own Enabled flag.
     public List<ThemeToolStyle> Rectangles { get; set; } = new();
     public List<ThemeToolStyle> Ellipses { get; set; } = new();
     public List<ThemeToolStyle> Arrows { get; set; } = new();
@@ -384,8 +388,10 @@ internal sealed class DrawingTheme
         Text ??= seed.Clone();
         Freehand ??= seed.Clone();
 
-        // Step 2: ensure each kind has exactly VariantSlotCount entries. If empty (older file format),
-        // seed from the legacy singleton with variant 0 enabled, others disabled.
+        // Step 2: ensure each kind has at least ToolbarSlotCount entries. If empty (older file
+        // format), seed from the legacy singleton with variant 0 enabled, others disabled. Any
+        // count above ToolbarSlotCount is preserved as-is (extra variants appear in the property
+        // panel only).
         EnsureVariantList(Rectangles, Rectangle!);
         EnsureVariantList(Ellipses, Ellipse!);
         EnsureVariantList(Arrows, Arrow!);
@@ -407,14 +413,12 @@ internal sealed class DrawingTheme
             first.Enabled = true;
             list.Add(first);
         }
-        while (list.Count < VariantSlotCount)
+        while (list.Count < ToolbarSlotCount)
         {
             var clone = list[0].Clone();
             clone.Enabled = false;
             list.Add(clone);
         }
-        if (list.Count > VariantSlotCount)
-            list.RemoveRange(VariantSlotCount, list.Count - VariantSlotCount);
     }
 
     private static int ClampActiveIndex(List<ThemeToolStyle> list, int idx)
@@ -1414,6 +1418,8 @@ internal sealed partial class DrawingWindow : Window
     private TextBlock? _sizeHeader;
     private TextBlock? _sizeLine1;
     private TextBlock? _sizeLine2;
+    private TextBlock? _variantsHeader;
+    private WrapPanel? _variantsPanel;
 
     private StackPanel? _toolsPanel;
 
@@ -1785,6 +1791,11 @@ internal sealed partial class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_sizeLine2);
 
+        _variantsHeader = SectionHeader("Variants");
+        _propertyPanel.Children.Add(_variantsHeader);
+        _variantsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+        _propertyPanel.Children.Add(_variantsPanel);
+
         _fillColorPicker = new CompactColorPicker(_fill, b =>
         {
             _fill = b;
@@ -1980,6 +1991,9 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_sizeHeader, false);
             SetPropertySectionVisibility(_sizeLine1, false);
             SetPropertySectionVisibility(_sizeLine2, false);
+            SetPropertySectionVisibility(_variantsHeader, false);
+            SetPropertySectionVisibility(_variantsPanel, false);
+            _variantsPanel?.Children.Clear();
             return;
         }
 
@@ -2002,6 +2016,125 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         SetPropertySectionVisibility(_arrowDirectCheck, isArrow);
         RefreshSizeInfo(kind);
+        RefreshVariantsSection(kind);
+    }
+
+    private void RefreshVariantsSection(string? kind)
+    {
+        if (_variantsPanel == null || _variantsHeader == null) return;
+        _variantsPanel.Children.Clear();
+        if (kind is not ("rect" or "ellipse" or "arrow" or "text" or "freehand"))
+        {
+            SetPropertySectionVisibility(_variantsHeader, false);
+            SetPropertySectionVisibility(_variantsPanel, false);
+            return;
+        }
+
+        _activeTheme.EnsureToolStyles();
+        var variants = _activeTheme.GetVariants(kind);
+        var tool = MapDrawKindToTool(kind);
+        var activeIdx = _activeTheme.GetActiveIndex(kind);
+        var hasMatchingSelection = _selection.Any(s => s.Kind == kind);
+        var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
+        var brushOff = SystemColors.ControlBrush;
+
+        var anyShown = false;
+        for (var i = 0; i < variants.Count; i++)
+        {
+            if (!variants[i].Enabled) continue;
+            var captured = i;
+            var st = variants[i];
+            var btn = new Button
+            {
+                Margin = new Thickness(0, 0, 4, 4),
+                Padding = new Thickness(6, 4, 6, 4),
+                MinWidth = 38,
+                MinHeight = 32,
+                ToolTip = $"Variant {i + 1}",
+                Content = BuildToolIcon(tool, st),
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Background = (!hasMatchingSelection && i == activeIdx) ? brushOn : brushOff,
+            };
+            btn.Click += (_, _) => OnPropertyVariantClicked(kind, captured);
+            _variantsPanel.Children.Add(btn);
+            anyShown = true;
+        }
+
+        SetPropertySectionVisibility(_variantsHeader, anyShown);
+        SetPropertySectionVisibility(_variantsPanel, anyShown);
+    }
+
+    private void OnPropertyVariantClicked(string kind, int variantIndex)
+    {
+        _activeTheme.EnsureToolStyles();
+        var variants = _activeTheme.GetVariants(kind);
+        if (variantIndex < 0 || variantIndex >= variants.Count) return;
+        var st = variants[variantIndex];
+        if (!st.Enabled) return;
+
+        if (_selection.Any(s => s.Kind == kind))
+        {
+            ApplyVariantToSelection(kind, st);
+            // Keep the highlight reflecting the theme's active variant for new draws; just
+            // refresh visuals after applying.
+            UpdatePropertyPanelVisibility();
+        }
+        else
+        {
+            SelectTool(MapDrawKindToTool(kind), variantIndex);
+        }
+    }
+
+    private void ApplyVariantToSelection(string kind, ThemeToolStyle st)
+    {
+        if (_selection.Count == 0) return;
+        SnapshotForUndo();
+        var ahParsed = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
+        foreach (var it in _selection.Where(i => i.Kind == kind))
+        {
+            switch (kind)
+            {
+                case "rect":
+                    it.Fill = ParseBrush(st.Fill);
+                    it.Stroke = ParseBrush(st.Stroke);
+                    it.TextColor = ParseBrush(st.TextColor);
+                    it.FontFamily = new FontFamily(st.FontFamilyName);
+                    it.FontSize = st.FontSize;
+                    it.StrokeThickness = st.Thickness;
+                    it.CornerRadius = st.CornerRadius;
+                    break;
+                case "ellipse":
+                    it.Fill = ParseBrush(st.Fill);
+                    it.Stroke = ParseBrush(st.Stroke);
+                    it.TextColor = ParseBrush(st.TextColor);
+                    it.FontFamily = new FontFamily(st.FontFamilyName);
+                    it.FontSize = st.FontSize;
+                    it.StrokeThickness = st.Thickness;
+                    break;
+                case "arrow":
+                    it.Stroke = ParseBrush(st.Stroke);
+                    it.TextColor = ParseBrush(st.TextColor);
+                    it.FontFamily = new FontFamily(st.FontFamilyName);
+                    it.FontSize = st.FontSize;
+                    it.StrokeThickness = st.Thickness;
+                    it.ArrowHead = ahParsed;
+                    break;
+                case "text":
+                    it.TextColor = ParseBrush(st.TextColor);
+                    it.Stroke = ParseBrush(st.TextColor);
+                    it.FontFamily = new FontFamily(st.FontFamilyName);
+                    it.FontSize = st.FontSize;
+                    it.StrokeThickness = st.Thickness;
+                    break;
+                case "freehand":
+                    it.Stroke = ParseBrush(st.Stroke);
+                    it.StrokeThickness = st.FreeThickness;
+                    break;
+            }
+        }
+        SyncFromSelected();
+        Redraw();
     }
 
     private void RefreshSizeInfo(string? kind)
@@ -2245,14 +2378,21 @@ internal sealed partial class DrawingWindow : Window
     {
         if (_toolsPanel == null) return;
         var variants = _activeTheme.GetVariants(kind);
+        // Only the first ToolbarSlotCount variants are toolbar candidates; any extras live in the
+        // property panel only.
+        var slotCount = Math.Min(variants.Count, DrawingTheme.ToolbarSlotCount);
         var enabledIndexes = new List<int>();
-        for (var i = 0; i < variants.Count; i++)
+        for (var i = 0; i < slotCount; i++)
         {
             if (variants[i].Enabled)
                 enabledIndexes.Add(i);
         }
         if (enabledIndexes.Count == 0)
-            enabledIndexes.Add(_activeTheme.GetActiveIndex(kind));
+        {
+            var fallback = _activeTheme.GetActiveIndex(kind);
+            if (fallback < 0 || fallback >= slotCount) fallback = 0;
+            enabledIndexes.Add(fallback);
+        }
 
         var multi = enabledIndexes.Count > 1;
         foreach (var index in enabledIndexes)
@@ -5001,11 +5141,18 @@ internal sealed class ThemeSettingsWindow : Window
         public TextBox? FontSize, Thickness, Corner, FreeThickness;
     }
 
-    private readonly VariantUi[] _rect = { new(), new(), new() };
-    private readonly VariantUi[] _ell = { new(), new(), new() };
-    private readonly VariantUi[] _arr = { new(), new(), new() };
-    private readonly VariantUi[] _txt = { new(), new(), new() };
-    private readonly VariantUi[] _free = { new(), new(), new() };
+    // Per-kind UI controls, index-aligned with the editing theme's variant lists.
+    private readonly Dictionary<string, List<VariantUi>> _kindUi = new()
+    {
+        ["rect"] = new(),
+        ["ellipse"] = new(),
+        ["arrow"] = new(),
+        ["text"] = new(),
+        ["freehand"] = new(),
+    };
+
+    // Per-kind tab panel (rebuilt on theme change, add/remove variant).
+    private readonly Dictionary<string, StackPanel> _kindPanels = new();
 
     private Canvas? _previewCanvas;
 
@@ -5187,7 +5334,7 @@ internal sealed class ThemeSettingsWindow : Window
         customColorsRow.Children.Add(btnCustomColors);
         customColorsRow.Children.Add(new TextBlock
         {
-            Text = "Up to 3 variants per tool. Untick a variant to hide it from the toolbar.",
+            Text = "First 3 variants are toolbar slots; add more for the property panel.",
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = Brushes.Gray,
             FontSize = 11,
@@ -5195,44 +5342,168 @@ internal sealed class ThemeSettingsWindow : Window
         _editor.Children.Add(customColorsRow);
 
         var tabs = new TabControl { MinHeight = 460, Margin = new Thickness(0, 4, 0, 0) };
-        tabs.Items.Add(new TabItem { Header = "Rectangle", Content = BuildVariantsRow(_rect, "rect") });
-        tabs.Items.Add(new TabItem { Header = "Circle", Content = BuildVariantsRow(_ell, "ellipse") });
-        tabs.Items.Add(new TabItem { Header = "Arrow", Content = BuildVariantsRow(_arr, "arrow") });
-        tabs.Items.Add(new TabItem { Header = "Text", Content = BuildVariantsRow(_txt, "text") });
-        tabs.Items.Add(new TabItem { Header = "Freeform", Content = BuildVariantsRow(_free, "freehand") });
+        foreach (var (kind, header) in new[]
+        {
+            ("rect", "Rectangle"), ("ellipse", "Circle"), ("arrow", "Arrow"),
+            ("text", "Text"), ("freehand", "Freeform"),
+        })
+        {
+            var panel = new StackPanel();
+            _kindPanels[kind] = panel;
+            tabs.Items.Add(new TabItem
+            {
+                Header = header,
+                Content = new ScrollViewer
+                {
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    Content = panel,
+                },
+            });
+        }
         _editor.Children.Add(tabs);
     }
 
-    private UIElement BuildVariantsRow(VariantUi[] uiArr, string kind)
+    private void RebuildKindPane(string kind)
     {
-        var grid = new Grid { Margin = new Thickness(4) };
-        for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+        if (_editing == null) return;
+        _editing.EnsureToolStyles();
+        var variants = _editing.GetVariants(kind);
+        if (!_kindPanels.TryGetValue(kind, out var panel)) return;
+        panel.Children.Clear();
+
+        var uiList = _kindUi[kind];
+        uiList.Clear();
+        for (var i = 0; i < variants.Count; i++) uiList.Add(new VariantUi());
+
+        var slotsHeader = new TextBlock
         {
-            var card = BuildVariantCard(uiArr, i, kind);
-            Grid.SetColumn(card, i);
-            grid.Children.Add(card);
-        }
-        return new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = grid,
+            Text = "Toolbar slots (top 3) — appear as buttons in the drawing toolbar.",
+            Foreground = Brushes.Gray,
+            FontSize = 11,
+            Margin = new Thickness(4, 2, 4, 4),
         };
+        panel.Children.Add(slotsHeader);
+
+        var slotGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        for (var i = 0; i < DrawingTheme.ToolbarSlotCount; i++)
+            slotGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var slotCount = Math.Min(variants.Count, DrawingTheme.ToolbarSlotCount);
+        for (var i = 0; i < slotCount; i++)
+        {
+            var card = BuildVariantCard(uiList[i], i, kind, isExtra: false);
+            Grid.SetColumn(card, i);
+            slotGrid.Children.Add(card);
+        }
+        panel.Children.Add(slotGrid);
+
+        var extraCount = variants.Count - DrawingTheme.ToolbarSlotCount;
+        if (extraCount > 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Extra variants — appear after Size in the property panel.",
+                Foreground = Brushes.Gray,
+                FontSize = 11,
+                Margin = new Thickness(4, 8, 4, 4),
+            });
+
+            var extrasGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+            for (var i = 0; i < DrawingTheme.ToolbarSlotCount; i++)
+                extrasGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var rowsNeeded = (extraCount + DrawingTheme.ToolbarSlotCount - 1) / DrawingTheme.ToolbarSlotCount;
+            for (var r = 0; r < rowsNeeded; r++)
+                extrasGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var idx = DrawingTheme.ToolbarSlotCount; idx < variants.Count; idx++)
+            {
+                var rel = idx - DrawingTheme.ToolbarSlotCount;
+                var card = BuildVariantCard(uiList[idx], idx, kind, isExtra: true);
+                Grid.SetColumn(card, rel % DrawingTheme.ToolbarSlotCount);
+                Grid.SetRow(card, rel / DrawingTheme.ToolbarSlotCount);
+                extrasGrid.Children.Add(card);
+            }
+            panel.Children.Add(extrasGrid);
+        }
+
+        var addBtn = new Button
+        {
+            Content = "+ Add variant",
+            Padding = new Thickness(10, 4, 10, 4),
+            Margin = new Thickness(4, 4, 4, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        addBtn.Click += (_, _) => AddVariant(kind);
+        panel.Children.Add(addBtn);
+
+        _suppressUpdate = true;
+        try
+        {
+            for (var i = 0; i < variants.Count; i++)
+                LoadVariantUi(uiList[i], variants[i]);
+        }
+        finally
+        {
+            _suppressUpdate = false;
+        }
     }
 
-    private FrameworkElement BuildVariantCard(VariantUi[] uiArr, int index, string kind)
+    private void AddVariant(string kind)
     {
-        var ui = uiArr[index];
+        if (_editing == null) return;
+        _editing.EnsureToolStyles();
+        var variants = _editing.GetVariants(kind);
+        var seed = variants.Count > 0 ? variants[0].Clone() : new ThemeToolStyle();
+        seed.Enabled = false;
+        variants.Add(seed);
+        RebuildKindPane(kind);
+        RebuildThemePreview();
+    }
+
+    private void RemoveVariant(string kind, int index)
+    {
+        if (_editing == null) return;
+        _editing.EnsureToolStyles();
+        var variants = _editing.GetVariants(kind);
+        // Slot variants (0..ToolbarSlotCount-1) are permanent; only extras can be removed.
+        if (index < DrawingTheme.ToolbarSlotCount || index >= variants.Count) return;
+        variants.RemoveAt(index);
+        var activeIdx = _editing.GetActiveIndex(kind);
+        if (activeIdx >= variants.Count) _editing.SetActiveIndex(kind, Math.Max(0, variants.Count - 1));
+        else if (activeIdx > index) _editing.SetActiveIndex(kind, activeIdx - 1);
+        RebuildKindPane(kind);
+        RebuildThemePreview();
+    }
+
+    private FrameworkElement BuildVariantCard(VariantUi ui, int index, string kind, bool isExtra)
+    {
         var sp = new StackPanel { Margin = new Thickness(2) };
-        sp.Children.Add(new TextBlock
+        var headerRow = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headerText = new TextBlock
         {
             Text = $"Variant {index + 1}",
             FontWeight = FontWeights.SemiBold,
             Foreground = Brushes.DimGray,
-            Margin = new Thickness(0, 0, 0, 4),
-        });
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(headerText, 0);
+        headerRow.Children.Add(headerText);
+        if (isExtra)
+        {
+            var removeBtn = new Button
+            {
+                Content = "Remove",
+                Padding = new Thickness(6, 1, 6, 1),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            removeBtn.Click += (_, _) => RemoveVariant(kind, index);
+            Grid.SetColumn(removeBtn, 1);
+            headerRow.Children.Add(removeBtn);
+        }
+        sp.Children.Add(headerRow);
+
         ui.Enabled = new CheckBox { Content = "Enabled", Margin = new Thickness(0, 0, 0, 8) };
         ui.Enabled.Checked += (_, _) => OnEnabledChanged(kind, index, true);
         ui.Enabled.Unchecked += (_, _) => OnEnabledChanged(kind, index, false);
@@ -5385,13 +5656,12 @@ internal sealed class ThemeSettingsWindow : Window
         try
         {
             _editing.EnsureToolStyles();
-            for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+            foreach (var (kind, uiList) in _kindUi)
             {
-                RepopulateColorCombos(_rect[i], _editing.Rectangles[i]);
-                RepopulateColorCombos(_ell[i], _editing.Ellipses[i]);
-                RepopulateColorCombos(_arr[i], _editing.Arrows[i]);
-                RepopulateColorCombos(_txt[i], _editing.Texts[i]);
-                RepopulateColorCombos(_free[i], _editing.Freehands[i]);
+                var variants = _editing.GetVariants(kind);
+                var n = Math.Min(uiList.Count, variants.Count);
+                for (var i = 0; i < n; i++)
+                    RepopulateColorCombos(uiList[i], variants[i]);
             }
             RebuildThemePreview();
         }
@@ -5459,31 +5729,28 @@ internal sealed class ThemeSettingsWindow : Window
 
     private void LoadEditor()
     {
-        _suppressUpdate = true;
-        try
+        if (_editing == null)
         {
-            if (_editing == null)
+            _suppressUpdate = true;
+            try
             {
                 _nameBox!.Text = "";
+                foreach (var panel in _kindPanels.Values) panel.Children.Clear();
+                foreach (var uiList in _kindUi.Values) uiList.Clear();
                 RebuildThemePreview();
-                return;
             }
-            _nameBox!.Text = _editing.Name;
-            _editing.EnsureToolStyles();
-            for (var i = 0; i < DrawingTheme.VariantSlotCount; i++)
+            finally
             {
-                LoadVariantUi(_rect[i], _editing.Rectangles[i]);
-                LoadVariantUi(_ell[i], _editing.Ellipses[i]);
-                LoadVariantUi(_arr[i], _editing.Arrows[i]);
-                LoadVariantUi(_txt[i], _editing.Texts[i]);
-                LoadVariantUi(_free[i], _editing.Freehands[i]);
+                _suppressUpdate = false;
             }
-            RebuildThemePreview();
+            return;
         }
-        finally
-        {
-            _suppressUpdate = false;
-        }
+
+        _nameBox!.Text = _editing.Name;
+        _editing.EnsureToolStyles();
+        foreach (var kind in _kindPanels.Keys)
+            RebuildKindPane(kind);
+        RebuildThemePreview();
     }
 
     private static void LoadVariantUi(VariantUi ui, ThemeToolStyle style)
