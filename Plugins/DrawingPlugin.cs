@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -526,6 +527,22 @@ internal sealed class DrawingTheme
     };
 }
 
+internal sealed class ThemeDisplayNameConverter : IValueConverter
+{
+    private const string BuiltInSuffix = " (built-in)";
+
+    public object Convert(object value, System.Type targetType, object parameter, System.Globalization.CultureInfo culture)
+    {
+        var s = value as string ?? string.Empty;
+        return s.EndsWith(BuiltInSuffix, System.StringComparison.Ordinal)
+            ? s[..^BuiltInSuffix.Length]
+            : s;
+    }
+
+    public object ConvertBack(object value, System.Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        => throw new System.NotSupportedException();
+}
+
 internal static class DrawingThemeStore
 {
     private const string FolderName = @"c:\tools\backup\noted";
@@ -545,6 +562,9 @@ internal static class DrawingThemeStore
                 return CreateDefaults();
             var loaded = JsonSerializer.Deserialize<List<DrawingTheme>>(File.ReadAllText(FilePath));
             if (loaded == null || loaded.Count == 0)
+                return CreateDefaults();
+            MigrateLegacyNames(loaded);
+            if (loaded.Count == 0)
                 return CreateDefaults();
             foreach (var t in loaded)
                 t.EnsureToolStyles();
@@ -578,29 +598,48 @@ internal static class DrawingThemeStore
     {
         new DrawingTheme
         {
-            Name = "Default", Fill = "Transparent", Stroke = "#222222", TextColor = "#222222",
+            Name = "Mono (built-in)", Fill = "Transparent", Stroke = "#222222", TextColor = "#222222",
             FontFamilyName = "Segoe UI", FontSize = 22, Thickness = 2, CornerRadius = 14,
             ArrowHead = "Simple", FreeThickness = 6,
         },
         new DrawingTheme
         {
-            Name = "Marker", Fill = "#FFF6A9", Stroke = "#1F1F1F", TextColor = "#1F1F1F",
+            Name = "Mono Square (built-in)", Fill = "Transparent", Stroke = "#000000", TextColor = "#000000",
+            FontFamilyName = "Consolas", FontSize = 18, Thickness = 1.5, CornerRadius = 0,
+            ArrowHead = "Simple", FreeThickness = 3,
+        },
+        new DrawingTheme
+        {
+            Name = "Marker (built-in)", Fill = "#FFF6A9", Stroke = "#1F1F1F", TextColor = "#1F1F1F",
             FontFamilyName = "Segoe UI", FontSize = 24, Thickness = 3, CornerRadius = 18,
             ArrowHead = "Simple", FreeThickness = 9,
         },
         new DrawingTheme
         {
-            Name = "Notebook", Fill = "#F5F5DC", Stroke = "#3F51B5", TextColor = "#3F51B5",
+            Name = "Notebook (built-in)", Fill = "#F5F5DC", Stroke = "#3F51B5", TextColor = "#3F51B5",
             FontFamilyName = "Comic Sans MS", FontSize = 22, Thickness = 2, CornerRadius = 10,
             ArrowHead = "Simple", FreeThickness = 5,
         },
-        new DrawingTheme
-        {
-            Name = "Mono", Fill = "Transparent", Stroke = "#000000", TextColor = "#000000",
-            FontFamilyName = "Consolas", FontSize = 18, Thickness = 1.5, CornerRadius = 0,
-            ArrowHead = "Simple", FreeThickness = 3,
-        },
     };
+
+    /// <summary>Rename legacy theme names to the new "(built-in)" naming and drop the deprecated
+    /// "Default" theme. Idempotent — re-running has no effect since the source names are gone
+    /// after the first pass.</summary>
+    private static void MigrateLegacyNames(List<DrawingTheme> themes)
+    {
+        themes.RemoveAll(t => string.Equals(t.Name, "Default", StringComparison.Ordinal));
+        foreach (var t in themes)
+        {
+            t.Name = t.Name switch
+            {
+                "Mr V" => "Mono (built-in)",
+                "Mono" => "Mono Square (built-in)",
+                "Marker" => "Marker (built-in)",
+                "Notebook" => "Notebook (built-in)",
+                _ => t.Name,
+            };
+        }
+    }
 }
 
 internal sealed class DrawingNamedColor
@@ -1668,7 +1707,15 @@ internal sealed partial class DrawingWindow : Window
     {
         var prev = _activeTheme?.Name;
         _themeCombo.ItemsSource = null;
-        _themeCombo.DisplayMemberPath = "Name";
+        // ItemTemplate strips the "(built-in)" suffix for display; the underlying DrawingTheme.Name
+        // is unchanged so the Drawing Themes settings window still shows the full name.
+        _themeCombo.DisplayMemberPath = null;
+        if (_themeCombo.ItemTemplate == null)
+        {
+            var ft = new FrameworkElementFactory(typeof(TextBlock));
+            ft.SetBinding(TextBlock.TextProperty, new Binding("Name") { Converter = new ThemeDisplayNameConverter() });
+            _themeCombo.ItemTemplate = new DataTemplate { VisualTree = ft };
+        }
         _themeCombo.ItemsSource = _themes;
         var match = _themes.FirstOrDefault(t => string.Equals(t.Name, prev, StringComparison.OrdinalIgnoreCase))
             ?? _themes.FirstOrDefault();
