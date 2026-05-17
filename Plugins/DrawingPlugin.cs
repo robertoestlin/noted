@@ -554,39 +554,58 @@ internal static class DrawingThemeStore
     /// <summary>Folder for drawing-themes.json and drawing-named-colors.json.</summary>
     public static string NotedDataDirectory => FolderName;
 
+    /// <summary>Built-in themes are identified by the trailing "(built-in)" name suffix. Built-ins
+    /// are always loaded from code via <see cref="CreateDefaults"/> and are never persisted to the
+    /// user's drawing-themes.json — only user-created themes go there.</summary>
+    public const string BuiltInSuffix = " (built-in)";
+
+    public static bool IsBuiltInName(string? name)
+        => name != null && name.EndsWith(BuiltInSuffix, System.StringComparison.Ordinal);
+
     public static List<DrawingTheme> Load()
     {
+        var result = CreateDefaults();
         try
         {
             if (!File.Exists(FilePath))
-                return CreateDefaults();
+                return Finalize(result);
             var loaded = JsonSerializer.Deserialize<List<DrawingTheme>>(File.ReadAllText(FilePath));
             if (loaded == null || loaded.Count == 0)
-                return CreateDefaults();
+                return Finalize(result);
             MigrateLegacyNames(loaded);
-            if (loaded.Count == 0)
-                return CreateDefaults();
             foreach (var t in loaded)
-                t.EnsureToolStyles();
-            return loaded;
+            {
+                if (IsBuiltInName(t.Name)) continue; // canonical version comes from code
+                result.Add(t);
+            }
+            return Finalize(result);
         }
         catch
         {
-            return CreateDefaults();
+            return Finalize(CreateDefaults());
         }
+    }
+
+    private static List<DrawingTheme> Finalize(List<DrawingTheme> themes)
+    {
+        foreach (var t in themes) t.EnsureToolStyles();
+        return themes;
     }
 
     public static void Save(List<DrawingTheme> themes)
     {
         try
         {
-            foreach (var t in themes)
+            // Built-ins are loaded from code on every launch, so we never persist them — only
+            // user-created themes go to disk.
+            var userThemes = themes.Where(t => !IsBuiltInName(t.Name)).ToList();
+            foreach (var t in userThemes)
             {
                 t.EnsureToolStyles();
                 t.MirrorLegacyFromProfiles();
             }
             Directory.CreateDirectory(FolderName);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(themes, Options));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(userThemes, Options));
         }
         catch
         {
@@ -610,12 +629,6 @@ internal static class DrawingThemeStore
         },
         new DrawingTheme
         {
-            Name = "Marker (built-in)", Fill = "#FFF6A9", Stroke = "#1F1F1F", TextColor = "#1F1F1F",
-            FontFamilyName = "Segoe UI", FontSize = 24, Thickness = 3, CornerRadius = 18,
-            ArrowHead = "Simple", FreeThickness = 9,
-        },
-        new DrawingTheme
-        {
             Name = "Notebook (built-in)", Fill = "#F5F5DC", Stroke = "#3F51B5", TextColor = "#3F51B5",
             FontFamilyName = "Comic Sans MS", FontSize = 22, Thickness = 2, CornerRadius = 10,
             ArrowHead = "Simple", FreeThickness = 5,
@@ -634,7 +647,6 @@ internal static class DrawingThemeStore
             {
                 "Mr V" => "Mono (built-in)",
                 "Mono" => "Mono Square (built-in)",
-                "Marker" => "Marker (built-in)",
                 "Notebook" => "Notebook (built-in)",
                 _ => t.Name,
             };
@@ -5180,6 +5192,8 @@ internal sealed class ThemeSettingsWindow : Window
     private bool _suppressUpdate;
 
     private TextBox? _nameBox;
+    private TextBlock? _builtInHint;
+    private TabControl? _tabs;
 
     private sealed class VariantUi
     {
@@ -5280,7 +5294,10 @@ internal sealed class ThemeSettingsWindow : Window
             if (_list.SelectedItem is DrawingTheme t)
             {
                 var copy = t.Clone();
-                copy.Name = t.Name + " copy";
+                var baseName = DrawingThemeStore.IsBuiltInName(t.Name)
+                    ? t.Name[..^DrawingThemeStore.BuiltInSuffix.Length]
+                    : t.Name;
+                copy.Name = baseName + " copy";
                 Themes.Add(copy);
                 _list.ItemsSource = null;
                 _list.ItemsSource = Themes;
@@ -5289,13 +5306,20 @@ internal sealed class ThemeSettingsWindow : Window
         };
         btnRemove.Click += (_, _) =>
         {
-            if (_list.SelectedItem is DrawingTheme t && Themes.Count > 1)
+            if (_list.SelectedItem is DrawingTheme t
+                && !DrawingThemeStore.IsBuiltInName(t.Name)
+                && Themes.Count > 1)
             {
                 Themes.Remove(t);
                 _list.ItemsSource = null;
                 _list.ItemsSource = Themes;
                 _list.SelectedIndex = 0;
             }
+        };
+        _list.SelectionChanged += (_, _) =>
+        {
+            btnRemove.IsEnabled = _list.SelectedItem is DrawingTheme sel
+                && !DrawingThemeStore.IsBuiltInName(sel.Name);
         };
 
         // Center: editor + live preview
@@ -5371,6 +5395,17 @@ internal sealed class ThemeSettingsWindow : Window
         };
         _editor.Children.Add(_nameBox);
 
+        _builtInHint = new TextBlock
+        {
+            Text = "Built-in theme — read-only. Use Duplicate to customize.",
+            Foreground = Brushes.DarkOrange,
+            FontStyle = FontStyles.Italic,
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 8),
+            Visibility = Visibility.Collapsed,
+        };
+        _editor.Children.Add(_builtInHint);
+
         var customColorsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
         var btnCustomColors = new Button { Content = "Custom colors…", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(0, 0, 8, 0) };
         btnCustomColors.Click += (_, _) =>
@@ -5389,7 +5424,7 @@ internal sealed class ThemeSettingsWindow : Window
         });
         _editor.Children.Add(customColorsRow);
 
-        var tabs = new TabControl { MinHeight = 460, Margin = new Thickness(0, 4, 0, 0) };
+        _tabs = new TabControl { MinHeight = 460, Margin = new Thickness(0, 4, 0, 0) };
         foreach (var (kind, header) in new[]
         {
             ("rect", "Rectangle"), ("ellipse", "Circle"), ("arrow", "Arrow"),
@@ -5405,9 +5440,9 @@ internal sealed class ThemeSettingsWindow : Window
                 Content = panel,
             };
             AttachWheelScroll(sv);
-            tabs.Items.Add(new TabItem { Header = header, Content = sv });
+            _tabs.Items.Add(new TabItem { Header = header, Content = sv });
         }
-        _editor.Children.Add(tabs);
+        _editor.Children.Add(_tabs);
     }
 
     private void RebuildKindPane(string kind)
@@ -5789,6 +5824,7 @@ internal sealed class ThemeSettingsWindow : Window
             {
                 _suppressUpdate = false;
             }
+            ApplyBuiltInLock(false);
             return;
         }
 
@@ -5797,6 +5833,15 @@ internal sealed class ThemeSettingsWindow : Window
         foreach (var kind in _kindPanels.Keys)
             RebuildKindPane(kind);
         RebuildThemePreview();
+        ApplyBuiltInLock(DrawingThemeStore.IsBuiltInName(_editing.Name));
+    }
+
+    private void ApplyBuiltInLock(bool locked)
+    {
+        if (_nameBox != null) _nameBox.IsEnabled = !locked;
+        if (_tabs != null) _tabs.IsEnabled = !locked;
+        if (_builtInHint != null)
+            _builtInHint.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static void LoadVariantUi(VariantUi ui, ThemeToolStyle style)
