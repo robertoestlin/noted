@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Shapes = System.Windows.Shapes;
 using Noted.Models;
+using Noted.Services;
 using Ookii.Dialogs.Wpf;
 
 namespace Noted;
@@ -2237,6 +2238,7 @@ public partial class MainWindow
                 }
 
                 _backupFolder = backupPath;
+                ColorPaletteService.SharedBackupFolder = _backupFolder;
                 EnsureBackupImagesFolderExists();
                 _inlineImageCache.Clear();
                 _cloudBackupFolder = cloudBackupPath;

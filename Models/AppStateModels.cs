@@ -402,6 +402,27 @@ public sealed class NotedStateConfig
     public string? LastLineAssignee { get; set; }
 }
 
+/// <summary>User-added color in a built-in palette (persisted in <c>settings.json</c>).</summary>
+public sealed class PaletteColorEntry
+{
+    public string Name { get; set; } = "";
+    public string Hex { get; set; } = "#000000";
+}
+
+/// <summary>
+/// Per built-in palette (Main, Diagrams, …): applied after all code defaults — user additions, then removals.
+/// Stored in <c>settings.json</c> as <see cref="WindowSettings.ColorPaletteCustomizations"/>.
+/// </summary>
+public sealed class PaletteCustomization
+{
+    /// <summary>Appended after the built-in default colors when the palette is loaded.</summary>
+    public List<PaletteColorEntry> Added { get; set; } = new();
+    /// <summary>Hex values removed after defaults and <see cref="Added"/> are merged.</summary>
+    public List<string> RemovedHexes { get; set; } = new();
+    /// <summary>When set, reorders the merged built-in palette (hex values, normalized with leading #).</summary>
+    public List<string>? HexOrder { get; set; }
+}
+
 public sealed class WindowSettings
 {
     /// <summary>Assembly version last written by startup handshake (not bumped on routine saves).</summary>
@@ -567,6 +588,9 @@ public sealed class WindowSettings
 
     /// <summary>While drawing, width/height snap to defaults when within this many pixels (default 12).</summary>
     public int? DrawingShapeSizeSnapThresholdPx { get; set; }
+
+    /// <summary>User additions/removals/reorder for built-in color palettes (Main, Diagrams, …).</summary>
+    public Dictionary<string, PaletteCustomization>? ColorPaletteCustomizations { get; set; }
 }
 
 // ---------------------------------------------------------------------------

@@ -720,13 +720,11 @@ internal static class DrawingNamedColorStore
 
     public static void Save(List<DrawingNamedColor> colors)
     {
-        var palettes = Service.LoadPalettes();
-        var main = palettes.First(p => p.Name.Equals(ColorPaletteService.DefaultPaletteName, StringComparison.OrdinalIgnoreCase));
-        main.Colors = colors
+        var effective = colors
             .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Hex))
             .Select(c => new NamedColor { Name = c.Name, Hex = c.Hex })
             .ToList();
-        Service.SavePalettes(palettes);
+        Service.SaveBuiltInPaletteColors(ColorPaletteService.DefaultPaletteName, effective);
     }
 
     public static Color[] MergeWithBasePalette(Color[] baseColors)

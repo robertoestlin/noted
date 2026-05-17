@@ -491,3 +491,4 @@ dist/win-x64/*
 !dist/win-x64/*.exe
 !dist/win-x64/*.bin
 !dist/doc-packages/**
+.$drawing_new_features.drawio.dtmp

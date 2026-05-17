@@ -19,7 +19,7 @@ public partial class MainWindow
 
 internal sealed class ColorPalettesWindow : Window
 {
-    private readonly ColorPaletteService _service = new();
+    private readonly ColorPaletteService _service;
     private readonly ListBox _palettesList;
     private readonly DataGrid _colorsGrid;
     private readonly Button _btnRename;
@@ -34,6 +34,8 @@ internal sealed class ColorPalettesWindow : Window
 
     public ColorPalettesWindow()
     {
+        _service = new ColorPaletteService(ColorPaletteService.SharedBackupFolder);
+
         Title = "Color palettes";
         Width = 720;
         Height = 500;
@@ -217,9 +219,14 @@ internal sealed class ColorPalettesWindow : Window
         var previouslySelected = (_palettesList.SelectedItem as PaletteRow)?.Name;
         _palettes = _service.LoadPalettes();
         var ordered = _palettes
-            .OrderBy(p => _service.IsDefaultPalette(p.Name) ? 0 : 1)
+            .OrderBy(p => _service.IsDefaultPalette(p.Name) ? 0 : _service.IsBuiltInPalette(p.Name) ? 1 : 2)
             .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(p => new PaletteRow { Name = p.Name, IsDefault = _service.IsDefaultPalette(p.Name) })
+            .Select(p => new PaletteRow
+            {
+                Name = p.Name,
+                IsDefault = _service.IsDefaultPalette(p.Name),
+                IsBuiltIn = _service.IsBuiltInPalette(p.Name),
+            })
             .ToList();
 
         _palettesList.ItemsSource = ordered;
@@ -261,12 +268,12 @@ internal sealed class ColorPalettesWindow : Window
     {
         var selected = _palettesList.SelectedItem as PaletteRow;
         var hasSelection = selected != null;
-        var canModify = hasSelection && !selected!.IsDefault;
+        var canModify = hasSelection && !selected!.IsBuiltIn;
 
         _btnRename.IsEnabled = canModify;
-        _btnRename.ToolTip = canModify ? null : "The default palette cannot be renamed.";
+        _btnRename.ToolTip = canModify ? null : "Built-in palettes cannot be renamed.";
         _btnDelete.IsEnabled = canModify;
-        _btnDelete.ToolTip = canModify ? null : "The default palette cannot be deleted.";
+        _btnDelete.ToolTip = canModify ? null : "Built-in palettes cannot be deleted.";
 
         _btnAddColor.IsEnabled = hasSelection;
 
@@ -297,7 +304,7 @@ internal sealed class ColorPalettesWindow : Window
 
     private void RenameSelectedPalette()
     {
-        if (_palettesList.SelectedItem is not PaletteRow row || row.IsDefault) return;
+        if (_palettesList.SelectedItem is not PaletteRow row || row.IsBuiltIn) return;
 
         var newName = PromptForText("Rename palette", "New name", row.Name);
         if (string.IsNullOrWhiteSpace(newName) || string.Equals(newName.Trim(), row.Name, StringComparison.Ordinal))
@@ -314,7 +321,7 @@ internal sealed class ColorPalettesWindow : Window
 
     private void DeleteSelectedPalette()
     {
-        if (_palettesList.SelectedItem is not PaletteRow row || row.IsDefault) return;
+        if (_palettesList.SelectedItem is not PaletteRow row || row.IsBuiltIn) return;
 
         var result = MessageBox.Show(this,
             $"Delete palette \"{row.Name}\" and all its colors?",
@@ -360,7 +367,10 @@ internal sealed class ColorPalettesWindow : Window
         if (entry == null) return;
 
         entry.Hex = pick.ResultHex!;
-        _service.SavePalettes(palettes);
+        if (_service.IsBuiltInPalette(row.Name))
+            _service.SaveBuiltInPaletteColors(row.Name, palette!.Colors);
+        else
+            _service.SavePalettes(palettes);
         ReloadPaletteAndKeepSelection();
     }
 
@@ -481,7 +491,8 @@ internal sealed class ColorPalettesWindow : Window
     {
         public string Name { get; set; } = "";
         public bool IsDefault { get; set; }
-        public string DisplayName => IsDefault ? $"{Name}  (default)" : Name;
+        public bool IsBuiltIn { get; set; }
+        public string DisplayName => IsBuiltIn ? $"{Name}  (built-in)" : Name;
     }
 
     private sealed class ColorRow

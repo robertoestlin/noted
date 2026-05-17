@@ -1,6 +1,7 @@
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Noted.Models;
 
 namespace Noted.Services;
 
@@ -19,50 +20,89 @@ public sealed class ColorPalette
 }
 
 /// <summary>
-/// App-wide store for named color palettes. Shared across plugins via <c>color-palettes.json</c>.
-/// The "Main" palette always exists; other palettes can be created/renamed/deleted by users.
+/// App-wide store for named color palettes. Built-in palettes (Main, Diagrams) are defined in code;
+/// user additions/removals are stored in <c>settings.json</c>. Custom palettes live in <c>color-palettes.json</c>.
 /// </summary>
 public sealed class ColorPaletteService
 {
     public const string DefaultPaletteName = "Main";
+    public const string DiagramsPaletteName = "Diagrams";
 
-    private const string FolderName = @"c:\tools\backup\noted";
-    private const string FileName = "color-palettes.json";
+    private const string PalettesFileName = "color-palettes.json";
+    private const string SettingsFileName = "settings.json";
     private const string LegacyNamedColorsFileName = "drawing-named-colors.json";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public static string FilePath => Path.Combine(FolderName, FileName);
+    private static readonly string[] BuiltInPaletteNames = [DefaultPaletteName, DiagramsPaletteName];
+
+    /// <summary>When set (e.g. from <see cref="MainWindow"/> on load), palette files and settings use this folder.</summary>
+    public static string? SharedBackupFolder { get; set; }
+
+    private readonly string _backupFolder;
+    private readonly WindowSettingsStore _settingsStore = new();
+
+    public ColorPaletteService(string? backupFolder = null)
+    {
+        _backupFolder = NormalizeBackupFolder(backupFolder ?? SharedBackupFolder);
+    }
+
+    public static string DefaultBackupFolder() => @"c:\tools\backup\noted";
+
+    public string FilePath => Path.Combine(_backupFolder, PalettesFileName);
+
+    private string SettingsPath => Path.Combine(_backupFolder, SettingsFileName);
 
     public List<ColorPalette> LoadPalettes()
     {
         try
         {
-            List<ColorPalette> palettes;
+            var customizations = LoadCustomizations();
+            List<ColorPalette> userPalettes;
             var firstRun = !File.Exists(FilePath);
 
             if (firstRun)
             {
-                palettes = TryMigrateFromLegacy();
+                userPalettes = TryMigrateFromLegacy();
             }
             else
             {
-                palettes = JsonSerializer.Deserialize<List<ColorPalette>>(File.ReadAllText(FilePath))
-                           ?? new List<ColorPalette>();
+                userPalettes = JsonSerializer.Deserialize<List<ColorPalette>>(File.ReadAllText(FilePath))
+                               ?? new List<ColorPalette>();
             }
 
-            NormalizePalettes(palettes);
-            var addedBuiltIns = EnsureBuiltInsPresent(palettes);
+            var migratedCustomizations = false;
+            foreach (var builtInName in BuiltInPaletteNames)
+            {
+                var fromFile = userPalettes.FirstOrDefault(p =>
+                    p.Name.Equals(builtInName, StringComparison.OrdinalIgnoreCase));
+                if (fromFile != null && fromFile.Colors.Count > 0
+                    && !customizations.ContainsKey(builtInName))
+                {
+                    customizations[builtInName] = ComputeCustomization(builtInName, fromFile.Colors);
+                    migratedCustomizations = true;
+                }
+            }
 
-            if (firstRun || addedBuiltIns)
-                SavePalettes(palettes);
+            var strippedBuiltInsFromFile = userPalettes.RemoveAll(p => IsBuiltInPalette(p.Name)) > 0;
+
+            var palettes = BuildPaletteList(userPalettes, customizations);
+            NormalizePalettes(palettes);
+
+            if (firstRun || migratedCustomizations || strippedBuiltInsFromFile)
+            {
+                if (migratedCustomizations)
+                    PersistCustomizations(customizations);
+                SaveUserPalettesOnly(userPalettes);
+            }
 
             return palettes;
         }
         catch
         {
-            var fallback = new List<ColorPalette> { new() { Name = DefaultPaletteName } };
-            EnsureBuiltInsPresent(fallback);
+            var customizations = LoadCustomizations();
+            var fallback = BuildPaletteList(new List<ColorPalette>(), customizations);
+            NormalizePalettes(fallback);
             return fallback;
         }
     }
@@ -70,11 +110,11 @@ public sealed class ColorPaletteService
     public ColorPalette GetOrCreateDefault()
     {
         var palettes = LoadPalettes();
-        var main = FindDefault(palettes);
+        var main = FindPalette(palettes, DefaultPaletteName);
         if (main != null)
             return main;
 
-        var created = new ColorPalette { Name = DefaultPaletteName };
+        var created = new ColorPalette { Name = DefaultPaletteName, Colors = MergeBuiltInPalette(DefaultPaletteName, null) };
         palettes.Insert(0, created);
         SavePalettes(palettes);
         return created;
@@ -85,8 +125,20 @@ public sealed class ColorPaletteService
         try
         {
             NormalizePalettes(palettes);
-            Directory.CreateDirectory(FolderName);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(palettes, JsonOptions));
+            var customizations = LoadCustomizations();
+
+            foreach (var builtInName in BuiltInPaletteNames)
+            {
+                var builtIn = FindPalette(palettes, builtInName);
+                if (builtIn == null)
+                    continue;
+                customizations[builtInName] = ComputeCustomization(builtInName, builtIn.Colors);
+            }
+
+            PersistCustomizations(customizations);
+
+            var userOnly = palettes.Where(p => !IsBuiltInPalette(p.Name)).ToList();
+            SaveUserPalettesOnly(userOnly);
         }
         catch
         {
@@ -94,26 +146,58 @@ public sealed class ColorPaletteService
         }
     }
 
+    public void SaveBuiltInPaletteColors(string paletteName, List<NamedColor> effectiveColors)
+    {
+        if (!IsBuiltInPalette(paletteName))
+            return;
+        PersistBuiltInPaletteCustomization(paletteName, effectiveColors);
+    }
+
     public void AddOrUpdateColor(string paletteName, NamedColor color)
     {
         if (color == null || string.IsNullOrWhiteSpace(color.Name) || string.IsNullOrWhiteSpace(color.Hex))
             return;
 
-        var palettes = LoadPalettes();
-        var target = palettes.FirstOrDefault(p => p.Name.Equals(paletteName, StringComparison.OrdinalIgnoreCase));
+        if (IsBuiltInPalette(paletteName))
+        {
+            var palettes = LoadPalettes();
+            var builtIn = FindPalette(palettes, paletteName);
+            if (builtIn == null)
+                return;
+
+            var normalizedHex = NormalizeHex(color.Hex);
+            var existing = builtIn.Colors.FirstOrDefault(c =>
+                c.Name.Equals(color.Name, StringComparison.OrdinalIgnoreCase)
+                || NormalizeHex(c.Hex).Equals(normalizedHex, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                existing.Name = color.Name.Trim();
+                existing.Hex = normalizedHex;
+            }
+            else
+            {
+                builtIn.Colors.Add(new NamedColor { Name = color.Name.Trim(), Hex = normalizedHex });
+            }
+
+            PersistBuiltInPaletteCustomization(paletteName, builtIn.Colors);
+            return;
+        }
+
+        var all = LoadPalettes();
+        var target = FindPalette(all, paletteName);
         if (target == null)
         {
             target = new ColorPalette { Name = paletteName.Trim() };
-            palettes.Add(target);
+            all.Add(target);
         }
 
-        var existing = target.Colors.FirstOrDefault(c => c.Name.Equals(color.Name, StringComparison.OrdinalIgnoreCase));
-        if (existing != null)
-            existing.Hex = color.Hex.Trim();
+        var match = target.Colors.FirstOrDefault(c => c.Name.Equals(color.Name, StringComparison.OrdinalIgnoreCase));
+        if (match != null)
+            match.Hex = NormalizeHex(color.Hex);
         else
-            target.Colors.Add(new NamedColor { Name = color.Name.Trim(), Hex = color.Hex.Trim() });
+            target.Colors.Add(new NamedColor { Name = color.Name.Trim(), Hex = NormalizeHex(color.Hex) });
 
-        SavePalettes(palettes);
+        SavePalettes(all);
     }
 
     public void RemoveColor(string paletteName, string colorName)
@@ -121,20 +205,44 @@ public sealed class ColorPaletteService
         if (string.IsNullOrWhiteSpace(paletteName) || string.IsNullOrWhiteSpace(colorName))
             return;
 
-        var palettes = LoadPalettes();
-        var target = palettes.FirstOrDefault(p => p.Name.Equals(paletteName, StringComparison.OrdinalIgnoreCase));
+        if (IsBuiltInPalette(paletteName))
+        {
+            var palettes = LoadPalettes();
+            var builtIn = FindPalette(palettes, paletteName);
+            if (builtIn == null)
+                return;
+
+            var entry = builtIn.Colors.FirstOrDefault(c =>
+                c.Name.Equals(colorName, StringComparison.OrdinalIgnoreCase));
+            if (entry == null)
+                return;
+
+            builtIn.Colors.RemoveAll(c => c.Name.Equals(colorName, StringComparison.OrdinalIgnoreCase));
+            PersistBuiltInPaletteCustomization(paletteName, builtIn.Colors);
+            return;
+        }
+
+        var all = LoadPalettes();
+        var target = FindPalette(all, paletteName);
         if (target == null)
             return;
 
         var removed = target.Colors.RemoveAll(c => c.Name.Equals(colorName, StringComparison.OrdinalIgnoreCase));
         if (removed > 0)
-            SavePalettes(palettes);
+            SavePalettes(all);
+    }
+
+    private void PersistBuiltInPaletteCustomization(string paletteName, List<NamedColor> effectiveColors)
+    {
+        var customizations = LoadCustomizations();
+        customizations[paletteName] = ComputeCustomization(paletteName, effectiveColors);
+        PersistCustomizations(customizations);
     }
 
     public bool CreatePalette(string name)
     {
         var trimmed = (name ?? "").Trim();
-        if (trimmed.Length == 0)
+        if (trimmed.Length == 0 || IsBuiltInPalette(trimmed))
             return false;
 
         var palettes = LoadPalettes();
@@ -149,14 +257,11 @@ public sealed class ColorPaletteService
     public bool RenamePalette(string oldName, string newName)
     {
         var trimmedNew = (newName ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(oldName) || trimmedNew.Length == 0)
-            return false;
-
-        if (IsDefaultName(oldName))
+        if (string.IsNullOrWhiteSpace(oldName) || trimmedNew.Length == 0 || IsBuiltInPalette(oldName))
             return false;
 
         var palettes = LoadPalettes();
-        var target = palettes.FirstOrDefault(p => p.Name.Equals(oldName, StringComparison.OrdinalIgnoreCase));
+        var target = FindPalette(palettes, oldName);
         if (target == null)
             return false;
 
@@ -170,7 +275,7 @@ public sealed class ColorPaletteService
 
     public bool DeletePalette(string name)
     {
-        if (string.IsNullOrWhiteSpace(name) || IsDefaultName(name))
+        if (string.IsNullOrWhiteSpace(name) || IsBuiltInPalette(name))
             return false;
 
         var palettes = LoadPalettes();
@@ -183,6 +288,10 @@ public sealed class ColorPaletteService
     }
 
     public bool IsDefaultPalette(string? name) => IsDefaultName(name);
+
+    public bool IsBuiltInPalette(string? name)
+        => !string.IsNullOrWhiteSpace(name)
+           && BuiltInPaletteNames.Any(n => n.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Flattened list of all named colors across every palette (used by plugin pickers).</summary>
     public List<NamedColor> GetAllNamedColors()
@@ -207,12 +316,29 @@ public sealed class ColorPaletteService
         }
     }
 
+    private List<ColorPalette> BuildPaletteList(List<ColorPalette> userPalettes, Dictionary<string, PaletteCustomization> customizations)
+    {
+        var palettes = new List<ColorPalette>();
+        foreach (var builtInName in BuiltInPaletteNames)
+        {
+            customizations.TryGetValue(builtInName, out var custom);
+            palettes.Add(new ColorPalette
+            {
+                Name = builtInName,
+                Colors = MergeBuiltInPalette(builtInName, custom),
+            });
+        }
+
+        palettes.AddRange(userPalettes);
+        return palettes;
+    }
+
+    private static ColorPalette? FindPalette(List<ColorPalette> palettes, string name)
+        => palettes.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
     private static bool IsDefaultName(string? name)
         => !string.IsNullOrWhiteSpace(name)
            && name.Trim().Equals(DefaultPaletteName, StringComparison.OrdinalIgnoreCase);
-
-    private static ColorPalette? FindDefault(List<ColorPalette> palettes)
-        => palettes.FirstOrDefault(p => IsDefaultName(p.Name));
 
     private static void NormalizePalettes(List<ColorPalette> palettes)
     {
@@ -223,59 +349,246 @@ public sealed class ColorPaletteService
             foreach (var c in p.Colors)
             {
                 c.Name = (c.Name ?? "").Trim();
-                c.Hex = (c.Hex ?? "").Trim();
+                c.Hex = NormalizeHex(c.Hex);
+            }
+        }
+    }
+
+    private void SaveUserPalettesOnly(List<ColorPalette> userPalettes)
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(userPalettes, JsonOptions));
+        }
+        catch
+        {
+            // non-critical
+        }
+    }
+
+    private Dictionary<string, PaletteCustomization> LoadCustomizations()
+    {
+        try
+        {
+            if (!File.Exists(SettingsPath))
+                return new Dictionary<string, PaletteCustomization>(StringComparer.OrdinalIgnoreCase);
+
+            var settings = _settingsStore.Load<WindowSettings>(SettingsPath);
+            if (settings?.ColorPaletteCustomizations == null)
+                return new Dictionary<string, PaletteCustomization>(StringComparer.OrdinalIgnoreCase);
+
+            return settings.ColorPaletteCustomizations
+                .ToDictionary(kv => kv.Key, kv => SanitizeCustomization(kv.Value), StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, PaletteCustomization>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void PersistCustomizations(Dictionary<string, PaletteCustomization> customizations)
+    {
+        try
+        {
+            Directory.CreateDirectory(_backupFolder);
+            var settings = _settingsStore.Load<WindowSettings>(SettingsPath) ?? new WindowSettings();
+            settings.ColorPaletteCustomizations = PruneEmptyCustomizations(customizations);
+            var json = JsonSerializer.Serialize(settings, JsonOptions);
+            WindowSettingsStore.WriteUtf8IfSemanticJsonChanged(SettingsPath, json);
+        }
+        catch
+        {
+            // non-critical
+        }
+    }
+
+    private static Dictionary<string, PaletteCustomization>? PruneEmptyCustomizations(
+        Dictionary<string, PaletteCustomization> customizations)
+    {
+        var result = new Dictionary<string, PaletteCustomization>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, custom) in customizations)
+        {
+            var sanitized = SanitizeCustomization(custom);
+            if (sanitized.Added.Count == 0 && sanitized.RemovedHexes.Count == 0 && sanitized.HexOrder == null)
+                continue;
+            result[name] = sanitized;
+        }
+
+        return result.Count > 0 ? result : null;
+    }
+
+    private static PaletteCustomization SanitizeCustomization(PaletteCustomization? custom)
+    {
+        var result = new PaletteCustomization();
+        if (custom == null)
+            return result;
+
+        foreach (var hex in custom.RemovedHexes ?? [])
+        {
+            var normalized = NormalizeHex(hex);
+            if (normalized.Length > 0 && !result.RemovedHexes.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                result.RemovedHexes.Add(normalized);
+        }
+
+        var addedHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in custom.Added ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(entry.Name) || string.IsNullOrWhiteSpace(entry.Hex))
+                continue;
+            var normalized = NormalizeHex(entry.Hex);
+            if (normalized.Length == 0 || !addedHexes.Add(normalized))
+                continue;
+            result.Added.Add(new PaletteColorEntry { Name = entry.Name.Trim(), Hex = normalized });
+        }
+
+        if (custom.HexOrder is { Count: > 0 })
+        {
+            var order = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var hex in custom.HexOrder)
+            {
+                var normalized = NormalizeHex(hex);
+                if (normalized.Length > 0 && seen.Add(normalized))
+                    order.Add(normalized);
+            }
+
+            if (order.Count > 0)
+                result.HexOrder = order;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Built-in palette merge (Main, Diagrams, …): all code defaults, then user-added colors from
+    /// <c>settings.json</c>, then remove user-removed hex values.
+    /// </summary>
+    private static List<NamedColor> MergeBuiltInPalette(string paletteName, PaletteCustomization? custom)
+    {
+        if (!BuiltInColorDefinitions.TryGetValue(paletteName, out var defaults))
+            return new List<NamedColor>();
+
+        var result = new List<NamedColor>();
+
+        // 1. All default colors from code (updated on each app version).
+        foreach (var (name, hex) in defaults)
+        {
+            var normalized = NormalizeHex(hex);
+            if (normalized.Length == 0)
+                continue;
+            result.Add(new NamedColor { Name = name, Hex = normalized });
+        }
+
+        // 2. Colors the user added (persisted in settings.json).
+        if (custom?.Added is { Count: > 0 })
+        {
+            var existingHexes = new HashSet<string>(
+                result.Select(c => NormalizeHex(c.Hex)),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in custom.Added)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Name) || string.IsNullOrWhiteSpace(entry.Hex))
+                    continue;
+                var normalized = NormalizeHex(entry.Hex);
+                if (normalized.Length == 0 || !existingHexes.Add(normalized))
+                    continue;
+                result.Add(new NamedColor { Name = entry.Name.Trim(), Hex = normalized });
             }
         }
 
-        if (FindDefault(palettes) == null)
-            palettes.Insert(0, new ColorPalette { Name = DefaultPaletteName });
+        // 3. Colors the user removed (persisted in settings.json).
+        if (custom?.RemovedHexes is { Count: > 0 })
+        {
+            var removed = new HashSet<string>(
+                custom.RemovedHexes.Select(NormalizeHex).Where(h => h.Length > 0),
+                StringComparer.OrdinalIgnoreCase);
+            result.RemoveAll(c => removed.Contains(NormalizeHex(c.Hex)));
+        }
+
+        if (custom?.HexOrder is { Count: > 0 })
+            result = ApplyHexOrder(result, custom.HexOrder);
+
+        return result;
     }
 
-    /// <summary>Built-in colors that are always present in the Main palette. New entries reach existing users on next load.</summary>
-    private static readonly (string Name, string Hex)[] BuiltInMainColors =
+    private static List<NamedColor> ApplyHexOrder(List<NamedColor> colors, List<string> hexOrder)
     {
-        ("Black",        "#000000"),
-        ("White",        "#FFFFFF"),
-        ("Dark gray",    "#555555"),
-        ("Light gray",   "#BBBBBB"),
-        ("Red",          "#E53935"),
-        ("Orange",       "#F68A1E"),
-        ("Gold",         "#FFD700"),
-        ("Pale yellow",  "#FFF6A9"),
-        ("Green",        "#4CAF50"),
-        ("Light green",  "#A8E6A1"),
-        ("Blue",         "#2196F3"),
-        ("Light blue",   "#B3E5FC"),
-        ("Purple",       "#673AB7"),
-        ("Lavender",     "#D1C4E9"),
-        ("Brown",        "#795548"),
-        ("Indigo",       "#3F51B5"),
-        ("Beige",        "#F5F5DC"),
-    };
-
-    /// <summary>Adds any missing built-in colors (matched by normalized hex) to Main. Returns true if anything was added.</summary>
-    private static bool EnsureBuiltInsPresent(List<ColorPalette> palettes)
-    {
-        var main = FindDefault(palettes);
-        if (main == null)
-            return false;
-
-        var existingHexes = new HashSet<string>(
-            main.Colors
-                .Select(c => NormalizeHex(c.Hex))
-                .Where(s => s.Length > 0),
-            StringComparer.OrdinalIgnoreCase);
-
-        var added = false;
-        foreach (var (name, hex) in BuiltInMainColors)
+        var byHex = colors.ToDictionary(c => NormalizeHex(c.Hex), c => c, StringComparer.OrdinalIgnoreCase);
+        var ordered = new List<NamedColor>();
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var hex in hexOrder)
         {
             var normalized = NormalizeHex(hex);
-            if (normalized.Length == 0 || !existingHexes.Add(normalized))
-                continue;
-            main.Colors.Add(new NamedColor { Name = name, Hex = normalized });
-            added = true;
+            if (byHex.TryGetValue(normalized, out var color) && used.Add(normalized))
+                ordered.Add(color);
         }
-        return added;
+
+        foreach (var color in colors)
+        {
+            var normalized = NormalizeHex(color.Hex);
+            if (used.Add(normalized))
+                ordered.Add(color);
+        }
+
+        return ordered;
+    }
+
+    private static PaletteCustomization ComputeCustomization(string paletteName, List<NamedColor> effectiveColors)
+    {
+        if (!BuiltInColorDefinitions.TryGetValue(paletteName, out var defaults))
+            return new PaletteCustomization();
+
+        var defaultHexes = new HashSet<string>(
+            defaults.Select(d => NormalizeHex(d.Hex)),
+            StringComparer.OrdinalIgnoreCase);
+
+        var effective = effectiveColors
+            .Where(c => !string.IsNullOrWhiteSpace(c.Hex))
+            .Select(c => new NamedColor { Name = c.Name.Trim(), Hex = NormalizeHex(c.Hex) })
+            .ToList();
+
+        var effectiveHexes = effective.Select(c => c.Hex).ToList();
+        var effectiveHexSet = new HashSet<string>(effectiveHexes, StringComparer.OrdinalIgnoreCase);
+
+        var removed = defaults
+            .Select(d => NormalizeHex(d.Hex))
+            .Where(h => h.Length > 0 && !effectiveHexSet.Contains(h))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var added = new List<PaletteColorEntry>();
+        var addedHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var color in effective)
+        {
+            if (defaultHexes.Contains(color.Hex) || !addedHexes.Add(color.Hex))
+                continue;
+            added.Add(new PaletteColorEntry { Name = color.Name, Hex = color.Hex });
+        }
+
+        var mergedDefault = MergeBuiltInPalette(paletteName, new PaletteCustomization
+        {
+            RemovedHexes = removed,
+            Added = added,
+        });
+
+        var customization = new PaletteCustomization
+        {
+            RemovedHexes = removed,
+            Added = added,
+        };
+
+        if (!HexOrdersMatch(effective, mergedDefault))
+            customization.HexOrder = effectiveHexes;
+
+        return customization;
+    }
+
+    private static bool HexOrdersMatch(List<NamedColor> a, List<NamedColor> b)
+    {
+        var ah = a.Select(c => NormalizeHex(c.Hex)).ToList();
+        var bh = b.Select(c => NormalizeHex(c.Hex)).ToList();
+        return ah.SequenceEqual(bh, StringComparer.OrdinalIgnoreCase);
     }
 
     private static string NormalizeHex(string? hex)
@@ -283,15 +596,67 @@ public sealed class ColorPaletteService
         if (string.IsNullOrWhiteSpace(hex))
             return "";
         var trimmed = hex.Trim();
-        return trimmed.StartsWith("#") ? trimmed.ToUpperInvariant() : trimmed;
+        if (!trimmed.StartsWith('#'))
+            trimmed = "#" + trimmed;
+        return trimmed.ToUpperInvariant();
     }
+
+    private static string NormalizeBackupFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder))
+            return DefaultBackupFolder();
+        try
+        {
+            return Path.GetFullPath(folder.Trim());
+        }
+        catch
+        {
+            return DefaultBackupFolder();
+        }
+    }
+
+    private static readonly Dictionary<string, (string Name, string Hex)[]> BuiltInColorDefinitions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [DefaultPaletteName] =
+            [
+                ("Black",        "#000000"),
+                ("White",        "#FFFFFF"),
+                ("Dark gray",    "#555555"),
+                ("Light gray",   "#BBBBBB"),
+                ("Red",          "#E53935"),
+                ("Orange",       "#F68A1E"),
+                ("Gold",         "#FFD700"),
+                ("Pale yellow",  "#FFF6A9"),
+                ("Green",        "#4CAF50"),
+                ("Light green",  "#A8E6A1"),
+                ("Blue",         "#2196F3"),
+                ("Light blue",   "#B3E5FC"),
+                ("Purple",       "#673AB7"),
+                ("Lavender",     "#D1C4E9"),
+                ("Brown",        "#795548"),
+                ("Indigo",       "#3F51B5"),
+                ("Beige",        "#F5F5DC"),
+            ],
+            [DiagramsPaletteName] =
+            [
+                ("Periwinkle",  "#DAE8FC"),
+                ("Mint",        "#D5E8D4"),
+                ("Cream",       "#FFF2CC"),
+                ("Smoke",       "#F5F5F5"),
+                ("Aqua",        "#B0E3E6"),
+                ("Silver",      "#B3B3B3"),
+                ("Steel blue",  "#7EA6E0"),
+                ("Sage",        "#97D077"),
+            ],
+        };
 
     private static List<ColorPalette> TryMigrateFromLegacy()
     {
         var palettes = new List<ColorPalette>();
         try
         {
-            var legacyPath = Path.Combine(FolderName, LegacyNamedColorsFileName);
+            var legacyPath = Path.Combine(DefaultBackupFolder(), LegacyNamedColorsFileName);
             if (!File.Exists(legacyPath))
                 return palettes;
 
@@ -304,7 +669,7 @@ public sealed class ColorPaletteService
             {
                 if (n == null || string.IsNullOrWhiteSpace(n.Name) || string.IsNullOrWhiteSpace(n.Hex))
                     continue;
-                main.Colors.Add(new NamedColor { Name = n.Name.Trim(), Hex = n.Hex.Trim() });
+                main.Colors.Add(new NamedColor { Name = n.Name.Trim(), Hex = NormalizeHex(n.Hex) });
             }
             palettes.Add(main);
         }

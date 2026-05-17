@@ -147,7 +147,22 @@ public partial class MainWindow
             DrawingDefaultEllipseWidth = _drawingDefaultEllipseWidth,
             DrawingDefaultEllipseHeight = _drawingDefaultEllipseHeight,
             DrawingShapeSizeSnapThresholdPx = _drawingShapeSizeSnapThresholdPx,
+            ColorPaletteCustomizations = ReadColorPaletteCustomizationsFromSettingsFile(),
         };
+
+    /// <summary>Preserves palette add/remove overrides written by <see cref="ColorPaletteService"/>.</summary>
+    private Dictionary<string, PaletteCustomization>? ReadColorPaletteCustomizationsFromSettingsFile()
+    {
+        try
+        {
+            var path = Path.Combine(_backupFolder, SettingsFileName);
+            return _windowSettingsStore.Load<WindowSettings>(path)?.ColorPaletteCustomizations;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private NotedSessionState CreateNotedSessionStateSnapshot()
         => new()
@@ -1043,6 +1058,7 @@ public partial class MainWindow
     {
         _persistedLastNotedVersionForJson = null;
         _backupFolder = DefaultBackupFolder();
+        ColorPaletteService.SharedBackupFolder = _backupFolder;
         _cloudBackupFolder = DefaultCloudBackupFolder();
         _cloudSyncTabsPlainTextEnabled = false;
         _cloudSyncTabsPlainTextFolder = string.Empty;
@@ -1143,6 +1159,7 @@ public partial class MainWindow
     private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
     {
         _backupFolder = backupFolder;
+        ColorPaletteService.SharedBackupFolder = _backupFolder;
         _cloudBackupFolder = cloudBackupFolder;
         _cloudSyncTabsPlainTextEnabled = bootstrap.CloudSyncTabsPlainTextEnabled ?? false;
         if (!string.IsNullOrWhiteSpace(bootstrap.CloudSyncTabsPlainTextFolder))
@@ -1219,6 +1236,7 @@ public partial class MainWindow
         ApplyShortcutSettings(state);
 
         _backupFolder = _windowSettingsService.NormalizePathOrFallback(state.BackupFolder, _backupFolder);
+        ColorPaletteService.SharedBackupFolder = _backupFolder;
         _cloudBackupFolder = _windowSettingsService.NormalizePathOrFallback(state.CloudBackupFolder, _cloudBackupFolder);
         _cloudSyncTabsPlainTextEnabled = state.CloudSyncTabsPlainTextEnabled ?? false;
         if (!string.IsNullOrWhiteSpace(state.CloudSyncTabsPlainTextFolder))
