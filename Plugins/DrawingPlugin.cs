@@ -1709,7 +1709,10 @@ internal sealed partial class DrawingWindow : Window
         SelectTool(Tool.Select);
 
         if (initialWorkspace != null)
+        {
             LoadWorkspace(initialWorkspace);
+            SizeWindowToFitItems();
+        }
 
         Closed += (_, _) =>
         {
@@ -2001,7 +2004,7 @@ internal sealed partial class DrawingWindow : Window
 
         _shadowCheck = new CheckBox
         {
-            Content = "Drop shadow",
+            Content = "Shadow",
             IsChecked = _hasShadow,
             Margin = new Thickness(0, 6, 0, 4),
         };
@@ -4789,6 +4792,33 @@ internal sealed partial class DrawingWindow : Window
         for (int i = 0; i < bendCount; i++)
             item.RouteBends.Add(new Point(dto.RouteBendsX[i], dto.RouteBendsY[i]));
         return item;
+    }
+
+    private void SizeWindowToFitItems()
+    {
+        if (_items.Count == 0) return;
+
+        double maxX = 0, maxY = 0;
+        foreach (var it in _items)
+        {
+            var b = GetBounds(it);
+            if (b.Right > maxX) maxX = b.Right;
+            if (b.Bottom > maxY) maxY = b.Bottom;
+        }
+
+        const double itemPadding = 24;
+        const double extraWidth = 230 + 22 + 16;
+        const double extraHeight = 46 + 22 + 38;
+
+        var desiredW = maxX + itemPadding + extraWidth;
+        var desiredH = maxY + itemPadding + extraHeight;
+
+        var workArea = SystemParameters.WorkArea;
+        desiredW = Math.Clamp(desiredW, MinWidth, workArea.Width);
+        desiredH = Math.Clamp(desiredH, MinHeight, workArea.Height);
+
+        Width = desiredW;
+        Height = desiredH;
     }
 
     private void LoadWorkspace(DrawingWorkspaceDto workspace)
