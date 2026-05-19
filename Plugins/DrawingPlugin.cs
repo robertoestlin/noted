@@ -1855,44 +1855,38 @@ internal sealed partial class DrawingWindow : Window
         _variantsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
         _propertyPanel.Children.Add(_variantsPanel);
 
-        _fillColorPicker = new CompactColorPicker(_fill, b =>
-        {
-            _fill = b;
-            ApplyColorToSelected();
-        });
+        _fillColorPicker = new CompactColorPicker(_fill,
+            onChanged: b => { _fill = b; ApplyColorToSelected(); },
+            onPreview: b => { _fill = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
         _fillColorRow = MakeCompactColorRow("Fill", _fillColorPicker);
         _propertyPanel.Children.Add(_fillColorRow);
 
-        _strokeColorPicker = new CompactColorPicker(_stroke, b =>
-        {
-            _stroke = b;
-            ApplyColorToSelected();
-        });
+        _strokeColorPicker = new CompactColorPicker(_stroke,
+            onChanged: b => { _stroke = b; ApplyColorToSelected(); },
+            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
         _strokeColorRow = MakeCompactColorRow("Stroke / Frame", _strokeColorPicker);
         _propertyPanel.Children.Add(_strokeColorRow);
 
-        _textColorPicker = new CompactColorPicker(_textColor, b =>
-        {
-            _textColor = b;
-            ApplyColorToSelected();
-        });
+        _textColorPicker = new CompactColorPicker(_textColor,
+            onChanged: b => { _textColor = b; ApplyColorToSelected(); },
+            onPreview: b => { _textColor = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
         _textColorRow = MakeCompactColorRow("Text color", _textColorPicker);
         _propertyPanel.Children.Add(_textColorRow);
 
-        _freehandColorPicker = new CompactColorPicker(_stroke, b =>
-        {
-            _stroke = b;
-            ApplyColorToSelected();
-        });
+        _freehandColorPicker = new CompactColorPicker(_stroke,
+            onChanged: b => { _stroke = b; ApplyColorToSelected(); },
+            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
         _freehandColorRow = MakeCompactColorRow("Color", _freehandColorPicker);
         _propertyPanel.Children.Add(_freehandColorRow);
 
-        _arrowColorPicker = new CompactColorPicker(_stroke, b =>
-        {
-            _stroke = b;
-            _textColor = b;
-            ApplyColorToSelected();
-        });
+        _arrowColorPicker = new CompactColorPicker(_stroke,
+            onChanged: b => { _stroke = b; _textColor = b; ApplyColorToSelected(); },
+            onPreview: b => { _stroke = b; _textColor = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
         _arrowColorRow = MakeCompactColorRow("Color", _arrowColorPicker);
         _propertyPanel.Children.Add(_arrowColorRow);
 
@@ -2354,6 +2348,18 @@ internal sealed partial class DrawingWindow : Window
         var sel = SelectionPropertySource();
         if (sel == null) return;
         SnapshotForUndo();
+        ApplyColorToSelectedCore(sel);
+    }
+
+    private void ApplyColorToSelectedNoSnapshot()
+    {
+        var sel = SelectionPropertySource();
+        if (sel == null) return;
+        ApplyColorToSelectedCore(sel);
+    }
+
+    private void ApplyColorToSelectedCore(DrawItem sel)
+    {
         if (sel.Kind == "rect" || sel.Kind == "ellipse")
         {
             foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse"))
@@ -4739,6 +4745,8 @@ internal sealed partial class DrawingWindow : Window
 
 internal static class DrawingPaletteColorPicker
 {
+    internal const string CustomColorTag = "__CUSTOM_COLOR__";
+
     private static readonly string[] ColorChoices =
     {
         "Transparent",
@@ -4749,17 +4757,23 @@ internal static class DrawingPaletteColorPicker
         "#F5F5DC",
     };
 
-    public static ComboBox CreateCombo()
+    public static ComboBox CreateCombo(bool includeCustomPicker = false)
     {
         var cb = new ComboBox { Margin = new Thickness(0) };
-        Populate(cb);
+        Populate(cb, includeCustomPicker);
         return cb;
     }
 
-    public static void Populate(ItemsControl items)
+    public static bool IsCustomColorTag(string? tag) =>
+        string.Equals(tag, CustomColorTag, StringComparison.Ordinal);
+
+    public static void Populate(ItemsControl items, bool includeCustomPicker = false)
     {
         items.Items.Clear();
         var seenHexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (includeCustomPicker)
+            items.Items.Add(MakeCustomPickerItem());
 
         items.Items.Add(MakeColorChoiceItem("Transparent"));
         seenHexes.Add("Transparent");
@@ -4842,6 +4856,53 @@ internal static class DrawingPaletteColorPicker
         return item;
     }
 
+    private static ComboBoxItem MakeCustomPickerItem()
+    {
+        var item = new ComboBoxItem { Tag = CustomColorTag };
+        var sp = new StackPanel { Orientation = Orientation.Horizontal };
+        sp.Children.Add(MakePickerIcon(20, 14));
+        sp.Children.Add(new TextBlock
+        {
+            Text = "Custom color…",
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = FontWeights.SemiBold,
+        });
+        item.Content = sp;
+        return item;
+    }
+
+    private static Border MakePickerIcon(double width, double height)
+    {
+        var grid = new Grid { Width = width, Height = height };
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+        void AddQuad(int row, int col, Brush fill)
+        {
+            var r = new System.Windows.Shapes.Rectangle { Fill = fill };
+            Grid.SetRow(r, row);
+            Grid.SetColumn(r, col);
+            grid.Children.Add(r);
+        }
+
+        AddQuad(0, 0, new SolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35)));
+        AddQuad(0, 1, new SolidColorBrush(Color.FromRgb(0xFF, 0xD7, 0x00)));
+        AddQuad(1, 0, new SolidColorBrush(Color.FromRgb(0x21, 0x96, 0xF3)));
+        AddQuad(1, 1, new SolidColorBrush(Color.FromRgb(0x4C, 0xAF, 0x50)));
+
+        return new Border
+        {
+            Width = width,
+            Height = height,
+            Margin = new Thickness(0, 0, 6, 0),
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            Child = grid,
+        };
+    }
+
     private static ComboBoxItem MakeNamedColorItem(string paletteName, string colorName, string tagHex)
     {
         var displayName = string.IsNullOrWhiteSpace(paletteName)
@@ -4887,21 +4948,36 @@ internal static class DrawingPaletteColorPicker
 
 internal sealed class CompactColorPicker : Border
 {
+    internal const string CustomPaletteName = "Custom Colors";
+
+    private static event Action? PalettesUpdated;
+
     private readonly ComboBox _combo;
     private readonly Border _swatch;
     private readonly Action<Brush> _onChanged;
+    private readonly Action<Brush>? _onPreview;
+    private readonly Action? _onBeginCustomPick;
     private bool _suppress;
     private string _currentHex = "#000000";
 
-    public CompactColorPicker(Brush initial, Action<Brush> onChanged)
+    public CompactColorPicker(
+        Brush initial,
+        Action<Brush> onChanged,
+        Action<Brush>? onPreview = null,
+        Action? onBeginCustomPick = null)
     {
         _onChanged = onChanged;
+        _onPreview = onPreview;
+        _onBeginCustomPick = onBeginCustomPick;
         Width = 52;
         Height = 28;
         BorderThickness = new Thickness(0);
         Background = Brushes.Transparent;
         HorizontalAlignment = HorizontalAlignment.Left;
         ToolTip = "Click to choose a color";
+
+        PalettesUpdated += OnPalettesUpdated;
+        Unloaded += (_, _) => PalettesUpdated -= OnPalettesUpdated;
 
         _swatch = new Border
         {
@@ -4911,7 +4987,7 @@ internal sealed class CompactColorPicker : Border
             IsHitTestVisible = false,
         };
 
-        _combo = DrawingPaletteColorPicker.CreateCombo();
+        _combo = DrawingPaletteColorPicker.CreateCombo(includeCustomPicker: true);
         _combo.Background = Brushes.Transparent;
         _combo.BorderThickness = new Thickness(0);
         _combo.Opacity = 0;
@@ -4926,6 +5002,13 @@ internal sealed class CompactColorPicker : Border
             if (_suppress) return;
             if (_combo.SelectedItem is ComboBoxItem { IsEnabled: false })
                 return;
+            if (_combo.SelectedItem is ComboBoxItem ci && ci.Tag is string tag
+                && DrawingPaletteColorPicker.IsCustomColorTag(tag))
+            {
+                Dispatcher.BeginInvoke(new Action(OpenCustomPicker),
+                    System.Windows.Threading.DispatcherPriority.Background);
+                return;
+            }
             var hex = DrawingPaletteColorPicker.GetSelectedHex(_combo);
             if (string.Equals(hex, _currentHex, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -4942,7 +5025,7 @@ internal sealed class CompactColorPicker : Border
         SetSelected(initial);
     }
 
-    public void Refresh() => DrawingPaletteColorPicker.Populate(_combo);
+    public void Refresh() => DrawingPaletteColorPicker.Populate(_combo, includeCustomPicker: true);
 
     public void SetSelected(Brush brush)
     {
@@ -4956,6 +5039,85 @@ internal sealed class CompactColorPicker : Border
         finally
         {
             _suppress = false;
+        }
+    }
+
+    private void OpenCustomPicker()
+    {
+        var prevHex = _currentHex;
+        var prevBrush = DrawingWindow.ParseBrush(prevHex);
+        _suppress = true;
+        try { DrawingPaletteColorPicker.SelectColor(_combo, prevHex); }
+        finally { _suppress = false; }
+
+        var owner = Window.GetWindow(this);
+        var dlg = new DrawingColorPickerWindow(prevHex);
+        if (owner != null) dlg.Owner = owner;
+
+        _onBeginCustomPick?.Invoke();
+        var preview = _onPreview ?? _onChanged;
+
+        dlg.ColorChanged += c =>
+        {
+            var hex = DrawingColorUtilities.FormatHexForTheme(c);
+            _currentHex = hex;
+            var b = DrawingWindow.ParseBrush(hex);
+            UpdateSwatch(b);
+            preview(b);
+        };
+
+        if (dlg.ShowDialog() == true && !string.IsNullOrEmpty(dlg.ResultHex))
+        {
+            var hex = dlg.ResultHex!;
+            SaveToCustomPalette(hex);
+            _currentHex = hex;
+            _suppress = true;
+            try
+            {
+                DrawingPaletteColorPicker.Populate(_combo, includeCustomPicker: true);
+                DrawingPaletteColorPicker.SelectColor(_combo, _currentHex);
+            }
+            finally { _suppress = false; }
+            var brush = DrawingWindow.ParseBrush(_currentHex);
+            UpdateSwatch(brush);
+            preview(brush);
+            PalettesUpdated?.Invoke();
+        }
+        else
+        {
+            _currentHex = prevHex;
+            UpdateSwatch(prevBrush);
+            preview(prevBrush);
+        }
+    }
+
+    private void OnPalettesUpdated()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(OnPalettesUpdated));
+            return;
+        }
+        _suppress = true;
+        try
+        {
+            DrawingPaletteColorPicker.Populate(_combo, includeCustomPicker: true);
+            DrawingPaletteColorPicker.SelectColor(_combo, _currentHex);
+        }
+        finally { _suppress = false; }
+    }
+
+    private static void SaveToCustomPalette(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return;
+        try
+        {
+            var service = new ColorPaletteService();
+            service.AddOrUpdateColor(CustomPaletteName, new NamedColor { Name = hex, Hex = hex });
+        }
+        catch
+        {
+            // non-critical
         }
     }
 
