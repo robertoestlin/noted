@@ -1301,6 +1301,7 @@ internal sealed class DrawItemDto
     public double CornerRadius { get; set; } = 14;
     public string Fill { get; set; } = "Transparent";
     public string GradientFill { get; set; } = "Transparent";
+    public bool HasShadow { get; set; }
     public string Stroke { get; set; } = "#000000";
     public double StrokeThickness { get; set; } = 2;
     public string Text { get; set; } = "";
@@ -1354,6 +1355,7 @@ internal sealed partial class DrawingWindow : Window
         public double CornerRadius = 14;
         public Brush Fill = Brushes.Transparent;
         public Brush GradientFill = Brushes.Transparent;
+        public bool HasShadow;
         public Brush Stroke = Brushes.Black;
         public double StrokeThickness = 2;
         public string Text = "";
@@ -1381,6 +1383,7 @@ internal sealed partial class DrawingWindow : Window
             CornerRadius = CornerRadius,
             Fill = Fill,
             GradientFill = GradientFill,
+            HasShadow = HasShadow,
             Stroke = Stroke,
             StrokeThickness = StrokeThickness,
             Text = Text,
@@ -1453,6 +1456,7 @@ internal sealed partial class DrawingWindow : Window
     private Grid? _textColorRow;
     private Grid? _freehandColorRow;
     private Grid? _arrowColorRow;
+    private CheckBox? _shadowCheck;
     private TextBlock? _thicknessHeader;
     private TextBox? _thicknessBox;
     private TextBox? _cornerRadiusBox;
@@ -1487,6 +1491,7 @@ internal sealed partial class DrawingWindow : Window
 
     private Brush _fill = Brushes.Transparent;
     private Brush _gradientFill = Brushes.Transparent;
+    private bool _hasShadow;
     private Brush _stroke = Brushes.Black;
     private Brush _textColor = Brushes.Black;
     private double _thickness = 2;
@@ -1790,6 +1795,7 @@ internal sealed partial class DrawingWindow : Window
         var st = theme.GetActiveVariant(ToolToKind(profileTool));
         _fill = ParseBrush(st.Fill);
         _gradientFill = Brushes.Transparent;
+        _hasShadow = false;
         _stroke = ParseBrush(st.Stroke);
         _textColor = ParseBrush(st.TextColor);
         _fontFamily = new FontFamily(st.FontFamilyName);
@@ -1993,6 +1999,16 @@ internal sealed partial class DrawingWindow : Window
         _arrowDirectCheck.Unchecked += (_, _) => OnArrowDirectChanged(false);
         _propertyPanel.Children.Add(_arrowDirectCheck);
 
+        _shadowCheck = new CheckBox
+        {
+            Content = "Drop shadow",
+            IsChecked = _hasShadow,
+            Margin = new Thickness(0, 6, 0, 4),
+        };
+        _shadowCheck.Checked += (_, _) => OnShadowChanged(true);
+        _shadowCheck.Unchecked += (_, _) => OnShadowChanged(false);
+        _propertyPanel.Children.Add(_shadowCheck);
+
         UpdatePropertyPanelVisibility();
     }
 
@@ -2058,6 +2074,7 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
             SetPropertySectionVisibility(_arrowDirectCheck, false);
+            SetPropertySectionVisibility(_shadowCheck, false);
             SetPropertySectionVisibility(_sizeHeader, false);
             SetPropertySectionVisibility(_sizeLine1, false);
             SetPropertySectionVisibility(_sizeLine2, false);
@@ -2086,6 +2103,7 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         SetPropertySectionVisibility(_arrowDirectCheck, isArrow);
+        SetPropertySectionVisibility(_shadowCheck, kind is "rect" or "ellipse" or "text");
         RefreshSizeInfo(kind);
         RefreshVariantsSection(kind);
     }
@@ -2299,6 +2317,7 @@ internal sealed partial class DrawingWindow : Window
             _textColorPicker?.SetSelected(_textColor);
             _freehandColorPicker?.SetSelected(_stroke);
             _arrowColorPicker?.SetSelected(_stroke);
+            if (_shadowCheck != null) _shadowCheck.IsChecked = _hasShadow;
             if (_thicknessBox != null) _thicknessBox.Text = Math.Clamp(_thickness, ThicknessMin, ThicknessMax).ToString("0.##");
             if (_cornerRadiusBox != null) _cornerRadiusBox.Text = Math.Clamp(_cornerRadius, CornerRadiusMin, CornerRadiusMax).ToString("0.##");
             if (_fontSizeBox != null) _fontSizeBox.Text = Math.Clamp(_fontSize, FontSizeMin, FontSizeMax).ToString("0.##");
@@ -2317,6 +2336,17 @@ internal sealed partial class DrawingWindow : Window
         {
             _suppressPropertyChanges = false;
         }
+    }
+
+    private void OnShadowChanged(bool hasShadow)
+    {
+        if (_suppressPropertyChanges) return;
+        _hasShadow = hasShadow;
+        if (_selection.Count == 0) return;
+        SnapshotForUndo();
+        foreach (var it in _selection)
+            it.HasShadow = hasShadow;
+        Redraw();
     }
 
     private void OnArrowDirectChanged(bool direct)
@@ -2349,6 +2379,7 @@ internal sealed partial class DrawingWindow : Window
         if (sel == null) return;
         _fill = sel.Fill;
         _gradientFill = sel.Kind == "rect" ? sel.GradientFill : Brushes.Transparent;
+        _hasShadow = sel.HasShadow;
         _stroke = sel.Stroke;
         _textColor = sel.TextColor;
         _thickness = sel.StrokeThickness;
@@ -2640,6 +2671,15 @@ internal sealed partial class DrawingWindow : Window
             return sb.Color.A > 0;
         return brush != null;
     }
+
+    private static System.Windows.Media.Effects.DropShadowEffect CreateShadowEffect() => new()
+    {
+        Color = Colors.Black,
+        BlurRadius = 10,
+        ShadowDepth = 4,
+        Direction = 315,
+        Opacity = 0.45,
+    };
 
     private static Brush BuildRectFill(DrawItem it)
     {
@@ -3205,6 +3245,7 @@ internal sealed partial class DrawingWindow : Window
                 Stroke = _textColor,
                 StrokeThickness = _thickness,
                 Fill = Brushes.Transparent,
+                HasShadow = _hasShadow,
             };
             AssignItemId(item);
             _items.Add(item);
@@ -3237,6 +3278,7 @@ internal sealed partial class DrawingWindow : Window
                 Kind = "rect",
                 P1 = p, P2 = p,
                 Fill = _fill, GradientFill = _gradientFill, Stroke = _stroke,
+                HasShadow = _hasShadow,
                 StrokeThickness = _thickness,
                 CornerRadius = _cornerRadius,
                 FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
@@ -3246,6 +3288,7 @@ internal sealed partial class DrawingWindow : Window
                 Kind = "ellipse",
                 P1 = p, P2 = p,
                 Fill = _fill, Stroke = _stroke,
+                HasShadow = _hasShadow,
                 StrokeThickness = _thickness,
                 FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
             },
@@ -3991,6 +4034,7 @@ internal sealed partial class DrawingWindow : Window
                     RadiusY = it.CornerRadius,
                     IsHitTestVisible = false,
                 };
+                if (it.HasShadow) rect.Effect = CreateShadowEffect();
                 Canvas.SetLeft(rect, b.Left);
                 Canvas.SetTop(rect, b.Top);
                 surface.Children.Add(rect);
@@ -4028,6 +4072,7 @@ internal sealed partial class DrawingWindow : Window
                     StrokeThickness = it.StrokeThickness,
                     IsHitTestVisible = false,
                 };
+                if (it.HasShadow) el.Effect = CreateShadowEffect();
                 Canvas.SetLeft(el, b.Left);
                 Canvas.SetTop(el, b.Top);
                 surface.Children.Add(el);
@@ -4072,6 +4117,7 @@ internal sealed partial class DrawingWindow : Window
                     Foreground = it.TextColor,
                     IsHitTestVisible = false,
                 };
+                if (it.HasShadow) tb.Effect = CreateShadowEffect();
                 tb.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
                 var w = tb.DesiredSize.Width;
                 var h = tb.DesiredSize.Height;
@@ -4675,6 +4721,7 @@ internal sealed partial class DrawingWindow : Window
             CornerRadius = it.CornerRadius,
             Fill = BrushToHex(it.Fill),
             GradientFill = BrushToHex(it.GradientFill),
+            HasShadow = it.HasShadow,
             Stroke = BrushToHex(it.Stroke),
             StrokeThickness = it.StrokeThickness,
             Text = it.Text,
@@ -4714,6 +4761,7 @@ internal sealed partial class DrawingWindow : Window
             CornerRadius = dto.CornerRadius,
             Fill = ParseBrush(dto.Fill),
             GradientFill = ParseBrush(dto.GradientFill),
+            HasShadow = dto.HasShadow,
             Stroke = ParseBrush(dto.Stroke),
             StrokeThickness = dto.StrokeThickness,
             Text = dto.Text ?? "",
