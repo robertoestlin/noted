@@ -1300,6 +1300,7 @@ internal sealed class DrawItemDto
     public double P2Y { get; set; }
     public double CornerRadius { get; set; } = 14;
     public string Fill { get; set; } = "Transparent";
+    public string GradientFill { get; set; } = "Transparent";
     public string Stroke { get; set; } = "#000000";
     public double StrokeThickness { get; set; } = 2;
     public string Text { get; set; } = "";
@@ -1352,6 +1353,7 @@ internal sealed partial class DrawingWindow : Window
         public int? AnchorEndIndex;
         public double CornerRadius = 14;
         public Brush Fill = Brushes.Transparent;
+        public Brush GradientFill = Brushes.Transparent;
         public Brush Stroke = Brushes.Black;
         public double StrokeThickness = 2;
         public string Text = "";
@@ -1378,6 +1380,7 @@ internal sealed partial class DrawingWindow : Window
             AnchorEndIndex = AnchorEndIndex,
             CornerRadius = CornerRadius,
             Fill = Fill,
+            GradientFill = GradientFill,
             Stroke = Stroke,
             StrokeThickness = StrokeThickness,
             Text = Text,
@@ -1439,11 +1442,13 @@ internal sealed partial class DrawingWindow : Window
     private readonly StackPanel _propertyPanel;
 
     private CompactColorPicker? _fillColorPicker;
+    private CompactColorPicker? _gradientColorPicker;
     private CompactColorPicker? _strokeColorPicker;
     private CompactColorPicker? _textColorPicker;
     private CompactColorPicker? _freehandColorPicker;
     private CompactColorPicker? _arrowColorPicker;
     private Grid? _fillColorRow;
+    private Grid? _gradientColorRow;
     private Grid? _strokeColorRow;
     private Grid? _textColorRow;
     private Grid? _freehandColorRow;
@@ -1481,6 +1486,7 @@ internal sealed partial class DrawingWindow : Window
     private Tool _tool = Tool.Select;
 
     private Brush _fill = Brushes.Transparent;
+    private Brush _gradientFill = Brushes.Transparent;
     private Brush _stroke = Brushes.Black;
     private Brush _textColor = Brushes.Black;
     private double _thickness = 2;
@@ -1783,6 +1789,7 @@ internal sealed partial class DrawingWindow : Window
         theme.EnsureToolStyles();
         var st = theme.GetActiveVariant(ToolToKind(profileTool));
         _fill = ParseBrush(st.Fill);
+        _gradientFill = Brushes.Transparent;
         _stroke = ParseBrush(st.Stroke);
         _textColor = ParseBrush(st.TextColor);
         _fontFamily = new FontFamily(st.FontFamilyName);
@@ -1819,6 +1826,8 @@ internal sealed partial class DrawingWindow : Window
     {
         _fillColorPicker?.Refresh();
         _fillColorPicker?.SetSelected(_fill);
+        _gradientColorPicker?.Refresh();
+        _gradientColorPicker?.SetSelected(_gradientFill);
         _strokeColorPicker?.Refresh();
         _strokeColorPicker?.SetSelected(_stroke);
         _textColorPicker?.Refresh();
@@ -1861,6 +1870,13 @@ internal sealed partial class DrawingWindow : Window
             onBeginCustomPick: SnapshotForUndo);
         _fillColorRow = MakeCompactColorRow("Fill", _fillColorPicker);
         _propertyPanel.Children.Add(_fillColorRow);
+
+        _gradientColorPicker = new CompactColorPicker(_gradientFill,
+            onChanged: b => { _gradientFill = b; ApplyColorToSelected(); },
+            onPreview: b => { _gradientFill = b; ApplyColorToSelectedNoSnapshot(); },
+            onBeginCustomPick: SnapshotForUndo);
+        _gradientColorRow = MakeCompactColorRow("Gradient", _gradientColorPicker);
+        _propertyPanel.Children.Add(_gradientColorRow);
 
         _strokeColorPicker = new CompactColorPicker(_stroke,
             onChanged: b => { _stroke = b; ApplyColorToSelected(); },
@@ -2026,6 +2042,7 @@ internal sealed partial class DrawingWindow : Window
         if (kind == null)
         {
             SetPropertySectionVisibility(_fillColorRow, false);
+            SetPropertySectionVisibility(_gradientColorRow, false);
             SetPropertySectionVisibility(_strokeColorRow, false);
             SetPropertySectionVisibility(_textColorRow, false);
             SetPropertySectionVisibility(_thicknessHeader, false);
@@ -2053,6 +2070,7 @@ internal sealed partial class DrawingWindow : Window
         var isFreehand = kind == "freehand";
         var isArrow = kind == "arrow";
         SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse");
+        SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && kind == "rect");
         SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse");
         SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "text");
         SetPropertySectionVisibility(_arrowColorRow, isArrow);
@@ -2276,6 +2294,7 @@ internal sealed partial class DrawingWindow : Window
         try
         {
             _fillColorPicker?.SetSelected(_fill);
+            _gradientColorPicker?.SetSelected(_gradientFill);
             _strokeColorPicker?.SetSelected(_stroke);
             _textColorPicker?.SetSelected(_textColor);
             _freehandColorPicker?.SetSelected(_stroke);
@@ -2329,6 +2348,7 @@ internal sealed partial class DrawingWindow : Window
         var sel = SelectionPropertySource();
         if (sel == null) return;
         _fill = sel.Fill;
+        _gradientFill = sel.Kind == "rect" ? sel.GradientFill : Brushes.Transparent;
         _stroke = sel.Stroke;
         _textColor = sel.TextColor;
         _thickness = sel.StrokeThickness;
@@ -2367,6 +2387,8 @@ internal sealed partial class DrawingWindow : Window
                 it.Fill = _fill;
                 it.Stroke = _stroke;
                 it.TextColor = _textColor;
+                if (it.Kind == "rect")
+                    it.GradientFill = _gradientFill;
             }
         }
         else if (sel.Kind == "arrow")
@@ -2617,6 +2639,24 @@ internal sealed partial class DrawingWindow : Window
         if (brush is SolidColorBrush sb)
             return sb.Color.A > 0;
         return brush != null;
+    }
+
+    private static Brush BuildRectFill(DrawItem it)
+    {
+        if (!HasVisibleFill(it.GradientFill))
+            return it.Fill;
+        var bottom = it.Fill is SolidColorBrush sbBottom ? sbBottom.Color : Colors.Transparent;
+        var top = it.GradientFill is SolidColorBrush sbTop ? sbTop.Color : Colors.Transparent;
+        return new LinearGradientBrush
+        {
+            StartPoint = new Point(0.5, 0),
+            EndPoint = new Point(0.5, 1),
+            GradientStops = new GradientStopCollection
+            {
+                new GradientStop(top, 0),
+                new GradientStop(bottom, 1),
+            },
+        };
     }
 
     private static Button MakeButton(string text)
@@ -3196,7 +3236,7 @@ internal sealed partial class DrawingWindow : Window
             {
                 Kind = "rect",
                 P1 = p, P2 = p,
-                Fill = _fill, Stroke = _stroke,
+                Fill = _fill, GradientFill = _gradientFill, Stroke = _stroke,
                 StrokeThickness = _thickness,
                 CornerRadius = _cornerRadius,
                 FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
@@ -3944,7 +3984,7 @@ internal sealed partial class DrawingWindow : Window
                 {
                     Width = b.Width,
                     Height = b.Height,
-                    Fill = it.Fill,
+                    Fill = BuildRectFill(it),
                     Stroke = it.Stroke,
                     StrokeThickness = it.StrokeThickness,
                     RadiusX = it.CornerRadius,
@@ -4634,6 +4674,7 @@ internal sealed partial class DrawingWindow : Window
             P2Y = it.P2.Y,
             CornerRadius = it.CornerRadius,
             Fill = BrushToHex(it.Fill),
+            GradientFill = BrushToHex(it.GradientFill),
             Stroke = BrushToHex(it.Stroke),
             StrokeThickness = it.StrokeThickness,
             Text = it.Text,
@@ -4672,6 +4713,7 @@ internal sealed partial class DrawingWindow : Window
             P2 = new Point(dto.P2X, dto.P2Y),
             CornerRadius = dto.CornerRadius,
             Fill = ParseBrush(dto.Fill),
+            GradientFill = ParseBrush(dto.GradientFill),
             Stroke = ParseBrush(dto.Stroke),
             StrokeThickness = dto.StrokeThickness,
             Text = dto.Text ?? "",
