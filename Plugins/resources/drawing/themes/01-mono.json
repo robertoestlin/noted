@@ -1,0 +1,12 @@
+{
+  "Name": "Mono (built-in)",
+  "Fill": "Transparent",
+  "Stroke": "#222222",
+  "TextColor": "#222222",
+  "FontFamilyName": "Segoe UI",
+  "FontSize": 22,
+  "Thickness": 2,
+  "CornerRadius": 14,
+  "ArrowHead": "Simple",
+  "FreeThickness": 6
+}

@@ -1,0 +1,12 @@
+{
+  "Name": "Mono Square (built-in)",
+  "Fill": "Transparent",
+  "Stroke": "#000000",
+  "TextColor": "#000000",
+  "FontFamilyName": "Consolas",
+  "FontSize": 18,
+  "Thickness": 1.5,
+  "CornerRadius": 0,
+  "ArrowHead": "Simple",
+  "FreeThickness": 3
+}

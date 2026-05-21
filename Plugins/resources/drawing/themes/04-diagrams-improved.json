@@ -1,0 +1,26 @@
+{
+  "Name": "Diagrams Improved (built-in)",
+  "Fill": "#DAE8FC",
+  "Stroke": "#6C8EBF",
+  "TextColor": "#1F2A44",
+  "FontFamilyName": "Helvetica",
+  "FontSize": 18,
+  "Thickness": 1.5,
+  "CornerRadius": 6,
+  "ArrowHead": "Simple",
+  "FreeThickness": 3,
+  "Arrows": [
+    {
+      "Enabled": true,
+      "Fill": "Transparent",
+      "Stroke": "#000000",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 15,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    }
+  ]
+}

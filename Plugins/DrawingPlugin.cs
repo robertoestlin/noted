@@ -613,27 +613,63 @@ internal static class DrawingThemeStore
         }
     }
 
-    public static List<DrawingTheme> CreateDefaults() => new()
+    /// <summary>Folder shipped with the app that holds the canonical built-in theme definitions
+    /// as <c>*.json</c> files. Each file deserializes into a <see cref="DrawingTheme"/>; per-kind
+    /// variants are then populated by <see cref="DrawingTheme.EnsureToolStyles"/> from the legacy
+    /// root fields (Fill/Stroke/TextColor/Font/...). Files are loaded in filename order, so a
+    /// numeric prefix controls the display order.</summary>
+    public static string BuiltInThemesDirectory =>
+        System.IO.Path.Combine(AppContext.BaseDirectory, "Plugins", "resources", "drawing", "themes");
+
+    public static List<DrawingTheme> CreateDefaults()
     {
-        new DrawingTheme
+        var result = LoadBuiltInsFromDisk();
+        if (result.Count > 0) return result;
+
+        // Safety net so the rest of the app always has at least one default. This branch is
+        // only reached when the shipped JSON resources are missing (broken deployment / tests).
+        return new List<DrawingTheme>
         {
-            Name = "Mono (built-in)", Fill = "Transparent", Stroke = "#222222", TextColor = "#222222",
-            FontFamilyName = "Segoe UI", FontSize = 22, Thickness = 2, CornerRadius = 14,
-            ArrowHead = "Simple", FreeThickness = 6,
-        },
-        new DrawingTheme
+            new DrawingTheme
+            {
+                Name = "Mono (built-in)", Fill = "Transparent", Stroke = "#222222", TextColor = "#222222",
+                FontFamilyName = "Segoe UI", FontSize = 22, Thickness = 2, CornerRadius = 14,
+                ArrowHead = "Simple", FreeThickness = 6,
+            },
+        };
+    }
+
+    private static List<DrawingTheme> LoadBuiltInsFromDisk()
+    {
+        var result = new List<DrawingTheme>();
+        try
         {
-            Name = "Mono Square (built-in)", Fill = "Transparent", Stroke = "#000000", TextColor = "#000000",
-            FontFamilyName = "Consolas", FontSize = 18, Thickness = 1.5, CornerRadius = 0,
-            ArrowHead = "Simple", FreeThickness = 3,
-        },
-        new DrawingTheme
+            var dir = BuiltInThemesDirectory;
+            if (!Directory.Exists(dir)) return result;
+            var files = Directory
+                .EnumerateFiles(dir, "*.json", SearchOption.TopDirectoryOnly)
+                .OrderBy(p => System.IO.Path.GetFileName(p), StringComparer.OrdinalIgnoreCase);
+            foreach (var path in files)
+            {
+                try
+                {
+                    var theme = JsonSerializer.Deserialize<DrawingTheme>(File.ReadAllText(path));
+                    if (theme == null || string.IsNullOrWhiteSpace(theme.Name)) continue;
+                    if (!IsBuiltInName(theme.Name)) theme.Name += BuiltInSuffix;
+                    result.Add(theme);
+                }
+                catch
+                {
+                    // skip malformed file but keep loading the rest
+                }
+            }
+        }
+        catch
         {
-            Name = "Notebook (built-in)", Fill = "#F5F5DC", Stroke = "#3F51B5", TextColor = "#3F51B5",
-            FontFamilyName = "Comic Sans MS", FontSize = 22, Thickness = 2, CornerRadius = 10,
-            ArrowHead = "Simple", FreeThickness = 5,
-        },
-    };
+            // ignore
+        }
+        return result;
+    }
 
     /// <summary>Rename legacy theme names to the new "(built-in)" naming and drop the deprecated
     /// "Default" theme. Idempotent — re-running has no effect since the source names are gone

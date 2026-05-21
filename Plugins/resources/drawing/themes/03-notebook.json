@@ -1,0 +1,12 @@
+{
+  "Name": "Notebook (built-in)",
+  "Fill": "#F5F5DC",
+  "Stroke": "#3F51B5",
+  "TextColor": "#3F51B5",
+  "FontFamilyName": "Comic Sans MS",
+  "FontSize": 22,
+  "Thickness": 2,
+  "CornerRadius": 10,
+  "ArrowHead": "Simple",
+  "FreeThickness": 5
+}
