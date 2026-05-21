@@ -1598,6 +1598,8 @@ internal sealed partial class DrawingWindow : Window
 
     private bool _isMoving;
     private Point _moveLast;
+    private double _snapHeldDx;
+    private double _snapHeldDy;
     private IReadOnlyList<DrawingSnapGuides.GuideLine> _snapGuides = Array.Empty<DrawingSnapGuides.GuideLine>();
     private int _activeHandle = -1;
     private bool _pendingUndoForGesture;
@@ -3307,6 +3309,8 @@ internal sealed partial class DrawingWindow : Window
                 _activeArrowSegment = -1;
                 _isMoving = true;
                 _moveLast = p;
+                _snapHeldDx = 0;
+                _snapHeldDy = 0;
                 _pendingUndoForGesture = true;
                 _canvas.CaptureMouse();
                 Redraw();
@@ -3515,14 +3519,14 @@ internal sealed partial class DrawingWindow : Window
                 var moving = GetSelectionBounds();
                 var selected = GetSelectionMembers().ToHashSet();
                 var others = _items.Where(i => !selected.Contains(i)).Select(GetBounds).ToList();
-                var (snappedDx, snappedDy, guides) = DrawingSnapGuides.AdjustMove(dx, dy, moving, others);
-                var finalDx = DrawingSnapGuides.CoalesceMoveDelta(dx, snappedDx);
-                var finalDy = DrawingSnapGuides.CoalesceMoveDelta(dy, snappedDy);
-                _snapGuides = DrawingSnapGuides.IsSnapEngaged(dx, dy, finalDx, finalDy)
-                    ? guides
+                var step = DrawingSnapGuides.StickyStep(dx, dy, _snapHeldDx, _snapHeldDy, moving, others);
+                _snapHeldDx = step.NextHeldDx;
+                _snapHeldDy = step.NextHeldDy;
+                _snapGuides = DrawingSnapGuides.IsSnapEngaged(_snapHeldDx, _snapHeldDy)
+                    ? step.Guides
                     : Array.Empty<DrawingSnapGuides.GuideLine>();
                 foreach (var it in GetSelectionMembers())
-                    TranslateItem(it, finalDx, finalDy);
+                    TranslateItem(it, step.Dx, step.Dy);
                 _moveLast = p;
                 if (GetHomogeneousSelectionKind() is { } moveKind
                     && moveKind is "rect" or "ellipse" or "arrow")
@@ -3674,6 +3678,8 @@ internal sealed partial class DrawingWindow : Window
         _arrowDrawEndShape = null;
         _arrowDrawEndAnchorIndex = null;
         _isMoving = false;
+        _snapHeldDx = 0;
+        _snapHeldDy = 0;
         _activeHandle = -1;
         _activeArrowSegment = -1;
         _pendingUndoForGesture = false;

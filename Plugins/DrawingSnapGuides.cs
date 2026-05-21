@@ -45,29 +45,49 @@ internal static class DrawingSnapGuides
         var snapDy = SnapAlignAxis(proposed, others, vertical: true, snapDistance, guides, hSpan);
 
         proposed = Offset(movingBounds, dx + snapDx, dy + snapDy);
-        var spaceDx = SnapSpacingHorizontal(proposed, others, snapDistance, guides);
-        var spaceDy = SnapSpacingVertical(proposed, others, snapDistance, guides);
+        var sameRow = others.Where(r => OverlapsVertically(r, proposed)).ToList();
+        var sameColumn = others.Where(r => OverlapsHorizontally(r, proposed)).ToList();
+        var spaceDx = SnapSpacingHorizontal(proposed, sameRow, snapDistance, guides);
+        var spaceDy = SnapSpacingVertical(proposed, sameColumn, snapDistance, guides);
 
         return (dx + snapDx + spaceDx, dy + snapDy + spaceDy, guides);
     }
 
+    private static bool OverlapsVertically(Rect a, Rect b)
+        => a.Top < b.Bottom && b.Top < a.Bottom;
+
+    private static bool OverlapsHorizontally(Rect a, Rect b)
+        => a.Left < b.Right && b.Left < a.Right;
+
     /// <summary>
-    /// Keeps magnetic snap without locking the selection on a guide — when the user drags
-    /// past a snap line, movement follows the pointer instead of being pulled back.
+    /// Sticky-snap step: combine raw mouse delta with previously held-back motion,
+    /// run the snap engine, and report the applied delta plus the new held-back motion.
+    /// Reversing direction releases the held motion so the snap doesn't fight a clear reversal.
     /// </summary>
-    public static double CoalesceMoveDelta(double rawDelta, double snappedDelta)
+    public static (double Dx, double Dy, double NextHeldDx, double NextHeldDy, IReadOnlyList<GuideLine> Guides) StickyStep(
+        double rawDx,
+        double rawDy,
+        double heldDx,
+        double heldDy,
+        Rect movingBounds,
+        IReadOnlyList<Rect> otherBounds,
+        double snapDistance = DefaultSnapDistance)
     {
-        if (Math.Abs(rawDelta) < 0.001)
-            return snappedDelta;
-        if (Math.Abs(snappedDelta) < 0.001)
-            return rawDelta;
-        if (Math.Sign(rawDelta) != Math.Sign(snappedDelta))
-            return rawDelta;
-        return snappedDelta;
+        if (Math.Sign(rawDx) != 0 && Math.Sign(heldDx) != 0 && Math.Sign(rawDx) != Math.Sign(heldDx))
+            heldDx = 0;
+        if (Math.Sign(rawDy) != 0 && Math.Sign(heldDy) != 0 && Math.Sign(rawDy) != Math.Sign(heldDy))
+            heldDy = 0;
+
+        var intentDx = rawDx + heldDx;
+        var intentDy = rawDy + heldDy;
+        var (snappedDx, snappedDy, guides) = AdjustMove(intentDx, intentDy, movingBounds, otherBounds, snapDistance);
+        var nextHeldDx = intentDx - snappedDx;
+        var nextHeldDy = intentDy - snappedDy;
+        return (snappedDx, snappedDy, nextHeldDx, nextHeldDy, guides);
     }
 
-    public static bool IsSnapEngaged(double rawDx, double rawDy, double finalDx, double finalDy)
-        => Math.Abs(finalDx - rawDx) > 0.001 || Math.Abs(finalDy - rawDy) > 0.001;
+    public static bool IsSnapEngaged(double heldDx, double heldDy)
+        => Math.Abs(heldDx) > 0.001 || Math.Abs(heldDy) > 0.001;
 
     private static Rect Offset(Rect r, double dx, double dy)
         => new(r.X + dx, r.Y + dy, r.Width, r.Height);
