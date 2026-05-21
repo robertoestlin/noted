@@ -4820,7 +4820,9 @@ internal sealed partial class DrawingWindow : Window
     }
 
     /// <summary>Union of item bounding boxes, inflated by stroke thickness + a small padding, clamped to the canvas.
-    /// Used to crop the rendered PNG so it isn't padded with empty whitespace from the working area.</summary>
+    /// Used to crop the rendered PNG so it isn't padded with empty whitespace from the working area.
+    /// Arrows contribute their full polyline path (including route bends) plus arrowhead extents,
+    /// so bent arrows and arrowheads aren't cut off by the crop.</summary>
     private Int32Rect ComputeContentCropRect(Size canvasSize)
     {
         if (_items.Count == 0)
@@ -4832,7 +4834,7 @@ internal sealed partial class DrawingWindow : Window
         bool anyValid = false;
         foreach (var it in _items)
         {
-            var b = GetBounds(it);
+            var b = GetItemVisualBounds(it);
             if (b.IsEmpty) continue;
             anyValid = true;
             if (b.Left < minX) minX = b.Left;
@@ -4852,6 +4854,42 @@ internal sealed partial class DrawingWindow : Window
         int w = (int)Math.Max(1, right - left);
         int h = (int)Math.Max(1, bottom - top);
         return new Int32Rect((int)left, (int)top, w, h);
+    }
+
+    /// <summary>Returns the full painted bounds of an item, including arrow route bends and arrowheads.
+    /// Falls back to <see cref="GetBounds"/> for non-arrow kinds.</summary>
+    private Rect GetItemVisualBounds(DrawItem it)
+    {
+        if (it.Kind != "arrow")
+            return GetBounds(it);
+
+        var path = GetArrowPathPoints(it);
+        if (path.Count == 0)
+            return GetBounds(it);
+
+        double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
+        double maxX = double.NegativeInfinity, maxY = double.NegativeInfinity;
+        foreach (var pt in path)
+        {
+            if (pt.X < minX) minX = pt.X;
+            if (pt.Y < minY) minY = pt.Y;
+            if (pt.X > maxX) maxX = pt.X;
+            if (pt.Y > maxY) maxY = pt.Y;
+        }
+        if (double.IsInfinity(minX))
+            return GetBounds(it);
+
+        // Inflate by the arrowhead extent so heads aren't clipped. Matches AddArrowHeads sizing.
+        if (it.ArrowHead != ArrowHeadStyle.None)
+        {
+            var headSize = Math.Max(10, it.StrokeThickness * 4);
+            minX -= headSize;
+            minY -= headSize;
+            maxX += headSize;
+            maxY += headSize;
+        }
+
+        return new Rect(minX, minY, Math.Max(0, maxX - minX), Math.Max(0, maxY - minY));
     }
 
     private DrawingWorkspaceDto BuildWorkspaceDto()
