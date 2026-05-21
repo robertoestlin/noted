@@ -4,7 +4,7 @@ namespace Noted;
 
 internal sealed partial class DrawingWindow
 {
-    private const double ShapeClearanceMargin = 8;
+    public const double DefaultArrowClearanceMargin = 35;
 
     private IReadOnlyList<Point> GetArrowPathPoints(DrawItem arrow)
         => ResolveArrowPath(arrow);
@@ -12,7 +12,8 @@ internal sealed partial class DrawingWindow
     private static Point[] BuildOrthogonalArrowPath(
         Point start, Point end,
         DrawItem? startShape, int? startIndex,
-        DrawItem? endShape, int? endIndex)
+        DrawItem? endShape, int? endIndex,
+        double clearanceMargin)
     {
         if (PointsNearlyEqual(start, end))
             return new[] { start, end };
@@ -23,7 +24,7 @@ internal sealed partial class DrawingWindow
         var entryVertical = Math.Abs(endOutward.Y) > 0.5;
 
         var candidates = new List<Point[]>();
-        AddOrthogonalCandidates(candidates, start, end, startShape, endShape, startOutward, endOutward);
+        AddOrthogonalCandidates(candidates, start, end, startShape, endShape, startOutward, endOutward, clearanceMargin);
 
         Point[]? best = null;
         var bestScore = double.MaxValue;
@@ -55,7 +56,7 @@ internal sealed partial class DrawingWindow
 
         if (startShape != null)
         {
-            var exit = GetClearancePoint(startShape, start, startOutward);
+            var exit = GetClearancePoint(startShape, start, startOutward, clearanceMargin);
             var fallback = exitVertical
                 ? new[] { start, exit, new Point(exit.X, end.Y), end }
                 : new[] { start, exit, new Point(end.X, exit.Y), end };
@@ -72,7 +73,8 @@ internal sealed partial class DrawingWindow
         List<Point[]> candidates,
         Point start, Point end,
         DrawItem? startShape, DrawItem? endShape,
-        Point startOutward, Point endOutward)
+        Point startOutward, Point endOutward,
+        double clearanceMargin)
     {
         candidates.Add(new[] { start, new Point(end.X, start.Y), end });
         candidates.Add(new[] { start, new Point(start.X, end.Y), end });
@@ -84,7 +86,7 @@ internal sealed partial class DrawingWindow
 
         if (startShape != null)
         {
-            var exit = GetClearancePoint(startShape, start, startOutward);
+            var exit = GetClearancePoint(startShape, start, startOutward, clearanceMargin);
             candidates.Add(new[] { start, exit, new Point(end.X, exit.Y), end });
             candidates.Add(new[] { start, exit, new Point(exit.X, end.Y), end });
             candidates.Add(new[] { start, exit, new Point(exit.X, midY), new Point(end.X, midY), end });
@@ -93,7 +95,7 @@ internal sealed partial class DrawingWindow
 
         if (endShape != null)
         {
-            var entry = GetClearancePoint(endShape, end, endOutward);
+            var entry = GetClearancePoint(endShape, end, endOutward, clearanceMargin);
             candidates.Add(new[] { start, new Point(start.X, entry.Y), entry, end });
             candidates.Add(new[] { start, new Point(entry.X, start.Y), entry, end });
             candidates.Add(new[] { start, new Point(midX, start.Y), new Point(midX, entry.Y), entry, end });
@@ -102,8 +104,8 @@ internal sealed partial class DrawingWindow
 
         if (startShape != null && endShape != null)
         {
-            var exit = GetClearancePoint(startShape, start, startOutward);
-            var entry = GetClearancePoint(endShape, end, endOutward);
+            var exit = GetClearancePoint(startShape, start, startOutward, clearanceMargin);
+            var entry = GetClearancePoint(endShape, end, endOutward, clearanceMargin);
             candidates.Add(new[] { start, exit, entry, end });
             candidates.Add(new[] { start, exit, new Point(entry.X, exit.Y), entry, end });
             candidates.Add(new[] { start, exit, new Point(exit.X, entry.Y), entry, end });
@@ -157,17 +159,17 @@ internal sealed partial class DrawingWindow
         return new Point(0, dy > 0 ? 1 : -1);
     }
 
-    private static Point GetClearancePoint(DrawItem shape, Point anchor, Point outward)
+    private static Point GetClearancePoint(DrawItem shape, Point anchor, Point outward, double clearanceMargin)
     {
         var b = GetBounds(shape);
         if (outward.Y < 0)
-            return new Point(anchor.X, b.Top - ShapeClearanceMargin);
+            return new Point(anchor.X, b.Top - clearanceMargin);
         if (outward.Y > 0)
-            return new Point(anchor.X, b.Bottom + ShapeClearanceMargin);
+            return new Point(anchor.X, b.Bottom + clearanceMargin);
         if (outward.X < 0)
-            return new Point(b.Left - ShapeClearanceMargin, anchor.Y);
+            return new Point(b.Left - clearanceMargin, anchor.Y);
         if (outward.X > 0)
-            return new Point(b.Right + ShapeClearanceMargin, anchor.Y);
+            return new Point(b.Right + clearanceMargin, anchor.Y);
         return anchor;
     }
 
@@ -195,6 +197,19 @@ internal sealed partial class DrawingWindow
         if (Math.Abs(axis.Y) > 0.5)
             return Math.Abs(dy) > 0.001 && Math.Sign(dy) == Math.Sign(axis.Y);
         return true;
+    }
+
+    /// <summary>Length of <paramref name="to"/> - <paramref name="from"/> projected onto
+    /// <paramref name="outward"/> (0 when the segment does not exit along that axis).</summary>
+    private static double OutwardAxisExtent(Point from, Point to, Point outward)
+    {
+        if (!SegmentFollowsAxisDirection(from, to, outward))
+            return 0;
+        if (Math.Abs(outward.Y) > 0.5)
+            return Math.Abs(to.Y - from.Y);
+        if (Math.Abs(outward.X) > 0.5)
+            return Math.Abs(to.X - from.X);
+        return 0;
     }
 
     private static bool PathCrossesAnchoredShapes(Point[] path, DrawItem? startShape, DrawItem? endShape)

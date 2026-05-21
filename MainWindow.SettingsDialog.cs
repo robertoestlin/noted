@@ -1779,8 +1779,9 @@ public partial class MainWindow
             Margin = new Thickness(0, 0, 0, 12),
         });
         var drawingGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-        drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
+        drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -1810,11 +1811,13 @@ public partial class MainWindow
         var txtDrawingEllipseWidth = new TextBox { Text = _drawingDefaultEllipseWidth.ToString() };
         var txtDrawingEllipseHeight = new TextBox { Text = _drawingDefaultEllipseHeight.ToString() };
         var txtDrawingSnapThreshold = new TextBox { Text = _drawingShapeSizeSnapThresholdPx.ToString() };
+        var txtDrawingArrowMargin = new TextBox { Text = _drawingArrowClearanceMarginPx.ToString() };
         AddDrawingRow(drawingGrid, 0, "Rectangle width (px):", txtDrawingRectWidth);
         AddDrawingRow(drawingGrid, 1, "Rectangle height (px):", txtDrawingRectHeight);
         AddDrawingRow(drawingGrid, 2, "Circle width (px):", txtDrawingEllipseWidth);
         AddDrawingRow(drawingGrid, 3, "Circle height (px):", txtDrawingEllipseHeight);
         AddDrawingRow(drawingGrid, 4, "Snap threshold (px):", txtDrawingSnapThreshold);
+        AddDrawingRow(drawingGrid, 5, "Arrow margin (px):", txtDrawingArrowMargin);
         drawingPanel.Children.Add(drawingGrid);
         tabControl.Items.Add(new TabItem
         {
@@ -2209,7 +2212,10 @@ public partial class MainWindow
                 && int.TryParse(txtDrawingEllipseHeight.Text, out int drawingEllipseHeight)
                 && drawingEllipseHeight >= MinDrawingShapeSizePx && drawingEllipseHeight <= MaxDrawingShapeSizePx
                 && int.TryParse(txtDrawingSnapThreshold.Text, out int drawingSnapThreshold)
-                && drawingSnapThreshold >= 2 && drawingSnapThreshold <= 80)
+                && drawingSnapThreshold >= 2 && drawingSnapThreshold <= 80
+                && int.TryParse(txtDrawingArrowMargin.Text, out int drawingArrowMargin)
+                && drawingArrowMargin >= MinDrawingArrowClearanceMarginPx
+                && drawingArrowMargin <= MaxDrawingArrowClearanceMarginPx)
             {
                 _backupAdditionalIncludeSettingsFile = chkBackupAddSettings.IsChecked == true;
                 _backupAdditionalIncludeAppLog = chkBackupAddLog.IsChecked == true;
@@ -2328,6 +2334,7 @@ public partial class MainWindow
                 _drawingDefaultEllipseWidth = drawingEllipseWidth;
                 _drawingDefaultEllipseHeight = drawingEllipseHeight;
                 _drawingShapeSizeSnapThresholdPx = drawingSnapThreshold;
+                _drawingArrowClearanceMarginPx = drawingArrowMargin;
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors
@@ -2351,7 +2358,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat interval must be selected (1, 2, 3, 4, 5, 6, or 10 minutes — each divides evenly into one hour).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.\nDrawing shape sizes must be {MinDrawingShapeSizePx}–{MaxDrawingShapeSizePx} px.\nDrawing snap threshold must be 2–80 px.",
+                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat interval must be selected (1, 2, 3, 4, 5, 6, or 10 minutes — each divides evenly into one hour).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.\nDrawing shape sizes must be {MinDrawingShapeSizePx}–{MaxDrawingShapeSizePx} px.\nDrawing snap threshold must be 2–80 px.\nDrawing arrow margin must be {MinDrawingArrowClearanceMarginPx}–{MaxDrawingArrowClearanceMarginPx} px.",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

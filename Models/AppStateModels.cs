@@ -589,6 +589,10 @@ public sealed class WindowSettings
     /// <summary>While drawing, width/height snap to defaults when within this many pixels (default 12).</summary>
     public int? DrawingShapeSizeSnapThresholdPx { get; set; }
 
+    /// <summary>Default perpendicular margin (px) for new non-direct arrows. Drives the stub length
+    /// between an anchored shape and the first bend. Per-arrow overrides are stored on each arrow.</summary>
+    public int? DrawingArrowClearanceMarginPx { get; set; }
+
     /// <summary>User additions/removals/reorder for built-in color palettes (Main, Diagrams, …).</summary>
     public Dictionary<string, PaletteCustomization>? ColorPaletteCustomizations { get; set; }
 }

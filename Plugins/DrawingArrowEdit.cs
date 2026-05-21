@@ -7,11 +7,47 @@ namespace Noted;
 
 internal sealed partial class DrawingWindow
 {
-    private const double MinimumExitLeg = 32;
-    private const double MinimumEntryLeg = 80;
     private const double ArrowSegmentHitRadius = 14;
 
     private int _activeArrowSegment = -1;
+
+    private static double ArrowClearance(DrawItem arrow)
+        => arrow.ClearanceMargin > 0 ? arrow.ClearanceMargin : DefaultArrowClearanceMargin;
+
+    /// <summary>For a newly-attached arrow, inherit the smallest clearance margin from any other
+    /// arrow already anchored to either of its endpoints' shapes. Falls back to the user-configured
+    /// default (Settings → Drawing) when no neighbor exists. Lets a user set the margin once per
+    /// object and have new arrows match.</summary>
+    private double InferArrowClearanceMargin(DrawItem arrow)
+    {
+        double? smallest = null;
+        foreach (var other in _items)
+        {
+            if (ReferenceEquals(other, arrow)) continue;
+            if (other.Kind != "arrow") continue;
+            if (!ArrowSharesAnyAnchorShape(arrow, other)) continue;
+            var m = ArrowClearance(other);
+            if (smallest == null || m < smallest.Value)
+                smallest = m;
+        }
+        return smallest ?? _host.DrawingArrowClearanceMarginPx;
+    }
+
+    private static bool ArrowSharesAnyAnchorShape(DrawItem a, DrawItem b)
+    {
+        var aIds = new[] { a.AnchorStartShapeId, a.AnchorEndShapeId };
+        var bIds = new[] { b.AnchorStartShapeId, b.AnchorEndShapeId };
+        foreach (var ax in aIds)
+        {
+            if (ax is null) continue;
+            foreach (var bx in bIds)
+            {
+                if (bx is null) continue;
+                if (ax.Value == bx.Value) return true;
+            }
+        }
+        return false;
+    }
 
     private IReadOnlyList<Point> ResolveArrowPath(DrawItem arrow)
     {
@@ -30,7 +66,8 @@ internal sealed partial class DrawingWindow
         return BuildOrthogonalArrowPath(
             arrow.P1, arrow.P2,
             startShape, arrow.AnchorStartIndex,
-            endShape, arrow.AnchorEndIndex);
+            endShape, arrow.AnchorEndIndex,
+            ArrowClearance(arrow));
     }
 
     private static Point[] BuildPathFromRouteBends(Point start, List<Point> bends, Point end)
@@ -64,8 +101,9 @@ internal sealed partial class DrawingWindow
         var path = BuildPathFromRouteBends(arrow.P1, arrow.RouteBends, arrow.P2);
         DrawItem? startShape = arrow.AnchorStartShapeId is int sid ? FindShapeById(sid) : null;
         DrawItem? endShape = arrow.AnchorEndShapeId is int eid ? FindShapeById(eid) : null;
-        path = ExtendFirstExitLeg(path, startShape, arrow.AnchorStartIndex, arrow.P1);
-        path = ExtendLastEntryLeg(path, endShape, arrow.AnchorEndIndex, arrow.P2);
+        var leg = ArrowClearance(arrow);
+        path = ExtendFirstExitLeg(path, startShape, arrow.AnchorStartIndex, arrow.P1, leg);
+        path = ExtendLastEntryLeg(path, endShape, arrow.AnchorEndIndex, arrow.P2, leg);
         arrow.RouteBends = ExtractInteriorPoints(path);
     }
 
@@ -76,7 +114,8 @@ internal sealed partial class DrawingWindow
         var path = BuildOrthogonalArrowPath(
             arrow.P1, arrow.P2,
             startShape, arrow.AnchorStartIndex,
-            endShape, arrow.AnchorEndIndex);
+            endShape, arrow.AnchorEndIndex,
+            ArrowClearance(arrow));
         return path is Point[] arr ? arr : path.ToArray();
     }
 
@@ -210,6 +249,35 @@ internal sealed partial class DrawingWindow
         }
 
         WriteRouteBendsFromPath(arrow, path);
+        SyncArrowMarginToCurrentStub(arrow);
+    }
+
+    /// <summary>After a segment drag, set <c>arrow.ClearanceMargin</c> to the new effective
+    /// stub length so subsequent minimum-leg enforcement does not snap the route back to a
+    /// larger margin. Both stubs are considered: the shorter one wins.</summary>
+    private void SyncArrowMarginToCurrentStub(DrawItem arrow)
+    {
+        if (arrow.RouteBends.Count == 0) return;
+
+        var startShape = arrow.AnchorStartShapeId is int sid ? FindShapeById(sid) : null;
+        var endShape = arrow.AnchorEndShapeId is int eid ? FindShapeById(eid) : null;
+        var startOutward = GetAnchorOutwardUnit(startShape, arrow.AnchorStartIndex, arrow.P1);
+        var endOutward = GetAnchorOutwardUnit(endShape, arrow.AnchorEndIndex, arrow.P2);
+        var endInward = new Point(-endOutward.X, -endOutward.Y);
+
+        var firstStub = OutwardAxisExtent(arrow.P1, arrow.RouteBends[0], startOutward);
+        var lastStub = OutwardAxisExtent(arrow.RouteBends[^1], arrow.P2, endInward);
+
+        double? newMargin = null;
+        if (firstStub > 0 && lastStub > 0)
+            newMargin = Math.Min(firstStub, lastStub);
+        else if (firstStub > 0)
+            newMargin = firstStub;
+        else if (lastStub > 0)
+            newMargin = lastStub;
+
+        if (newMargin.HasValue && newMargin.Value > 0.001)
+            arrow.ClearanceMargin = newMargin.Value;
     }
 
     private bool TryBeginArrowSegmentDrag(DrawItem arrow, Point p)
@@ -255,7 +323,8 @@ internal sealed partial class DrawingWindow
         Point[] path,
         DrawItem? startShape,
         int? startIndex,
-        Point start)
+        Point start,
+        double minimumLeg)
     {
         if (path.Length < 2 || startShape == null)
             return path;
@@ -264,39 +333,30 @@ internal sealed partial class DrawingWindow
         if (Math.Abs(outward.X) < 0.5 && Math.Abs(outward.Y) < 0.5)
             return path;
 
-        var leg = (path[1] - path[0]).Length;
-        if (leg >= MinimumExitLeg)
+        if (OutwardAxisExtent(start, path[1], outward) >= minimumLeg - 0.001)
             return path;
 
-        var extended = path.ToArray();
-        if (Math.Abs(outward.Y) > 0.5)
+        var exit = GetClearancePoint(startShape, start, outward, minimumLeg);
+        var result = new List<Point> { start, exit };
+        var next = path[1];
+        if (!PointsNearlyEqual(next, exit))
         {
-            var y = start.Y + outward.Y * MinimumExitLeg;
-            extended[1] = new Point(start.X, y);
-            for (var i = 2; i < extended.Length; i++)
-            {
-                if (Math.Abs(extended[i].X - path[1].X) < 0.001)
-                    extended[i] = new Point(extended[i].X, y);
-            }
+            if (Math.Abs(outward.Y) > 0.5)
+                result.Add(new Point(next.X, exit.Y));
+            else
+                result.Add(new Point(exit.X, next.Y));
         }
-        else
-        {
-            var x = start.X + outward.X * MinimumExitLeg;
-            extended[1] = new Point(x, start.Y);
-            for (var i = 2; i < extended.Length; i++)
-            {
-                if (Math.Abs(extended[i].Y - path[1].Y) < 0.001)
-                    extended[i] = new Point(x, extended[i].Y);
-            }
-        }
-        return SimplifyOrthogonalPath(extended) is Point[] arr ? arr : extended;
+        for (var i = 2; i < path.Length; i++)
+            result.Add(path[i]);
+        return SimplifyOrthogonalPath(result.ToArray()) is Point[] arr ? arr : result.ToArray();
     }
 
     private static Point[] ExtendLastEntryLeg(
         Point[] path,
         DrawItem? endShape,
         int? endIndex,
-        Point end)
+        Point end,
+        double minimumLeg)
     {
         if (path.Length < 2 || endShape == null)
             return path;
@@ -305,37 +365,25 @@ internal sealed partial class DrawingWindow
         if (Math.Abs(outward.X) < 0.5 && Math.Abs(outward.Y) < 0.5)
             return path;
 
+        var inward = new Point(-outward.X, -outward.Y);
         var n = path.Length;
-        var leg = (path[n - 1] - path[n - 2]).Length;
-        if (leg >= MinimumEntryLeg)
+        if (OutwardAxisExtent(path[n - 2], path[n - 1], inward) >= minimumLeg - 0.001)
             return path;
 
-        var extended = path.ToArray();
-        var penultimate = n - 2;
-        var corridorCoord = path[penultimate];
-
-        if (Math.Abs(outward.Y) > 0.5)
+        var entry = GetClearancePoint(endShape, end, outward, minimumLeg);
+        var result = new List<Point>();
+        for (var i = 0; i < n - 1; i++)
+            result.Add(path[i]);
+        var before = path[n - 2];
+        if (!PointsNearlyEqual(before, entry))
         {
-            var approachY = end.Y + outward.Y * MinimumEntryLeg;
-            extended[penultimate] = new Point(end.X, approachY);
-            for (var i = 1; i < penultimate; i++)
-            {
-                if (Math.Abs(extended[i].Y - corridorCoord.Y) < 0.001)
-                    extended[i] = new Point(extended[i].X, approachY);
-            }
+            if (Math.Abs(outward.Y) > 0.5)
+                result.Add(new Point(before.X, entry.Y));
+            else
+                result.Add(new Point(entry.X, before.Y));
         }
-        else
-        {
-            var approachX = end.X + outward.X * MinimumEntryLeg;
-            extended[penultimate] = new Point(approachX, end.Y);
-            for (var i = 1; i < penultimate; i++)
-            {
-                if (Math.Abs(extended[i].X - corridorCoord.X) < 0.001)
-                    extended[i] = new Point(approachX, extended[i].Y);
-            }
-        }
-
-        return SimplifyOrthogonalPath(extended) is Point[] arr ? arr : extended;
+        result.Add(end);
+        return SimplifyOrthogonalPath(result.ToArray()) is Point[] arr ? arr : result.ToArray();
     }
 
     /// <summary>
@@ -399,8 +447,9 @@ internal sealed partial class DrawingWindow
         var path = ResolveAutoOrthogonalPath(arrow);
         DrawItem? startShape = arrow.AnchorStartShapeId is int sid ? FindShapeById(sid) : null;
         DrawItem? endShape = arrow.AnchorEndShapeId is int eid ? FindShapeById(eid) : null;
-        path = ExtendFirstExitLeg(path, startShape, arrow.AnchorStartIndex, arrow.P1);
-        path = ExtendLastEntryLeg(path, endShape, arrow.AnchorEndIndex, arrow.P2);
+        var leg = ArrowClearance(arrow);
+        path = ExtendFirstExitLeg(path, startShape, arrow.AnchorStartIndex, arrow.P1, leg);
+        path = ExtendLastEntryLeg(path, endShape, arrow.AnchorEndIndex, arrow.P2, leg);
         arrow.RouteBends = ExtractInteriorPoints(path);
     }
 }

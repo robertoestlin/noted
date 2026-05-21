@@ -29,6 +29,9 @@ public partial class MainWindow
     internal const int DefaultDrawingEllipseWidth = 58;
     internal const int DefaultDrawingEllipseHeight = 58;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 12;
+    internal const int DefaultDrawingArrowClearanceMarginPx = 35;
+    internal const int MinDrawingArrowClearanceMarginPx = 0;
+    internal const int MaxDrawingArrowClearanceMarginPx = 200;
     internal const int MinDrawingShapeSizePx = 8;
     internal const int MaxDrawingShapeSizePx = 4096;
 
@@ -37,6 +40,7 @@ public partial class MainWindow
     private int _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
     private int _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
     private int _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
+    private int _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
 
     internal void GetDrawingShapeDefaults(string kind, out double standardWidth, out double standardHeight)
     {
@@ -51,6 +55,8 @@ public partial class MainWindow
     }
 
     internal int DrawingShapeSizeSnapThresholdPx => _drawingShapeSizeSnapThresholdPx;
+
+    internal int DrawingArrowClearanceMarginPx => _drawingArrowClearanceMarginPx;
 
     private void ShowDrawingDialog()
     {
@@ -1403,6 +1409,9 @@ internal sealed class DrawItemDto
     public bool Direct { get; set; } = true;
     /// <summary>When true, simple arrow head is at P2 (draw end before any canonical swap).</summary>
     public bool SimpleHeadAtP2 { get; set; } = true;
+    /// <summary>Per-arrow perpendicular clearance from anchored shapes (px). Drives the
+    /// length of the straight leg leaving/entering a shape for non-direct arrows.</summary>
+    public double ClearanceMargin { get; set; } = 35;
     public List<double> RouteBendsX { get; set; } = new();
     public List<double> RouteBendsY { get; set; } = new();
     public List<double> PointsX { get; set; } = new();
@@ -1456,6 +1465,7 @@ internal sealed partial class DrawingWindow : Window
         public ArrowHeadStyle ArrowHead = ArrowHeadStyle.Simple;
         public bool Direct = true;
         public bool SimpleHeadAtP2 = true;
+        public double ClearanceMargin = DrawingWindow.DefaultArrowClearanceMargin;
         public List<Point> RouteBends = new();
         public List<Point> Points = new();
         /// <summary>Strokes drawn in the same freehand-tool session share a group id for move/delete.</summary>
@@ -1484,6 +1494,7 @@ internal sealed partial class DrawingWindow : Window
             ArrowHead = ArrowHead,
             Direct = Direct,
             SimpleHeadAtP2 = SimpleHeadAtP2,
+            ClearanceMargin = ClearanceMargin,
             RouteBends = new List<Point>(RouteBends),
             Points = new List<Point>(Points),
             FreehandGroupId = FreehandGroupId,
@@ -1550,11 +1561,15 @@ internal sealed partial class DrawingWindow : Window
     private CheckBox? _shadowCheck;
     private TextBlock? _thicknessHeader;
     private TextBox? _thicknessBox;
+    private TextBlock? _arrowMarginHeader;
+    private TextBox? _arrowMarginBox;
     private TextBox? _cornerRadiusBox;
     private TextBox? _fontSizeBox;
 
     private const double ThicknessMin = 1;
     private const double ThicknessMax = 24;
+    private const double ArrowMarginMin = 0;
+    private const double ArrowMarginMax = 200;
     private const double CornerRadiusMin = 0;
     private const double CornerRadiusMax = 80;
     private const double FontSizeMin = 8;
@@ -1591,6 +1606,7 @@ internal sealed partial class DrawingWindow : Window
     private FontFamily _fontFamily = new("Segoe UI");
     private ArrowHeadStyle _arrowHead = ArrowHeadStyle.Simple;
     private bool _arrowDirect = true;
+    private double _arrowMargin = DefaultArrowClearanceMargin;
     private double _freeThickness = 6;
 
     private bool _isDrawing;
@@ -2095,6 +2111,11 @@ internal sealed partial class DrawingWindow : Window
         _arrowDirectCheck.Unchecked += (_, _) => OnArrowDirectChanged(false);
         _propertyPanel.Children.Add(_arrowDirectCheck);
 
+        _arrowMarginHeader = SectionHeader("Stub length (non-direct)");
+        _propertyPanel.Children.Add(_arrowMarginHeader);
+        _arrowMarginBox = MakeNumberBox(_arrowMargin, ArrowMarginMin, ArrowMarginMax, OnArrowMarginChanged);
+        _propertyPanel.Children.Add(_arrowMarginBox);
+
         _shadowCheck = new CheckBox
         {
             Content = "Shadow",
@@ -2170,6 +2191,8 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
             SetPropertySectionVisibility(_arrowDirectCheck, false);
+            SetPropertySectionVisibility(_arrowMarginHeader, false);
+            SetPropertySectionVisibility(_arrowMarginBox, false);
             SetPropertySectionVisibility(_shadowCheck, false);
             SetPropertySectionVisibility(_sizeHeader, false);
             SetPropertySectionVisibility(_sizeLine1, false);
@@ -2199,6 +2222,9 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         SetPropertySectionVisibility(_arrowDirectCheck, isArrow);
+        var hasNonDirectArrowSel = isArrow && _selection.Any(s => s.Kind == "arrow" && !s.Direct);
+        SetPropertySectionVisibility(_arrowMarginHeader, hasNonDirectArrowSel);
+        SetPropertySectionVisibility(_arrowMarginBox, hasNonDirectArrowSel);
         SetPropertySectionVisibility(_shadowCheck, kind is "rect" or "ellipse" or "text");
         RefreshSizeInfo(kind);
         RefreshVariantsSection(kind);
@@ -2427,6 +2453,8 @@ internal sealed partial class DrawingWindow : Window
                 _arrowHeadCombo.SelectedIndex = (int)_arrowHead;
             if (_arrowDirectCheck != null)
                 _arrowDirectCheck.IsChecked = _arrowDirect;
+            if (_arrowMarginBox != null)
+                _arrowMarginBox.Text = Math.Clamp(_arrowMargin, ArrowMarginMin, ArrowMarginMax).ToString("0.##");
         }
         finally
         {
@@ -2442,6 +2470,25 @@ internal sealed partial class DrawingWindow : Window
         SnapshotForUndo();
         foreach (var it in _selection)
             it.HasShadow = hasShadow;
+        Redraw();
+    }
+
+    private void OnArrowMarginChanged(double margin)
+    {
+        if (_suppressPropertyChanges) return;
+        _arrowMargin = margin;
+        if (PrimarySelection == null || PrimarySelection.Kind != "arrow")
+            return;
+        SnapshotForUndo();
+        foreach (var it in _selection.Where(i => i.Kind == "arrow"))
+        {
+            it.ClearanceMargin = margin;
+            if (!it.Direct)
+            {
+                it.RouteBends.Clear();
+                InitializeArrowRouteBends(it);
+            }
+        }
         Redraw();
     }
 
@@ -2466,6 +2513,7 @@ internal sealed partial class DrawingWindow : Window
                 InitializeArrowRouteBends(it);
             }
         }
+        UpdatePropertyPanelVisibility();
         Redraw();
     }
 
@@ -2486,6 +2534,7 @@ internal sealed partial class DrawingWindow : Window
         {
             _arrowHead = sel.ArrowHead;
             _arrowDirect = sel.Direct;
+            _arrowMargin = sel.ClearanceMargin > 0 ? sel.ClearanceMargin : DefaultArrowClearanceMargin;
         }
         SyncPropertyControlsFromCurrent();
     }
@@ -3648,6 +3697,7 @@ internal sealed partial class DrawingWindow : Window
                     }
                     CommitArrowAnchors(_drawingItem);
                     ApplySimpleHeadTargetFromDrawOrder(_drawingItem);
+                    _drawingItem.ClearanceMargin = InferArrowClearanceMargin(_drawingItem);
                     if (!_drawingItem.Direct)
                     {
                         CanonicalizeArrowEndpoints(_drawingItem);
@@ -3691,6 +3741,13 @@ internal sealed partial class DrawingWindow : Window
                 CommitArrowAnchors(PrimarySelection);
             if (editedArrowEndpoint || editedArrowSegment)
                 SyncArrowRouteBendsToAnchors(PrimarySelection);
+            if (editedArrowSegment)
+            {
+                _arrowMargin = PrimarySelection.ClearanceMargin > 0
+                    ? PrimarySelection.ClearanceMargin
+                    : DefaultArrowClearanceMargin;
+                SyncPropertyControlsFromCurrent();
+            }
         }
 
         Redraw();
@@ -4831,6 +4888,7 @@ internal sealed partial class DrawingWindow : Window
             ArrowHead = it.ArrowHead.ToString(),
             Direct = it.Direct,
             SimpleHeadAtP2 = it.SimpleHeadAtP2,
+            ClearanceMargin = it.ClearanceMargin,
             FreehandGroupId = it.FreehandGroupId,
             Id = it.Id,
             AnchorStartShapeId = it.AnchorStartShapeId,
@@ -4875,6 +4933,7 @@ internal sealed partial class DrawingWindow : Window
             ArrowHead = Enum.TryParse<ArrowHeadStyle>(dto.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple,
             Direct = dto.Direct,
             SimpleHeadAtP2 = dto.SimpleHeadAtP2,
+            ClearanceMargin = dto.ClearanceMargin > 0 ? dto.ClearanceMargin : DefaultArrowClearanceMargin,
             FreehandGroupId = dto.FreehandGroupId,
             Id = dto.Id,
             AnchorStartShapeId = dto.AnchorStartShapeId,
@@ -4903,7 +4962,7 @@ internal sealed partial class DrawingWindow : Window
             if (b.Bottom > maxY) maxY = b.Bottom;
         }
 
-        const double itemPadding = 24;
+        const double itemPadding = 140;
         const double extraWidth = 230 + 22 + 16;
         const double extraHeight = 46 + 22 + 38;
 

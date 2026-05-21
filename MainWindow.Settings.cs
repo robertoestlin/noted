@@ -147,6 +147,7 @@ public partial class MainWindow
             DrawingDefaultEllipseWidth = _drawingDefaultEllipseWidth,
             DrawingDefaultEllipseHeight = _drawingDefaultEllipseHeight,
             DrawingShapeSizeSnapThresholdPx = _drawingShapeSizeSnapThresholdPx,
+            DrawingArrowClearanceMarginPx = _drawingArrowClearanceMarginPx,
             ColorPaletteCustomizations = ReadColorPaletteCustomizationsFromSettingsFile(),
         };
 
@@ -1154,6 +1155,7 @@ public partial class MainWindow
         _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
         _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
         _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
+        _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
     }
 
     private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
@@ -1338,6 +1340,8 @@ public partial class MainWindow
             state.DrawingDefaultEllipseHeight, DefaultDrawingEllipseHeight);
         _drawingShapeSizeSnapThresholdPx = NormalizeDrawingShapeSnapThreshold(
             state.DrawingShapeSizeSnapThresholdPx);
+        _drawingArrowClearanceMarginPx = NormalizeDrawingArrowClearanceMargin(
+            state.DrawingArrowClearanceMarginPx);
     }
 
     private static int NormalizeDrawingShapeSize(int? value, int defaultValue)
@@ -1352,6 +1356,13 @@ public partial class MainWindow
         if (value is >= 2 and <= 80)
             return value.Value;
         return DefaultDrawingShapeSizeSnapThresholdPx;
+    }
+
+    private static int NormalizeDrawingArrowClearanceMargin(int? value)
+    {
+        if (value is >= MinDrawingArrowClearanceMarginPx and <= MaxDrawingArrowClearanceMarginPx)
+            return value.Value;
+        return DefaultDrawingArrowClearanceMarginPx;
     }
 
     private static ExternalBrowserChoice NormalizeExternalBrowserChoice(ExternalBrowserChoice value)
