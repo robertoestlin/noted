@@ -5214,6 +5214,16 @@ internal sealed class CompactColorPicker : Border
         _combo.MaxDropDownHeight = 320;
         _combo.MinWidth = 280;
 
+        _combo.DropDownOpened += (_, _) =>
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_combo.Items.Count == 0) return;
+                var first = _combo.ItemContainerGenerator.ContainerFromIndex(0) as FrameworkElement;
+                first?.BringIntoView();
+            }), System.Windows.Threading.DispatcherPriority.Loaded);
+        };
+
         _combo.SelectionChanged += (_, _) =>
         {
             if (_suppress) return;
