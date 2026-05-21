@@ -674,6 +674,14 @@ internal static class DrawingColorUtilities
             color = Colors.Transparent;
             return true;
         }
+        if (TryConvertColor(s, out color)) return true;
+        if (LooksLikeBareHex(s) && TryConvertColor("#" + s, out color)) return true;
+        return false;
+    }
+
+    private static bool TryConvertColor(string s, out Color color)
+    {
+        color = Colors.Black;
         try
         {
             var o = ColorConverter.ConvertFromString(s);
@@ -688,6 +696,42 @@ internal static class DrawingColorUtilities
             // ignore
         }
         return false;
+    }
+
+    private static bool LooksLikeBareHex(string s)
+    {
+        if (s.Length != 3 && s.Length != 4 && s.Length != 6 && s.Length != 8) return false;
+        foreach (var ch in s)
+        {
+            if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>Returns the trimmed clipboard text normalized to a hex color string
+    /// (prefixing <c>#</c> when the clipboard contains a bare hex value such as
+    /// <c>DAE8FC</c>). Returns <c>null</c> if the clipboard does not contain a parseable color.</summary>
+    public static string? TryReadColorFromClipboard()
+    {
+        string raw;
+        try
+        {
+            if (!Clipboard.ContainsText()) return null;
+            raw = Clipboard.GetText() ?? "";
+        }
+        catch
+        {
+            return null;
+        }
+        var trimmed = raw.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return null;
+        if (string.Equals(trimmed, "Transparent", StringComparison.OrdinalIgnoreCase))
+            return "Transparent";
+        var normalized = trimmed.StartsWith('#') || !LooksLikeBareHex(trimmed)
+            ? trimmed
+            : "#" + trimmed;
+        return TryParseColorString(normalized, out _) ? normalized : null;
     }
 
     public static string FormatHexForTheme(Color c)
@@ -963,6 +1007,17 @@ internal sealed class DrawingColorPickerWindow : Window
 
         root.Children.Add(form);
         Content = root;
+
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.V || (Keyboard.Modifiers & ModifierKeys.Control) != ModifierKeys.Control) return;
+            var pasted = DrawingColorUtilities.TryReadColorFromClipboard();
+            if (pasted is null) return;
+            _hex.Text = pasted;
+            _hex.CaretIndex = _hex.Text.Length;
+            btnSelect.Focus();
+            e.Handled = true;
+        };
 
         RegenerateSpectrum();
         RegenerateStrip();
