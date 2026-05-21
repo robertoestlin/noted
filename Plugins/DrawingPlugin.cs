@@ -1479,7 +1479,7 @@ internal sealed partial class DrawingWindow : Window
     private static readonly string[] FontChoices =
     {
         "Segoe UI", "Arial", "Calibri", "Cambria", "Consolas", "Courier New",
-        "Georgia", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
+        "Georgia", "Helvetica", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
         "Comic Sans MS", "Impact",
     };
 
@@ -5557,7 +5557,7 @@ internal sealed class ThemeSettingsWindow : Window
     private static readonly string[] FontChoices =
     {
         "Segoe UI", "Arial", "Calibri", "Cambria", "Consolas", "Courier New",
-        "Georgia", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
+        "Georgia", "Helvetica", "Tahoma", "Times New Roman", "Trebuchet MS", "Verdana",
         "Comic Sans MS", "Impact",
     };
 
