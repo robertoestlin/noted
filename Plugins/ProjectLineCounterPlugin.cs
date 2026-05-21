@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -13,11 +15,53 @@ namespace Noted;
 
 public partial class MainWindow
 {
-    private static readonly string[] DefaultProjectLineCounterIgnoredFileTypes =
+    /// <summary>Resource file that ships the canonical default list of ignored file extensions for
+    /// the Project Line Counter. Edit <c>Plugins/resources/project-line-counter/ignored-file-types.json</c>
+    /// to change the built-in defaults.</summary>
+    private static string ProjectLineCounterIgnoredFileTypesResourcePath =>
+        System.IO.Path.Combine(
+            AppContext.BaseDirectory,
+            "Plugins", "resources", "project-line-counter", "ignored-file-types.json");
+
+    /// <summary>Fallback used only when the shipped resource file is missing/unreadable (broken deploy
+    /// or tests). The authoritative list lives in <see cref="ProjectLineCounterIgnoredFileTypesResourcePath"/>.</summary>
+    private static readonly string[] FallbackProjectLineCounterIgnoredFileTypes =
     [
         ".exe", ".dll", ".pdb", ".obj", ".bin", ".cache", ".class", ".jar",
-        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".7z", ".pdf", ".mid", ".midi", ".gitignore", ".md"
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".7z", ".pdf", ".mid", ".midi", ".gitignore", ".md",
+        ".bkp", ".dtmp", ".drawio"
     ];
+
+    private static IReadOnlyList<string>? _defaultProjectLineCounterIgnoredFileTypesCache;
+
+    private static IReadOnlyList<string> DefaultProjectLineCounterIgnoredFileTypes =>
+        _defaultProjectLineCounterIgnoredFileTypesCache ??= LoadDefaultProjectLineCounterIgnoredFileTypes();
+
+    private static IReadOnlyList<string> LoadDefaultProjectLineCounterIgnoredFileTypes()
+    {
+        try
+        {
+            var path = ProjectLineCounterIgnoredFileTypesResourcePath;
+            if (File.Exists(path))
+            {
+                var json = File.ReadAllText(path);
+                var dto = JsonSerializer.Deserialize<ProjectLineCounterIgnoredFileTypesResource>(json);
+                if (dto?.IgnoredFileTypes is { Count: > 0 } list)
+                    return list.ToArray();
+            }
+        }
+        catch
+        {
+            // Fall through to the embedded fallback below.
+        }
+        return FallbackProjectLineCounterIgnoredFileTypes;
+    }
+
+    private sealed class ProjectLineCounterIgnoredFileTypesResource
+    {
+        [JsonPropertyName("IgnoredFileTypes")]
+        public List<string>? IgnoredFileTypes { get; set; }
+    }
     private List<ProjectLineCounterProject> BuildProjectLineCounterProjectsSnapshot()
         => NormalizeProjectLineCounterProjects(
             _projectLineCounterProjects,
@@ -72,21 +116,15 @@ public partial class MainWindow
 
     private static List<string> NormalizeProjectLineCounterIgnoredFileTypes(IEnumerable<string>? fileTypes)
     {
+        // The shipped JSON defaults are always merged in — adding a new extension to
+        // Plugins/resources/project-line-counter/ignored-file-types.json must surface for
+        // existing users too, not only fresh installs with an empty persisted list.
         var normalized = NormalizeProjectLineCounterFileTypes(fileTypes);
-        if (normalized.Count == 0)
+        foreach (var defaultType in DefaultProjectLineCounterIgnoredFileTypes)
         {
-            normalized = DefaultProjectLineCounterIgnoredFileTypes
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            if (!normalized.Contains(defaultType, StringComparer.OrdinalIgnoreCase))
+                normalized.Add(defaultType);
         }
-
-        if (!normalized.Contains(".md", StringComparer.OrdinalIgnoreCase))
-            normalized.Add(".md");
-        if (!normalized.Contains(".mid", StringComparer.OrdinalIgnoreCase))
-            normalized.Add(".mid");
-        if (!normalized.Contains(".midi", StringComparer.OrdinalIgnoreCase))
-            normalized.Add(".midi");
 
         return normalized
             .Distinct(StringComparer.OrdinalIgnoreCase)

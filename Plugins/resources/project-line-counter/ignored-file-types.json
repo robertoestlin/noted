@@ -1,0 +1,27 @@
+{
+  "IgnoredFileTypes": [
+    ".7z",
+    ".bin",
+    ".bkp",
+    ".cache",
+    ".class",
+    ".dll",
+    ".drawio",
+    ".dtmp",
+    ".exe",
+    ".gif",
+    ".gitignore",
+    ".ico",
+    ".jar",
+    ".jpeg",
+    ".jpg",
+    ".md",
+    ".mid",
+    ".midi",
+    ".obj",
+    ".pdb",
+    ".pdf",
+    ".png",
+    ".zip"
+  ]
+}
