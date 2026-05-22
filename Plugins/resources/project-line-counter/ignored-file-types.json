@@ -6,6 +6,7 @@
     ".cache",
     ".class",
     ".dll",
+    ".docp",
     ".drawio",
     ".dtmp",
     ".exe",

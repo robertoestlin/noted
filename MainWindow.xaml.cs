@@ -90,7 +90,10 @@ public partial class MainWindow : Window
     private DateTime? _pluginAlarmsSnoozedUntilLocal;
     private List<ProjectLineCounterProject> _projectLineCounterProjects = [];
     private List<ProjectLineCounterType> _projectLineCounterTypes = [];
-    private List<string> _projectLineCounterIgnoredFileTypes = [];
+    /// <summary>Extensions the user has appended on top of the shipped ignore list.</summary>
+    private List<string> _projectLineCounterIgnoredFilesAdded = [];
+    /// <summary>Shipped ignore-list entries the user has explicitly removed.</summary>
+    private List<string> _projectLineCounterIgnoredFilesRemoved = [];
     private readonly HashSet<string> _triggeredPluginAlarmKeysForMinute = new(StringComparer.OrdinalIgnoreCase);
     private string _triggeredPluginAlarmMinuteKey = string.Empty;
     private double? _alarmPopupLeft;
@@ -104,6 +107,7 @@ public partial class MainWindow : Window
     private const string MongoSrvLookupHistoryFileName = "plugin-mongo-srv-lookup-history.json";
     private const string TimeReportsFileName = "plugin-time-reports.json";
     private const string ProjectLineCounterStateFileName = "plugin-project-line-counter.json";
+    private const string ProjectLineCounterIgnoredFilesStateFileName = "plugin-project-line-counter-ignored-files.json";
     private const string TaskPanelPluginStateFileName = "plugin-task-panel.json";
     private const string AlarmsPluginStateFileName = "plugin-alarms.json";
     private const string StandupPluginStateFileName = "plugin-standup.json";

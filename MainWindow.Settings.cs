@@ -42,6 +42,7 @@ public partial class MainWindow
                 opts);
             SaveTimeReports(opts);
             SaveProjectLineCounterState(opts);
+            SaveProjectLineCounterIgnoredFilesState(opts);
             SaveTaskPanelPluginState(opts);
             SaveAlarmsPluginState(opts);
             SaveStandupPluginState(opts);
@@ -216,7 +217,20 @@ public partial class MainWindow
         {
             ProjectLineCounterProjects = BuildProjectLineCounterProjectsSnapshot(),
             ProjectLineCounterTypes = BuildProjectLineCounterTypesSnapshot(),
-            ProjectLineCounterIgnoredFileTypes = BuildProjectLineCounterIgnoredFileTypesSnapshot()
+            // Always written as null — the ignored-files list now lives in
+            // plugin-project-line-counter-ignored-files.json.
+            ProjectLineCounterIgnoredFileTypes = null
+        };
+        _windowSettingsStore.Save(path, payload, options);
+    }
+
+    private void SaveProjectLineCounterIgnoredFilesState(JsonSerializerOptions options)
+    {
+        var path = Path.Combine(_backupFolder, ProjectLineCounterIgnoredFilesStateFileName);
+        var payload = new ProjectLineCounterIgnoredFilesState
+        {
+            Added = BuildProjectLineCounterIgnoredFilesAddedSnapshot(),
+            Removed = BuildProjectLineCounterIgnoredFilesRemovedSnapshot()
         };
         _windowSettingsStore.Save(path, payload, options);
     }
@@ -317,31 +331,72 @@ public partial class MainWindow
     {
         var path = Path.Combine(_backupFolder, ProjectLineCounterStateFileName);
         var opts = new JsonSerializerOptions { WriteIndented = true };
+
+        ProjectLineCounterPluginState? sourceState = null;
+        var migrateBack = false;
+
         if (File.Exists(path))
         {
-            var fromDisk = _windowSettingsStore.Load<ProjectLineCounterPluginState>(path);
+            sourceState = _windowSettingsStore.Load<ProjectLineCounterPluginState>(path);
+        }
+
+        if (sourceState == null)
+        {
+            var legacy = TryReadProjectLineCounterFromSettingsJson(effectiveSettingsJsonPath);
+            if (legacy != null && LineCounterJsonMentionedAnyList(legacy))
+            {
+                sourceState = legacy;
+                migrateBack = true;
+            }
+        }
+
+        if (sourceState != null)
+        {
+            ApplyProjectLineCounterSettings(
+                sourceState.ProjectLineCounterProjects,
+                sourceState.ProjectLineCounterTypes);
+
+            LoadProjectLineCounterIgnoredFilesState(
+                sourceState.ProjectLineCounterIgnoredFileTypes,
+                opts);
+
+            if (migrateBack)
+                SaveProjectLineCounterState(opts);
+            return;
+        }
+
+        ApplyProjectLineCounterSettings(null, null);
+        LoadProjectLineCounterIgnoredFilesState(null, opts);
+    }
+
+    /// <summary>Load Added/Removed from <c>plugin-project-line-counter-ignored-files.json</c>.
+    /// On first run after upgrade — when the new file is missing — derive Added/Removed from the
+    /// legacy flat ignored-list (passed in from <c>plugin-project-line-counter.json</c> or
+    /// <c>settings.json</c>) and persist the new file.</summary>
+    private void LoadProjectLineCounterIgnoredFilesState(
+        List<string>? legacyFlatList,
+        JsonSerializerOptions opts)
+    {
+        var path = Path.Combine(_backupFolder, ProjectLineCounterIgnoredFilesStateFileName);
+        if (File.Exists(path))
+        {
+            var fromDisk = _windowSettingsStore.Load<ProjectLineCounterIgnoredFilesState>(path);
             if (fromDisk != null)
             {
-                ApplyProjectLineCounterSettings(
-                    fromDisk.ProjectLineCounterProjects,
-                    fromDisk.ProjectLineCounterTypes,
-                    fromDisk.ProjectLineCounterIgnoredFileTypes);
+                ApplyProjectLineCounterIgnoredFilesSettings(fromDisk.Added, fromDisk.Removed);
                 return;
             }
         }
 
-        var legacy = TryReadProjectLineCounterFromSettingsJson(effectiveSettingsJsonPath);
-        if (legacy != null && LineCounterJsonMentionedAnyList(legacy))
+        if (legacyFlatList != null)
         {
-            ApplyProjectLineCounterSettings(
-                legacy.ProjectLineCounterProjects,
-                legacy.ProjectLineCounterTypes,
-                legacy.ProjectLineCounterIgnoredFileTypes);
-            SaveProjectLineCounterState(opts);
+            var migrated = MigrateLegacyIgnoredFileTypes(legacyFlatList);
+            ApplyProjectLineCounterIgnoredFilesSettings(migrated.Added, migrated.Removed);
+            SaveProjectLineCounterIgnoredFilesState(opts);
             return;
         }
 
-        ApplyProjectLineCounterSettings(null, null, null);
+        ApplyProjectLineCounterIgnoredFilesSettings(null, null);
     }
 
     private void LoadTaskPanelPluginState(string effectiveSettingsJsonPath)
@@ -1113,7 +1168,8 @@ public partial class MainWindow
         _alarmPopupTop = null;
         _projectLineCounterProjects = [];
         _projectLineCounterTypes = [];
-        _projectLineCounterIgnoredFileTypes = [];
+        _projectLineCounterIgnoredFilesAdded = [];
+        _projectLineCounterIgnoredFilesRemoved = [];
         _searchFilesHistory = [];
         _searchFilesHistoryLimit = DefaultSearchFilesHistoryLimit;
         _mongoSrvLookupHistory = [];
@@ -1639,6 +1695,9 @@ public partial class MainWindow
     private bool CopyProjectLineCounterStateFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, ProjectLineCounterStateFileName);
 
+    private bool CopyProjectLineCounterIgnoredFilesStateFileToBackupFolder(string fromFolder, string toFolder)
+        => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, ProjectLineCounterIgnoredFilesStateFileName);
+
     private bool CopyTaskPanelPluginStateFileToBackupFolder(string fromFolder, string toFolder)
         => _settingsService.CopyFileIfExistsIfNewer(fromFolder, toFolder, TaskPanelPluginStateFileName);
 
@@ -1912,10 +1971,14 @@ public partial class MainWindow
         var timeReportsCopied = _backupAdditionalIncludeTimeReports && CopyTimeReportsFileToBackupFolder(fromFolder, toFolder)
             ? 1
             : 0;
-        var projectLineCounterCopied = _backupAdditionalIncludeProjectLineCounter
-            && CopyProjectLineCounterStateFileToBackupFolder(fromFolder, toFolder)
-            ? 1
-            : 0;
+        var projectLineCounterCopied = 0;
+        if (_backupAdditionalIncludeProjectLineCounter)
+        {
+            if (CopyProjectLineCounterStateFileToBackupFolder(fromFolder, toFolder))
+                projectLineCounterCopied++;
+            if (CopyProjectLineCounterIgnoredFilesStateFileToBackupFolder(fromFolder, toFolder))
+                projectLineCounterCopied++;
+        }
         var taskPanelCopied = _backupAdditionalIncludeTaskPanel
             && CopyTaskPanelPluginStateFileToBackupFolder(fromFolder, toFolder)
             ? 1

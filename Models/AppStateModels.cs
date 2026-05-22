@@ -205,12 +205,29 @@ public sealed class ProjectLineCounterType
     public List<string>? IgnoredFolders { get; set; }
 }
 
-/// <summary>Project Line Counter plugin state in <c>plugin-project-line-counter.json</c>.</summary>
+/// <summary>Project Line Counter plugin state in <c>plugin-project-line-counter.json</c>.
+/// The "Always ignored file types" list is no longer stored here — it lives in
+/// <c>plugin-project-line-counter-ignored-files.json</c> (see <see cref="ProjectLineCounterIgnoredFilesState"/>).
+/// The legacy <see cref="ProjectLineCounterIgnoredFileTypes"/> field is still read for one-time migration
+/// from older installs and is written back as <c>null</c>.</summary>
 public sealed class ProjectLineCounterPluginState
 {
     public List<ProjectLineCounterProject>? ProjectLineCounterProjects { get; set; }
     public List<ProjectLineCounterType>? ProjectLineCounterTypes { get; set; }
     public List<string>? ProjectLineCounterIgnoredFileTypes { get; set; }
+}
+
+/// <summary>User customizations for the Project Line Counter's "Always ignored file types" list,
+/// persisted to <c>plugin-project-line-counter-ignored-files.json</c>. The effective list is computed at
+/// runtime as <c>(built-in defaults from <c>Plugins/resources/project-line-counter/ignored-file-types.json</c>
+/// ∪ Added) − Removed</c>, so future changes to the shipped JSON automatically surface for existing users.</summary>
+public sealed class ProjectLineCounterIgnoredFilesState
+{
+    /// <summary>User-added extensions appended on top of the built-in defaults.</summary>
+    public List<string> Added { get; set; } = new();
+
+    /// <summary>Built-in default extensions the user has explicitly removed.</summary>
+    public List<string> Removed { get; set; } = new();
 }
 
 /// <summary>Task panel / task areas configuration in <c>plugin-task-panel.json</c>.</summary>

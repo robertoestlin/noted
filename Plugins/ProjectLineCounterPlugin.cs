@@ -62,29 +62,104 @@ public partial class MainWindow
         [JsonPropertyName("IgnoredFileTypes")]
         public List<string>? IgnoredFileTypes { get; set; }
     }
+    /// <summary>Current effective "Always ignored file types" — built-in defaults from the shipped
+    /// resource JSON, plus user-added entries, minus user-removed entries. Always normalized.</summary>
+    private List<string> ComputeEffectiveProjectLineCounterIgnoredFileTypes()
+        => ComputeEffectiveIgnoredFileTypes(
+            _projectLineCounterIgnoredFilesAdded,
+            _projectLineCounterIgnoredFilesRemoved);
+
+    private static List<string> ComputeEffectiveIgnoredFileTypes(
+        IEnumerable<string>? added,
+        IEnumerable<string>? removed)
+    {
+        var defaults = DefaultProjectLineCounterIgnoredFileTypes;
+        var addedNorm = NormalizeProjectLineCounterFileTypes(added);
+        var removedSet = new HashSet<string>(
+            NormalizeProjectLineCounterFileTypes(removed),
+            StringComparer.OrdinalIgnoreCase);
+
+        var result = new List<string>(defaults.Count + addedNorm.Count);
+        foreach (var ext in defaults)
+            if (!removedSet.Contains(ext))
+                result.Add(ext);
+        foreach (var ext in addedNorm)
+            if (!removedSet.Contains(ext))
+                result.Add(ext);
+
+        return result
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private List<ProjectLineCounterProject> BuildProjectLineCounterProjectsSnapshot()
         => NormalizeProjectLineCounterProjects(
             _projectLineCounterProjects,
             _projectLineCounterTypes,
-            _projectLineCounterIgnoredFileTypes);
+            ComputeEffectiveProjectLineCounterIgnoredFileTypes());
 
     private List<ProjectLineCounterType> BuildProjectLineCounterTypesSnapshot()
         => NormalizeProjectLineCounterTypes(_projectLineCounterTypes);
 
-    private List<string> BuildProjectLineCounterIgnoredFileTypesSnapshot()
-        => NormalizeProjectLineCounterIgnoredFileTypes(_projectLineCounterIgnoredFileTypes);
+    /// <summary>Snapshot of added user extensions (extras beyond shipped defaults).</summary>
+    private List<string> BuildProjectLineCounterIgnoredFilesAddedSnapshot()
+        => NormalizeProjectLineCounterFileTypes(_projectLineCounterIgnoredFilesAdded);
 
+    /// <summary>Snapshot of removed default extensions.</summary>
+    private List<string> BuildProjectLineCounterIgnoredFilesRemovedSnapshot()
+        => NormalizeProjectLineCounterFileTypes(_projectLineCounterIgnoredFilesRemoved);
+
+    /// <summary>Apply Projects/Types snapshot (e.g. loaded from <c>plugin-project-line-counter.json</c>).
+    /// The ignored-file-types list is handled separately via
+    /// <see cref="ApplyProjectLineCounterIgnoredFilesSettings"/>.</summary>
     private void ApplyProjectLineCounterSettings(
         IEnumerable<ProjectLineCounterProject>? projects,
-        IEnumerable<ProjectLineCounterType>? types,
-        IEnumerable<string>? ignoredFileTypes)
+        IEnumerable<ProjectLineCounterType>? types)
     {
         _projectLineCounterTypes = NormalizeProjectLineCounterTypes(types);
-        _projectLineCounterIgnoredFileTypes = NormalizeProjectLineCounterIgnoredFileTypes(ignoredFileTypes);
         _projectLineCounterProjects = NormalizeProjectLineCounterProjects(
             projects,
             _projectLineCounterTypes,
-            _projectLineCounterIgnoredFileTypes);
+            ComputeEffectiveProjectLineCounterIgnoredFileTypes());
+    }
+
+    /// <summary>Apply the Added/Removed pair loaded from <c>plugin-project-line-counter-ignored-files.json</c>
+    /// (or migrated from the legacy flat list). Self-heals by dropping <c>Added</c> entries that are
+    /// already shipped as defaults and <c>Removed</c> entries that are no longer in the shipped defaults,
+    /// so promoting an extension into the resource JSON automatically cleans up the user config on next save.</summary>
+    private void ApplyProjectLineCounterIgnoredFilesSettings(
+        IEnumerable<string>? added,
+        IEnumerable<string>? removed)
+    {
+        var defaultsSet = new HashSet<string>(
+            DefaultProjectLineCounterIgnoredFileTypes,
+            StringComparer.OrdinalIgnoreCase);
+
+        _projectLineCounterIgnoredFilesAdded = NormalizeProjectLineCounterFileTypes(added)
+            .Where(ext => !defaultsSet.Contains(ext))
+            .ToList();
+        _projectLineCounterIgnoredFilesRemoved = NormalizeProjectLineCounterFileTypes(removed)
+            .Where(ext => defaultsSet.Contains(ext))
+            .ToList();
+    }
+
+    /// <summary>Translate a legacy flat ignored-files list (from older <c>plugin-project-line-counter.json</c>
+    /// or <c>settings.json</c>) into the Added/Removed pair, comparing against the current shipped defaults.</summary>
+    private static ProjectLineCounterIgnoredFilesState MigrateLegacyIgnoredFileTypes(IEnumerable<string>? legacy)
+    {
+        var legacyNorm = NormalizeProjectLineCounterFileTypes(legacy);
+        var defaults = DefaultProjectLineCounterIgnoredFileTypes;
+        var defaultsSet = new HashSet<string>(defaults, StringComparer.OrdinalIgnoreCase);
+        var legacySet = new HashSet<string>(legacyNorm, StringComparer.OrdinalIgnoreCase);
+
+        var added = legacyNorm.Where(ext => !defaultsSet.Contains(ext)).ToList();
+        var removed = defaults.Where(ext => !legacySet.Contains(ext)).ToList();
+        return new ProjectLineCounterIgnoredFilesState
+        {
+            Added = added,
+            Removed = removed
+        };
     }
 
     private static string? NormalizeProjectLineCounterFileType(string? fileType)
@@ -109,24 +184,6 @@ public partial class MainWindow
             .Select(NormalizeProjectLineCounterFileType)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static List<string> NormalizeProjectLineCounterIgnoredFileTypes(IEnumerable<string>? fileTypes)
-    {
-        // The shipped JSON defaults are always merged in — adding a new extension to
-        // Plugins/resources/project-line-counter/ignored-file-types.json must surface for
-        // existing users too, not only fresh installs with an empty persisted list.
-        var normalized = NormalizeProjectLineCounterFileTypes(fileTypes);
-        foreach (var defaultType in DefaultProjectLineCounterIgnoredFileTypes)
-        {
-            if (!normalized.Contains(defaultType, StringComparer.OrdinalIgnoreCase))
-                normalized.Add(defaultType);
-        }
-
-        return normalized
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -517,7 +574,9 @@ public partial class MainWindow
     private void ShowProjectLineCounterDialog()
     {
         var workingTypes = NormalizeProjectLineCounterTypes(_projectLineCounterTypes);
-        var workingIgnoredFileTypes = NormalizeProjectLineCounterIgnoredFileTypes(_projectLineCounterIgnoredFileTypes);
+        var workingIgnoredAdded = NormalizeProjectLineCounterFileTypes(_projectLineCounterIgnoredFilesAdded);
+        var workingIgnoredRemoved = NormalizeProjectLineCounterFileTypes(_projectLineCounterIgnoredFilesRemoved);
+        var workingIgnoredFileTypes = ComputeEffectiveIgnoredFileTypes(workingIgnoredAdded, workingIgnoredRemoved);
         var workingProjects = NormalizeProjectLineCounterProjects(
             _projectLineCounterProjects,
             workingTypes,
@@ -1198,9 +1257,13 @@ public partial class MainWindow
                     var ext = NormalizeProjectLineCounterFileType(bracketLabel);
                     if (ext == null)
                         return;
-                    if (!workingIgnoredFileTypes.Contains(ext, StringComparer.OrdinalIgnoreCase))
-                        workingIgnoredFileTypes.Add(ext);
-                    workingIgnoredFileTypes = NormalizeProjectLineCounterIgnoredFileTypes(workingIgnoredFileTypes);
+                    // Make sure the user's previous "Remove" of this default (if any) is undone.
+                    workingIgnoredRemoved.RemoveAll(value => string.Equals(value, ext, StringComparison.OrdinalIgnoreCase));
+                    var isDefault = DefaultProjectLineCounterIgnoredFileTypes
+                        .Contains(ext, StringComparer.OrdinalIgnoreCase);
+                    if (!isDefault && !workingIgnoredAdded.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                        workingIgnoredAdded.Add(ext);
+                    workingIgnoredFileTypes = ComputeEffectiveIgnoredFileTypes(workingIgnoredAdded, workingIgnoredRemoved);
                     RecountAfterNotCountedMutation();
                 });
         }
@@ -1261,7 +1324,10 @@ public partial class MainWindow
         void ShowProjectLineCounterSettingsDialog()
         {
             var settingsTypes = NormalizeProjectLineCounterTypes(workingTypes);
-            var settingsIgnored = NormalizeProjectLineCounterIgnoredFileTypes(workingIgnoredFileTypes);
+            // Local mutable copies for the dialog session; committed back to the outer scope on OK.
+            var settingsAdded = NormalizeProjectLineCounterFileTypes(workingIgnoredAdded);
+            var settingsRemoved = NormalizeProjectLineCounterFileTypes(workingIgnoredRemoved);
+            var settingsIgnored = ComputeEffectiveIgnoredFileTypes(settingsAdded, settingsRemoved);
             var settingsSelectedTypeIndex = -1;
             var settingsSelectedTypeFileTypeIndex = -1;
             var settingsSelectedTypeIgnoredFolderIndex = -1;
@@ -1689,12 +1755,13 @@ public partial class MainWindow
                     MessageBox.Show(settingsDlg, "Enter a valid file type, for example .dll.", "Project Line Counter", MessageBoxButton.OK, MessageBoxImage.Information);
                     return;
                 }
-                if (!settingsIgnored.Contains(normalized, StringComparer.OrdinalIgnoreCase))
-                    settingsIgnored.Add(normalized);
-                settingsIgnored = settingsIgnored
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                // Adding undoes any prior removal; only non-default entries go into the Added list.
+                settingsRemoved.RemoveAll(value => string.Equals(value, normalized, StringComparison.OrdinalIgnoreCase));
+                var isDefault = DefaultProjectLineCounterIgnoredFileTypes
+                    .Contains(normalized, StringComparer.OrdinalIgnoreCase);
+                if (!isDefault && !settingsAdded.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                    settingsAdded.Add(normalized);
+                settingsIgnored = ComputeEffectiveIgnoredFileTypes(settingsAdded, settingsRemoved);
                 txtAddIgnoredFileType.Text = string.Empty;
                 RefreshSettingsIgnored();
             };
@@ -1706,7 +1773,20 @@ public partial class MainWindow
                 var selected = listIgnoredFileTypes.Items[settingsSelectedIgnoredFileTypeIndex]?.ToString();
                 if (string.IsNullOrWhiteSpace(selected))
                     return;
-                settingsIgnored.RemoveAll(value => string.Equals(value, selected, StringComparison.OrdinalIgnoreCase));
+                // Defaults go onto the Removed list (they reappear if the shipped JSON is rolled back);
+                // user-added entries are dropped from the Added list outright.
+                var isDefault = DefaultProjectLineCounterIgnoredFileTypes
+                    .Contains(selected, StringComparer.OrdinalIgnoreCase);
+                if (isDefault)
+                {
+                    if (!settingsRemoved.Contains(selected, StringComparer.OrdinalIgnoreCase))
+                        settingsRemoved.Add(selected);
+                }
+                else
+                {
+                    settingsAdded.RemoveAll(value => string.Equals(value, selected, StringComparison.OrdinalIgnoreCase));
+                }
+                settingsIgnored = ComputeEffectiveIgnoredFileTypes(settingsAdded, settingsRemoved);
                 RefreshSettingsIgnored();
             };
 
@@ -1720,7 +1800,9 @@ public partial class MainWindow
                 }
 
                 workingTypes = normalizedTypes;
-                workingIgnoredFileTypes = NormalizeProjectLineCounterIgnoredFileTypes(settingsIgnored);
+                workingIgnoredAdded = NormalizeProjectLineCounterFileTypes(settingsAdded);
+                workingIgnoredRemoved = NormalizeProjectLineCounterFileTypes(settingsRemoved);
+                workingIgnoredFileTypes = ComputeEffectiveIgnoredFileTypes(workingIgnoredAdded, workingIgnoredRemoved);
                 NormalizeProjectTypeAssignments();
                 workingProjects = NormalizeProjectLineCounterProjects(
                     workingProjects,
@@ -1952,7 +2034,9 @@ public partial class MainWindow
         btnOk.Click += (_, _) =>
         {
             var normalizedTypes = NormalizeProjectLineCounterTypes(workingTypes);
-            var normalizedIgnored = NormalizeProjectLineCounterIgnoredFileTypes(workingIgnoredFileTypes);
+            var normalizedAdded = NormalizeProjectLineCounterFileTypes(workingIgnoredAdded);
+            var normalizedRemoved = NormalizeProjectLineCounterFileTypes(workingIgnoredRemoved);
+            var normalizedIgnored = ComputeEffectiveIgnoredFileTypes(normalizedAdded, normalizedRemoved);
             var normalizedProjects = NormalizeProjectLineCounterProjects(
                 workingProjects,
                 normalizedTypes,
@@ -1972,7 +2056,8 @@ public partial class MainWindow
 
             _projectLineCounterTypes = normalizedTypes;
             _projectLineCounterProjects = normalizedProjects;
-            _projectLineCounterIgnoredFileTypes = normalizedIgnored;
+            _projectLineCounterIgnoredFilesAdded = normalizedAdded;
+            _projectLineCounterIgnoredFilesRemoved = normalizedRemoved;
             SaveWindowSettings();
             dlg.DialogResult = true;
         };
