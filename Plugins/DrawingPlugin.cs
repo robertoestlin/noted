@@ -4862,6 +4862,7 @@ internal sealed partial class DrawingWindow : Window
                 {
                     it.P2 = new Point(it.P2.X, it.P1.Y + neededRectHeight);
                     _editChangedAnything = true;
+                    RefreshSizeInfo(it.Kind);
                     Redraw();
                 }
             }
@@ -4882,28 +4883,13 @@ internal sealed partial class DrawingWindow : Window
                 {
                     it.P2 = new Point(it.P2.X, it.P1.Y + neededEllipseHeight);
                     _editChangedAnything = true;
+                    RefreshSizeInfo(it.Kind);
                     Redraw();
                 }
             }
             else if (it.Kind == "diamond")
             {
-                var availWidth = Math.Max(40, GetBounds(it).Width * DiamondInscribedFactor - 8);
-                var ft = new FormattedText(
-                    string.IsNullOrEmpty(text) ? " " : text,
-                    System.Globalization.CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight,
-                    typeface, box.FontSize, Brushes.Black, dpi)
-                {
-                    MaxTextWidth = availWidth,
-                };
-                var neededDiamondHeight = (ft.Height + 16) / DiamondInscribedFactor;
-                var currentDiamondHeight = GetBounds(it).Height;
-                if (neededDiamondHeight > currentDiamondHeight)
-                {
-                    it.P2 = new Point(it.P2.X, it.P1.Y + neededDiamondHeight);
-                    _editChangedAnything = true;
-                    Redraw();
-                }
+                ResizeDiamondForContent(it, box, text, typeface, dpi);
             }
             else if (it.Kind == "text")
             {
@@ -4966,6 +4952,156 @@ internal sealed partial class DrawingWindow : Window
             if (!string.IsNullOrEmpty(box.Text)) box.SelectAll();
             ResizeForContent();
         }), System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    /// <summary>Width of the longest whitespace-delimited token in <paramref name="text"/>,
+    /// used to keep wrap widths from breaking words mid-string.</summary>
+    private static double MeasureLongestWordWidth(string? text, Typeface typeface, double fontSize, double dpi)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 0;
+        var max = 0.0;
+        foreach (var line in text.Split('\n'))
+        {
+            foreach (var word in line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var ft = new FormattedText(
+                    word,
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    typeface, fontSize, Brushes.Black, dpi);
+                if (ft.WidthIncludingTrailingWhitespace > max)
+                    max = ft.WidthIncludingTrailingWhitespace;
+            }
+        }
+        return max;
+    }
+
+    /// <summary>Minimum diamond bounds width so the inscribed text area fits
+    /// <paramref name="longestWordWidth"/> without splitting a word. The inscribed area for a
+    /// diamond is <c>bounds.Width * 0.5 - 8</c>, so we need
+    /// <c>bounds.Width &gt;= 2 * (longestWord + slack + 8)</c> to leave <c>slack</c> px between
+    /// the longest word and the wrap boundary. WPF's <see cref="System.Windows.Controls.TextBox"/>
+    /// wrap rounding can break a word when the wrap width is exactly equal to its measured width,
+    /// so we keep a comfortable 8 px of slack.</summary>
+    private static double DiamondMinBoundsWidthForLongestWord(double longestWordWidth)
+        => Math.Max(40, 2 * (longestWordWidth + 16));
+
+    /// <summary>Diamond text-fit resize. Maintains the theme-default aspect ratio while typing,
+    /// growing both width and height proportionally when needed and shrinking back to the theme
+    /// size when text is removed. The text area inside a diamond is rendered at 50% of bounds
+    /// (<see cref="DiamondInscribedFactor"/>), so the diamond bounds must be at least 2× the
+    /// wrapped text size plus inner padding. We brute-search over candidate wrap widths to pick
+    /// the one yielding the smallest diamond — long-and-narrow text otherwise produces a huge
+    /// diamond when wrapped to the initial 60px-ish inner width.</summary>
+    private void ResizeDiamondForContent(DrawItem it, TextBox box, string text, Typeface typeface, double dpi)
+    {
+        _host.GetEffectiveDefaultSize(it.Kind, _activeTheme.GetActiveVariant(it.Kind),
+            out var defaultW, out var defaultH);
+        if (defaultW < 1) defaultW = MainWindow.DefaultDrawingDiamondWidth;
+        if (defaultH < 1) defaultH = MainWindow.DefaultDrawingDiamondHeight;
+
+        // Right-click default-size and empty text: keep theme size only (no FormattedText work).
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            ApplyDiamondBoundsFromTheme(it, box, defaultW, defaultH);
+            return;
+        }
+
+        var aspect = defaultW / defaultH;
+        if (!(aspect > 0)) aspect = 1;
+
+        var longestWordWidth = MeasureLongestWordWidth(text, typeface, box.FontSize, dpi);
+        // Never wrap narrower than the longest word — FormattedText would hyphenate mid-word.
+        var minWrapWidth = longestWordWidth > 0 ? longestWordWidth + 4 : 20;
+
+        // Inner padding — must match the rendering pass so text doesn't clip. Rendering uses
+        // bounds * 0.5 - 8 for inner width, so total pad off the inscribed dimension is 16 px.
+        const double innerPad = 16;
+        const double unwrappedMaxWidth = 4096;
+
+        FormattedText Format(double maxWidth) => new(
+            text,
+            System.Globalization.CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            typeface, box.FontSize, Brushes.Black, dpi)
+        {
+            MaxTextWidth = Math.Max(minWrapWidth, Math.Min(maxWidth, unwrappedMaxWidth)),
+        };
+
+        // Candidate wrap widths in pixels. We sweep across a range so a paragraph that would
+        // otherwise wrap to a tall narrow column also gets evaluated as a wide-but-short layout.
+        var candidates = new List<double> { 40, 60, 80, 110, 140, 180, 220, 280, 340, 420, 520, 640, 800, 1000, 1300 };
+        candidates.RemoveAll(w => w < minWrapWidth);
+        // Unwrapped natural width — FormattedText rejects PositiveInfinity for MaxTextWidth.
+        var natural = Format(unwrappedMaxWidth);
+        candidates.Add(Math.Max(minWrapWidth, natural.Width + 4));
+
+        double bestW = double.PositiveInfinity, bestH = double.PositiveInfinity;
+        foreach (var wrapW in candidates)
+        {
+            var ft = Format(wrapW);
+            var requiredW = 2 * ft.Width + innerPad;
+            var requiredH = 2 * ft.Height + innerPad;
+            // Smallest aspect-correct bounds that fit both axes.
+            var H = Math.Max(requiredH, requiredW / aspect);
+            var W = aspect * H;
+            // Apply theme-default floor; keep aspect strict.
+            if (H < defaultH) { H = defaultH; W = aspect * H; }
+            if (W < defaultW) { W = defaultW; H = W / aspect; }
+            if (W * H < bestW * bestH)
+            {
+                bestW = W;
+                bestH = H;
+            }
+        }
+
+        if (double.IsInfinity(bestW) || double.IsInfinity(bestH))
+        {
+            bestW = defaultW;
+            bestH = defaultH;
+        }
+
+        var minWForWords = DiamondMinBoundsWidthForLongestWord(longestWordWidth);
+        if (bestW < minWForWords)
+        {
+            bestW = minWForWords;
+            bestH = bestW / aspect;
+        }
+        if (bestH < defaultH) { bestH = defaultH; bestW = aspect * bestH; }
+        if (bestW < defaultW) { bestW = defaultW; bestH = bestW / aspect; }
+
+        ApplyDiamondBoundsFromTheme(it, box, bestW, bestH);
+    }
+
+    private void ApplyDiamondBoundsFromTheme(DrawItem it, TextBox? box, double w, double h)
+    {
+        var current = GetBounds(it);
+        if (Math.Abs(current.Width - w) < 0.5 && Math.Abs(current.Height - h) < 0.5)
+        {
+            if (box != null)
+                LayoutDiamondTextEditor(box, it);
+            return;
+        }
+
+        var signX = it.P2.X >= it.P1.X ? 1 : -1;
+        var signY = it.P2.Y >= it.P1.Y ? 1 : -1;
+        it.P2 = new Point(it.P1.X + signX * w, it.P1.Y + signY * h);
+        _editChangedAnything = true;
+        if (box != null)
+            LayoutDiamondTextEditor(box, it);
+        RefreshSizeInfo(it.Kind);
+        Redraw();
+    }
+
+    private static void LayoutDiamondTextEditor(TextBox box, DrawItem it)
+    {
+        var b = GetBounds(it);
+        var innerW = Math.Max(40, b.Width * DiamondInscribedFactor - 8);
+        var innerH = Math.Max(20, b.Height * DiamondInscribedFactor - 8);
+        Canvas.SetLeft(box, b.Left + (b.Width - innerW) / 2);
+        Canvas.SetTop(box, b.Top + (b.Height - innerH) / 2);
+        box.Width = innerW;
+        box.Height = innerH;
     }
 
     private void CommitTextEdit()
