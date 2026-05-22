@@ -1773,7 +1773,7 @@ public partial class MainWindow
         var drawingPanel = new StackPanel { Margin = new Thickness(12) };
         drawingPanel.Children.Add(new TextBlock
         {
-            Text = "Default sizes for new rectangles and circles. While you drag a shape out, width and height gently snap to these values when you are within the snap threshold.",
+            Text = "Default sizes for new rectangles, circles and diamonds. While you drag a shape out, width and height gently snap to these values when you are within the snap threshold. Individual theme variants can override these defaults under Drawing themes → Custom size.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = Brushes.DimGray,
             Margin = new Thickness(0, 0, 0, 12),
@@ -1781,12 +1781,8 @@ public partial class MainWindow
         var drawingGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < 8; i++)
+            drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         static void AddDrawingRow(Grid grid, int row, string label, TextBox box)
         {
@@ -1810,15 +1806,27 @@ public partial class MainWindow
         var txtDrawingRectHeight = new TextBox { Text = _drawingDefaultRectangleHeight.ToString() };
         var txtDrawingEllipseWidth = new TextBox { Text = _drawingDefaultEllipseWidth.ToString() };
         var txtDrawingEllipseHeight = new TextBox { Text = _drawingDefaultEllipseHeight.ToString() };
+        var txtDrawingDiamondWidth = new TextBox { Text = _drawingDefaultDiamondWidth.ToString() };
+        var txtDrawingDiamondHeight = new TextBox { Text = _drawingDefaultDiamondHeight.ToString() };
         var txtDrawingSnapThreshold = new TextBox { Text = _drawingShapeSizeSnapThresholdPx.ToString() };
         var txtDrawingArrowMargin = new TextBox { Text = _drawingArrowClearanceMarginPx.ToString() };
         AddDrawingRow(drawingGrid, 0, "Rectangle width (px):", txtDrawingRectWidth);
         AddDrawingRow(drawingGrid, 1, "Rectangle height (px):", txtDrawingRectHeight);
         AddDrawingRow(drawingGrid, 2, "Circle width (px):", txtDrawingEllipseWidth);
         AddDrawingRow(drawingGrid, 3, "Circle height (px):", txtDrawingEllipseHeight);
-        AddDrawingRow(drawingGrid, 4, "Snap threshold (px):", txtDrawingSnapThreshold);
-        AddDrawingRow(drawingGrid, 5, "Arrow margin (px):", txtDrawingArrowMargin);
+        AddDrawingRow(drawingGrid, 4, "Diamond width (px):", txtDrawingDiamondWidth);
+        AddDrawingRow(drawingGrid, 5, "Diamond height (px):", txtDrawingDiamondHeight);
+        AddDrawingRow(drawingGrid, 6, "Snap threshold (px):", txtDrawingSnapThreshold);
+        AddDrawingRow(drawingGrid, 7, "Arrow margin (px):", txtDrawingArrowMargin);
         drawingPanel.Children.Add(drawingGrid);
+        drawingPanel.Children.Add(new TextBlock
+        {
+            Text = $"Stored in {DrawingDefaultSizesStore.FileName} (in the backup folder).",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.Gray,
+            FontSize = 11,
+            Margin = new Thickness(0, 4, 0, 0),
+        });
         tabControl.Items.Add(new TabItem
         {
             Header = "Drawing",
@@ -2211,6 +2219,10 @@ public partial class MainWindow
                 && drawingEllipseWidth >= MinDrawingShapeSizePx && drawingEllipseWidth <= MaxDrawingShapeSizePx
                 && int.TryParse(txtDrawingEllipseHeight.Text, out int drawingEllipseHeight)
                 && drawingEllipseHeight >= MinDrawingShapeSizePx && drawingEllipseHeight <= MaxDrawingShapeSizePx
+                && int.TryParse(txtDrawingDiamondWidth.Text, out int drawingDiamondWidth)
+                && drawingDiamondWidth >= MinDrawingShapeSizePx && drawingDiamondWidth <= MaxDrawingShapeSizePx
+                && int.TryParse(txtDrawingDiamondHeight.Text, out int drawingDiamondHeight)
+                && drawingDiamondHeight >= MinDrawingShapeSizePx && drawingDiamondHeight <= MaxDrawingShapeSizePx
                 && int.TryParse(txtDrawingSnapThreshold.Text, out int drawingSnapThreshold)
                 && drawingSnapThreshold >= 2 && drawingSnapThreshold <= 80
                 && int.TryParse(txtDrawingArrowMargin.Text, out int drawingArrowMargin)
@@ -2333,8 +2345,11 @@ public partial class MainWindow
                 _drawingDefaultRectangleHeight = drawingRectHeight;
                 _drawingDefaultEllipseWidth = drawingEllipseWidth;
                 _drawingDefaultEllipseHeight = drawingEllipseHeight;
+                _drawingDefaultDiamondWidth = drawingDiamondWidth;
+                _drawingDefaultDiamondHeight = drawingDiamondHeight;
                 _drawingShapeSizeSnapThresholdPx = drawingSnapThreshold;
                 _drawingArrowClearanceMarginPx = drawingArrowMargin;
+                SaveDrawingDefaultSizes();
                 SaveClosedTabHistory();
 
                 // Apply font to all open editors

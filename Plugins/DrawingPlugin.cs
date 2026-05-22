@@ -28,6 +28,8 @@ public partial class MainWindow
     internal const int DefaultDrawingRectangleHeight = 75;
     internal const int DefaultDrawingEllipseWidth = 58;
     internal const int DefaultDrawingEllipseHeight = 58;
+    internal const int DefaultDrawingDiamondWidth = 120;
+    internal const int DefaultDrawingDiamondHeight = 120;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 12;
     internal const int DefaultDrawingArrowClearanceMarginPx = 35;
     internal const int MinDrawingArrowClearanceMarginPx = 0;
@@ -39,21 +41,51 @@ public partial class MainWindow
     private int _drawingDefaultRectangleHeight = DefaultDrawingRectangleHeight;
     private int _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
     private int _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
+    private int _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
+    private int _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
     private int _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
     private int _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
 
     internal void GetDrawingShapeDefaults(string kind, out double standardWidth, out double standardHeight)
     {
-        if (kind == "rect" || kind == "diamond")
+        switch (kind)
         {
-            // Diamonds share the rectangle's standard size so an auto-sized "decision" diamond
-            // has enough room for text (the inscribed text area is only half the bounds).
-            standardWidth = _drawingDefaultRectangleWidth;
-            standardHeight = _drawingDefaultRectangleHeight;
-            return;
+            case "rect":
+                standardWidth = _drawingDefaultRectangleWidth;
+                standardHeight = _drawingDefaultRectangleHeight;
+                return;
+            case "diamond":
+                standardWidth = _drawingDefaultDiamondWidth;
+                standardHeight = _drawingDefaultDiamondHeight;
+                return;
+            default:
+                standardWidth = _drawingDefaultEllipseWidth;
+                standardHeight = _drawingDefaultEllipseHeight;
+                return;
         }
-        standardWidth = _drawingDefaultEllipseWidth;
-        standardHeight = _drawingDefaultEllipseHeight;
+    }
+
+    /// <summary>Snapshot of the per-kind default sizes, used by <see cref="DrawingWindow"/> to
+    /// compute the effective default size for a given variant (variant override beats global).</summary>
+    internal DrawingDefaultSizes GetDrawingDefaultSizesSnapshot() => new()
+    {
+        RectangleWidth = _drawingDefaultRectangleWidth,
+        RectangleHeight = _drawingDefaultRectangleHeight,
+        EllipseWidth = _drawingDefaultEllipseWidth,
+        EllipseHeight = _drawingDefaultEllipseHeight,
+        DiamondWidth = _drawingDefaultDiamondWidth,
+        DiamondHeight = _drawingDefaultDiamondHeight,
+    };
+
+    /// <summary>Returns the effective default size for the given variant: per-variant
+    /// <see cref="ThemeToolStyle.Width"/>/<see cref="ThemeToolStyle.Height"/> if non-zero, else
+    /// the global per-kind default. Either dimension can fall back independently.</summary>
+    internal void GetEffectiveDefaultSize(string kind, ThemeToolStyle? variant,
+        out double width, out double height)
+    {
+        GetDrawingShapeDefaults(kind, out var globalW, out var globalH);
+        width = variant != null && variant.Width > 0 ? variant.Width : globalW;
+        height = variant != null && variant.Height > 0 ? variant.Height : globalH;
     }
 
     internal int DrawingShapeSizeSnapThresholdPx => _drawingShapeSizeSnapThresholdPx;
@@ -313,6 +345,14 @@ internal sealed class ThemeToolStyle
     public string ArrowHead { get; set; } = "Simple";
     public double FreeThickness { get; set; } = 6;
 
+    /// <summary>Per-variant custom default width in px. <c>0</c> means "no override" — fall back to
+    /// the global per-kind default from <see cref="DrawingDefaultSizesStore"/>. Only meaningful for
+    /// rect/ellipse/diamond variants.</summary>
+    public double Width { get; set; }
+
+    /// <summary>Per-variant custom default height in px. <c>0</c> means "no override".</summary>
+    public double Height { get; set; }
+
     public ThemeToolStyle Clone() => new()
     {
         Enabled = Enabled,
@@ -325,6 +365,8 @@ internal sealed class ThemeToolStyle
         CornerRadius = CornerRadius,
         ArrowHead = ArrowHead,
         FreeThickness = FreeThickness,
+        Width = Width,
+        Height = Height,
     };
 
     public static ThemeToolStyle FromLegacyRoot(DrawingTheme t) => new()
@@ -720,6 +762,91 @@ internal sealed class DrawingNamedColor
     public string Hex { get; set; } = "#000000";
 
     public override string ToString() => $"{Name}    {Hex}";
+}
+
+/// <summary>Persistent per-object-kind default sizes used when a shape is created without any
+/// per-variant size override. Stored in <c>{backupFolder}/drawing-default-sizes.json</c>.</summary>
+internal sealed class DrawingDefaultSizes
+{
+    public int RectangleWidth { get; set; } = MainWindow.DefaultDrawingRectangleWidth;
+    public int RectangleHeight { get; set; } = MainWindow.DefaultDrawingRectangleHeight;
+    public int EllipseWidth { get; set; } = MainWindow.DefaultDrawingEllipseWidth;
+    public int EllipseHeight { get; set; } = MainWindow.DefaultDrawingEllipseHeight;
+    public int DiamondWidth { get; set; } = MainWindow.DefaultDrawingDiamondWidth;
+    public int DiamondHeight { get; set; } = MainWindow.DefaultDrawingDiamondHeight;
+
+    public DrawingDefaultSizes Clone() => new()
+    {
+        RectangleWidth = RectangleWidth,
+        RectangleHeight = RectangleHeight,
+        EllipseWidth = EllipseWidth,
+        EllipseHeight = EllipseHeight,
+        DiamondWidth = DiamondWidth,
+        DiamondHeight = DiamondHeight,
+    };
+}
+
+internal static class DrawingDefaultSizesStore
+{
+    public const string FileName = "drawing-default-sizes.json";
+    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+
+    public static string GetFilePath(string backupFolder)
+        => System.IO.Path.Combine(backupFolder, FileName);
+
+    public static bool Exists(string backupFolder)
+        => File.Exists(GetFilePath(backupFolder));
+
+    /// <summary>Reads the default-sizes file; returns <c>null</c> if it doesn't exist or cannot be
+    /// parsed. Caller decides how to seed first-run defaults (e.g. from legacy WindowSettings).</summary>
+    public static DrawingDefaultSizes? Load(string backupFolder)
+    {
+        try
+        {
+            var path = GetFilePath(backupFolder);
+            if (!File.Exists(path)) return null;
+            var loaded = JsonSerializer.Deserialize<DrawingDefaultSizes>(File.ReadAllText(path));
+            if (loaded == null) return null;
+            ClampInPlace(loaded);
+            return loaded;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static void Save(string backupFolder, DrawingDefaultSizes sizes)
+    {
+        try
+        {
+            Directory.CreateDirectory(backupFolder);
+            var clamped = sizes.Clone();
+            ClampInPlace(clamped);
+            File.WriteAllText(GetFilePath(backupFolder), JsonSerializer.Serialize(clamped, Options));
+        }
+        catch
+        {
+            // non-critical
+        }
+    }
+
+    private static void ClampInPlace(DrawingDefaultSizes s)
+    {
+        s.RectangleWidth = Clamp(s.RectangleWidth, MainWindow.DefaultDrawingRectangleWidth);
+        s.RectangleHeight = Clamp(s.RectangleHeight, MainWindow.DefaultDrawingRectangleHeight);
+        s.EllipseWidth = Clamp(s.EllipseWidth, MainWindow.DefaultDrawingEllipseWidth);
+        s.EllipseHeight = Clamp(s.EllipseHeight, MainWindow.DefaultDrawingEllipseHeight);
+        s.DiamondWidth = Clamp(s.DiamondWidth, MainWindow.DefaultDrawingDiamondWidth);
+        s.DiamondHeight = Clamp(s.DiamondHeight, MainWindow.DefaultDrawingDiamondHeight);
+    }
+
+    private static int Clamp(int value, int fallback)
+    {
+        if (value < MainWindow.MinDrawingShapeSizePx || value > MainWindow.MaxDrawingShapeSizePx)
+            return fallback;
+        return value;
+    }
 }
 
 internal static class DrawingColorUtilities
@@ -1944,7 +2071,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void ShowThemeSettings()
     {
-        var dlg = new ThemeSettingsWindow(_themes)
+        var dlg = new ThemeSettingsWindow(_themes, _host.GetDrawingDefaultSizesSnapshot())
         {
             Owner = this,
         };
@@ -3304,7 +3431,8 @@ internal sealed partial class DrawingWindow : Window
 
     private void ApplyDefaultSizeToShape(DrawItem item)
     {
-        _host.GetDrawingShapeDefaults(item.Kind, out var stdW, out var stdH);
+        _host.GetEffectiveDefaultSize(item.Kind, _activeTheme.GetActiveVariant(item.Kind),
+            out var stdW, out var stdH);
         var p1 = item.P1;
         var dx = item.P2.X - p1.X;
         var dy = item.P2.Y - p1.Y;
@@ -3588,7 +3716,9 @@ internal sealed partial class DrawingWindow : Window
             }
             else if (_drawingItem.Kind is "rect" or "ellipse" or "diamond")
             {
-                _host.GetDrawingShapeDefaults(_drawingItem.Kind, out var stdW, out var stdH);
+                _host.GetEffectiveDefaultSize(_drawingItem.Kind,
+                    _activeTheme.GetActiveVariant(_drawingItem.Kind),
+                    out var stdW, out var stdH);
                 _drawingItem.P2 = DrawingShapeSizeSnap.SnapDragCorner(
                     _drawingItem.P1,
                     p,
@@ -5897,6 +6027,8 @@ internal sealed class ThemeSettingsWindow : Window
         public CheckBox? Enabled;
         public ComboBox? Fill, Stroke, TextColor, Font, ArrowHead;
         public TextBox? FontSize, Thickness, Corner, FreeThickness;
+        public TextBox? Width, Height;
+        public TextBlock? SizeHint;
     }
 
     // Per-kind UI controls, index-aligned with the editing theme's variant lists.
@@ -5915,6 +6047,8 @@ internal sealed class ThemeSettingsWindow : Window
 
     private Canvas? _previewCanvas;
 
+    private readonly DrawingDefaultSizes _globalDefaultSizes;
+
     private static readonly string[] FontChoices =
     {
         "Segoe UI", "Arial", "Calibri", "Cambria", "Consolas", "Courier New",
@@ -5922,8 +6056,9 @@ internal sealed class ThemeSettingsWindow : Window
         "Comic Sans MS", "Impact",
     };
 
-    public ThemeSettingsWindow(List<DrawingTheme> existing)
+    public ThemeSettingsWindow(List<DrawingTheme> existing, DrawingDefaultSizes globalDefaultSizes)
     {
+        _globalDefaultSizes = globalDefaultSizes.Clone();
         Themes = existing.Select(t => t.Clone()).ToList();
         Title = "Drawing Themes";
         Width = 1240;
@@ -6397,6 +6532,74 @@ internal sealed class ThemeSettingsWindow : Window
             sp.Children.Add(ui.Corner);
             ui.Corner.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Corner!.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
         }
+
+        if (kind is "rect" or "ellipse" or "diamond")
+            BuildCustomSizeFields(sp, ui, kind, index);
+    }
+
+    private void BuildCustomSizeFields(StackPanel sp, VariantUi ui, string kind, int index)
+    {
+        sp.Children.Add(EditorLabel("Custom size"));
+        ui.SizeHint = new TextBlock
+        {
+            Text = BuildSizeHintText(kind),
+            Foreground = Brushes.Gray,
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4),
+        };
+        sp.Children.Add(ui.SizeHint);
+
+        var sizeGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
+        sizeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        sizeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        sizeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        sizeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var lblW = new TextBlock { Text = "Width", FontSize = 11, Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 4, 2) };
+        Grid.SetRow(lblW, 0); Grid.SetColumn(lblW, 0);
+        sizeGrid.Children.Add(lblW);
+
+        var lblH = new TextBlock { Text = "Height", FontSize = 11, Foreground = Brushes.DimGray, Margin = new Thickness(4, 0, 0, 2) };
+        Grid.SetRow(lblH, 0); Grid.SetColumn(lblH, 1);
+        sizeGrid.Children.Add(lblH);
+
+        ui.Width = new TextBox { Margin = new Thickness(0, 0, 4, 0) };
+        Grid.SetRow(ui.Width, 1); Grid.SetColumn(ui.Width, 0);
+        sizeGrid.Children.Add(ui.Width);
+
+        ui.Height = new TextBox { Margin = new Thickness(4, 0, 0, 0) };
+        Grid.SetRow(ui.Height, 1); Grid.SetColumn(ui.Height, 1);
+        sizeGrid.Children.Add(ui.Height);
+
+        sp.Children.Add(sizeGrid);
+
+        ui.Width.TextChanged += (_, _) => MutateVariant(kind, index, s => s.Width = ParseCustomSize(ui.Width!.Text));
+        ui.Height.TextChanged += (_, _) => MutateVariant(kind, index, s => s.Height = ParseCustomSize(ui.Height!.Text));
+    }
+
+    private string BuildSizeHintText(string kind)
+    {
+        var (w, h) = GetGlobalDefaultSize(kind);
+        return $"Default {w}×{h} px. Leave blank or 0 to use the default.";
+    }
+
+    private (int w, int h) GetGlobalDefaultSize(string kind) => kind switch
+    {
+        "rect" => (_globalDefaultSizes.RectangleWidth, _globalDefaultSizes.RectangleHeight),
+        "ellipse" => (_globalDefaultSizes.EllipseWidth, _globalDefaultSizes.EllipseHeight),
+        "diamond" => (_globalDefaultSizes.DiamondWidth, _globalDefaultSizes.DiamondHeight),
+        _ => (0, 0),
+    };
+
+    /// <summary>Parses a custom-size textbox value. Empty / whitespace / 0 / unparseable text all
+    /// mean "no override" and are normalized to <c>0</c>. Negative values are clamped to <c>0</c>.</summary>
+    private static double ParseCustomSize(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 0;
+        if (!double.TryParse(text.Trim(), out var v)) return 0;
+        if (v <= 0) return 0;
+        return Math.Min(v, MainWindow.MaxDrawingShapeSizePx);
     }
 
     private void MutateVariant(string kind, int index, Action<ThemeToolStyle> set)
@@ -6565,6 +6768,8 @@ internal sealed class ThemeSettingsWindow : Window
             if (ui.ArrowHead.SelectedItem == null) ui.ArrowHead.SelectedIndex = 1;
         }
         if (ui.FreeThickness != null) ui.FreeThickness.Text = style.FreeThickness.ToString();
+        if (ui.Width != null) ui.Width.Text = style.Width > 0 ? style.Width.ToString() : "";
+        if (ui.Height != null) ui.Height.Text = style.Height > 0 ? style.Height.ToString() : "";
     }
 
     private void RebuildThemePreview()

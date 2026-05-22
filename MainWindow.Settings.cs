@@ -1215,6 +1215,8 @@ public partial class MainWindow
         _drawingDefaultRectangleHeight = DefaultDrawingRectangleHeight;
         _drawingDefaultEllipseWidth = DefaultDrawingEllipseWidth;
         _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
+        _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
+        _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
         _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
         _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
     }
@@ -1391,6 +1393,25 @@ public partial class MainWindow
 
     private void ApplyDrawingSettingsFromWindowSettings(WindowSettings state)
     {
+        _drawingShapeSizeSnapThresholdPx = NormalizeDrawingShapeSnapThreshold(
+            state.DrawingShapeSizeSnapThresholdPx);
+        _drawingArrowClearanceMarginPx = NormalizeDrawingArrowClearanceMargin(
+            state.DrawingArrowClearanceMarginPx);
+
+        var stored = DrawingDefaultSizesStore.Load(_backupFolder);
+        if (stored != null)
+        {
+            _drawingDefaultRectangleWidth = stored.RectangleWidth;
+            _drawingDefaultRectangleHeight = stored.RectangleHeight;
+            _drawingDefaultEllipseWidth = stored.EllipseWidth;
+            _drawingDefaultEllipseHeight = stored.EllipseHeight;
+            _drawingDefaultDiamondWidth = stored.DiamondWidth;
+            _drawingDefaultDiamondHeight = stored.DiamondHeight;
+            return;
+        }
+
+        // First run (or migration from older builds): seed the new file from the legacy
+        // WindowSettings fields so users keep the values they previously configured.
         _drawingDefaultRectangleWidth = NormalizeDrawingShapeSize(
             state.DrawingDefaultRectangleWidth, DefaultDrawingRectangleWidth);
         _drawingDefaultRectangleHeight = NormalizeDrawingShapeSize(
@@ -1399,11 +1420,21 @@ public partial class MainWindow
             state.DrawingDefaultEllipseWidth, DefaultDrawingEllipseWidth);
         _drawingDefaultEllipseHeight = NormalizeDrawingShapeSize(
             state.DrawingDefaultEllipseHeight, DefaultDrawingEllipseHeight);
-        _drawingShapeSizeSnapThresholdPx = NormalizeDrawingShapeSnapThreshold(
-            state.DrawingShapeSizeSnapThresholdPx);
-        _drawingArrowClearanceMarginPx = NormalizeDrawingArrowClearanceMargin(
-            state.DrawingArrowClearanceMarginPx);
+        _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
+        _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
+        SaveDrawingDefaultSizes();
     }
+
+    private void SaveDrawingDefaultSizes()
+        => DrawingDefaultSizesStore.Save(_backupFolder, new DrawingDefaultSizes
+        {
+            RectangleWidth = _drawingDefaultRectangleWidth,
+            RectangleHeight = _drawingDefaultRectangleHeight,
+            EllipseWidth = _drawingDefaultEllipseWidth,
+            EllipseHeight = _drawingDefaultEllipseHeight,
+            DiamondWidth = _drawingDefaultDiamondWidth,
+            DiamondHeight = _drawingDefaultDiamondHeight,
+        });
 
     private static int NormalizeDrawingShapeSize(int? value, int defaultValue)
     {
