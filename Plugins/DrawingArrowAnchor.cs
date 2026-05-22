@@ -36,7 +36,7 @@ internal sealed partial class DrawingWindow
     }
 
     private static bool IsAnchorableShape(DrawItem it)
-        => it.Kind is "rect" or "ellipse";
+        => it.Kind is "rect" or "ellipse" or "diamond";
 
     private DrawItem? HitTestAnchorableShape(Point p)
     {
@@ -112,6 +112,28 @@ internal sealed partial class DrawingWindow
                 new Point(cx, b.Bottom),
                 new Point(b.Left, b.Bottom),
                 new Point(b.Left, cy),
+            };
+        }
+
+        if (shape.Kind == "diamond")
+        {
+            // Four corner vertices + four edge midpoints, all sitting on the diamond outline.
+            var cx = b.Left + b.Width / 2;
+            var cy = b.Top + b.Height / 2;
+            var midLeftX = b.Left + b.Width / 4;
+            var midRightX = b.Left + 3 * b.Width / 4;
+            var midTopY = b.Top + b.Height / 4;
+            var midBottomY = b.Top + 3 * b.Height / 4;
+            return new[]
+            {
+                new Point(cx, b.Top),
+                new Point(midRightX, midTopY),
+                new Point(b.Right, cy),
+                new Point(midRightX, midBottomY),
+                new Point(cx, b.Bottom),
+                new Point(midLeftX, midBottomY),
+                new Point(b.Left, cy),
+                new Point(midLeftX, midTopY),
             };
         }
 

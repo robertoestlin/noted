@@ -144,6 +144,20 @@ internal sealed partial class DrawingWindow
             };
         }
 
+        if (shape.Kind == "diamond" && index is int didx)
+        {
+            // GetShapeAnchorPoints (diamond) order: 0=top, 1=top-right edge, 2=right,
+            // 3=bottom-right edge, 4=bottom, 5=bottom-left edge, 6=left, 7=top-left edge.
+            return didx switch
+            {
+                0 => new Point(0, -1),
+                2 => new Point(1, 0),
+                4 => new Point(0, 1),
+                6 => new Point(-1, 0),
+                _ => OutwardFromCenter(shape, anchor),
+            };
+        }
+
         return OutwardFromCenter(shape, anchor);
     }
 
