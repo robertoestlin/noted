@@ -97,20 +97,34 @@ public partial class MainWindow
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0, 8, 0)
         };
+        var btnOpenComputerStatistics = new Button
+        {
+            Content = "Computer Statistics",
+            Padding = new Thickness(10, 3, 10, 3),
+            Margin = new Thickness(0, 0, 8, 0),
+            ToolTip = "Switch to Computer Statistics"
+        };
         var btnDeleteMonth = new Button
         {
             Content = "Remove Month Report",
-            Padding = new Thickness(10, 3, 10, 3),
+            Padding = new Thickness(10, 3, 10, 3)
+        };
+
+        var rightHeaderActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right
         };
+        rightHeaderActions.Children.Add(btnOpenComputerStatistics);
+        rightHeaderActions.Children.Add(btnDeleteMonth);
 
         Grid.SetColumn(btnPrevMonth, 0);
         Grid.SetColumn(monthTitle, 1);
-        Grid.SetColumn(btnDeleteMonth, 3);
+        Grid.SetColumn(rightHeaderActions, 3);
         Grid.SetColumn(btnNextMonth, 4);
         header.Children.Add(btnPrevMonth);
         header.Children.Add(monthTitle);
-        header.Children.Add(btnDeleteMonth);
+        header.Children.Add(rightHeaderActions);
         header.Children.Add(btnNextMonth);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
@@ -142,6 +156,14 @@ public partial class MainWindow
         root.Children.Add(closePanel);
 
         closeButton.Click += (_, _) => dialog.Close();
+
+        btnOpenComputerStatistics.Click += (_, _) =>
+        {
+            // Close this modal first, then queue the next one so it opens cleanly
+            // on the dispatcher after this dialog has fully torn down.
+            dialog.Close();
+            Dispatcher.BeginInvoke(new Action(ShowComputerStatisticsDialog));
+        };
 
         dialog.Content = root;
 

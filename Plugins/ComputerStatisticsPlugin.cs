@@ -551,9 +551,20 @@ public partial class MainWindow
         };
         periodHost.Children.Add(periodTitle);
 
+        var headerActions = new StackPanel { Orientation = Orientation.Horizontal };
+        var btnOpenTimeReporter = new Button
+        {
+            Content = "Time Reporter",
+            Padding = new Thickness(10, 3, 10, 3),
+            Height = 28,
+            Margin = new Thickness(0, 0, 6, 0),
+            ToolTip = "Switch to Time Reporter"
+        };
         var btnSettings = new Button { Content = "⚙", Width = 30, Height = 28, FontSize = 16, ToolTip = "Settings" };
-        Grid.SetColumn(btnSettings, 4);
-        headerRow.Children.Add(btnSettings);
+        headerActions.Children.Add(btnOpenTimeReporter);
+        headerActions.Children.Add(btnSettings);
+        Grid.SetColumn(headerActions, 4);
+        headerRow.Children.Add(headerActions);
 
         DockPanel.SetDock(headerRow, Dock.Top);
         root.Children.Add(headerRow);
@@ -673,6 +684,13 @@ public partial class MainWindow
         {
             if (ShowComputerStatisticsSettingsDialog(dialog))
                 Render();
+        };
+        btnOpenTimeReporter.Click += (_, _) =>
+        {
+            // Close this modal first, then queue the next one so it opens cleanly
+            // on the dispatcher after this dialog has fully torn down.
+            dialog.Close();
+            Dispatcher.BeginInvoke(new Action(ShowTimeReportDialog));
         };
 
         Render();
