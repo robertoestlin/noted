@@ -23,6 +23,17 @@ public partial class MainWindow
     private const int DefaultComputerStatisticsAwakeStartHour = 8;
     private const int DefaultComputerStatisticsAwakeEndHour = 0; // 0 == midnight
 
+    // Daily work target — stored in minutes, rounded to 5-minute increments.
+    private const int DefaultComputerStatisticsWorkMinutesPerDay = 8 * 60;
+    private const int MaxComputerStatisticsWorkMinutesPerDay = 24 * 60;
+    private const int ComputerStatisticsWorkMinutesStep = 5;
+    // Mon–Fri is the default working week for forecasts (overridable via setting).
+    private const int ComputerStatisticsBusinessDaysPerWeek = 5;
+    private const int ComputerStatisticsTotalDaysPerWeek = 7;
+
+    private const bool DefaultComputerStatisticsForecastFullWeek = false;
+    private const bool DefaultComputerStatisticsWorkTimeIncludesPassive = false;
+
     // A "day" in this view runs from 04:00 to 04:00 the next morning, so late-night
     // sessions are counted under the day they started on.
     private const int ComputerStatisticsDayStartHour = 4;
@@ -38,6 +49,9 @@ public partial class MainWindow
     private int _computerStatisticsIdleThresholdSeconds = DefaultComputerStatisticsIdleThresholdSeconds;
     private int _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
     private int _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
+    private int _computerStatisticsWorkMinutesPerDay = DefaultComputerStatisticsWorkMinutesPerDay;
+    private bool _computerStatisticsForecastFullWeek = DefaultComputerStatisticsForecastFullWeek;
+    private bool _computerStatisticsWorkTimeIncludesPassive = DefaultComputerStatisticsWorkTimeIncludesPassive;
     private readonly HashSet<string> _computerStatisticsPassiveProgramKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Color ComputerStatisticsActiveColor = Color.FromRgb(0x4C, 0xAF, 0x50);
@@ -66,6 +80,9 @@ public partial class MainWindow
         _computerStatisticsIdleThresholdSeconds = DefaultComputerStatisticsIdleThresholdSeconds;
         _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
         _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
+        _computerStatisticsWorkMinutesPerDay = DefaultComputerStatisticsWorkMinutesPerDay;
+        _computerStatisticsForecastFullWeek = DefaultComputerStatisticsForecastFullWeek;
+        _computerStatisticsWorkTimeIncludesPassive = DefaultComputerStatisticsWorkTimeIncludesPassive;
         _computerStatisticsPassiveProgramKeys.Clear();
     }
 
@@ -81,6 +98,16 @@ public partial class MainWindow
             state?.AwakeStartHour ?? DefaultComputerStatisticsAwakeStartHour, 0, 24);
         _computerStatisticsAwakeEndHour = Math.Clamp(
             state?.AwakeEndHour ?? DefaultComputerStatisticsAwakeEndHour, 0, 24);
+
+        var workMinutes = state?.WorkMinutesPerDay ?? DefaultComputerStatisticsWorkMinutesPerDay;
+        workMinutes = Math.Clamp(workMinutes, 0, MaxComputerStatisticsWorkMinutesPerDay);
+        _computerStatisticsWorkMinutesPerDay =
+            (workMinutes / ComputerStatisticsWorkMinutesStep) * ComputerStatisticsWorkMinutesStep;
+
+        _computerStatisticsForecastFullWeek =
+            state?.ForecastFullWeek ?? DefaultComputerStatisticsForecastFullWeek;
+        _computerStatisticsWorkTimeIncludesPassive =
+            state?.WorkTimeIncludesPassive ?? DefaultComputerStatisticsWorkTimeIncludesPassive;
 
         _computerStatisticsPassiveProgramKeys.Clear();
         if (state?.PassiveProgramKeys == null)
@@ -387,9 +414,33 @@ public partial class MainWindow
     }
 
     private static string FormatDurationFromSlots(int slotCount, int slotSeconds)
+        => FormatHoursMinutes((long)slotCount * slotSeconds);
+
+    /// <summary>
+    /// Today's work seconds — Active (and Passive if the setting is enabled). Computed against the
+    /// logical day boundary so a session that started before midnight still belongs to "today".
+    /// Re-reads today's slice of the heartbeat log on each call; cheap because a day is small.
+    /// </summary>
+    private long ComputeTodayWorkSeconds(int slotSeconds)
     {
-        var totalSeconds = (long)slotCount * slotSeconds;
-        var span = TimeSpan.FromSeconds(totalSeconds);
+        var today = ComputerStatisticsDayOf(DateTime.Now);
+        var todayStart = ComputerStatisticsDayStart(today);
+        var todayEnd = todayStart.AddDays(1);
+        var states = BuildSlotStates(todayStart, todayEnd, slotSeconds);
+
+        long active = 0, passive = 0;
+        foreach (var s in states)
+        {
+            if (s == ComputerStatisticsSlotState.Active) active++;
+            else if (s == ComputerStatisticsSlotState.Passive) passive++;
+        }
+        long workSlots = active + (_computerStatisticsWorkTimeIncludesPassive ? passive : 0);
+        return workSlots * slotSeconds;
+    }
+
+    private static string FormatHoursMinutes(long seconds)
+    {
+        var span = TimeSpan.FromSeconds(Math.Max(0, seconds));
         if (span.TotalDays >= 1)
             return string.Format(
                 CultureInfo.CurrentCulture,
@@ -411,8 +462,8 @@ public partial class MainWindow
         var dialog = new Window
         {
             Title = "Computer Statistics",
-            Width = 1100,
-            Height = 720,
+            Width = 1300,
+            Height = 1000,
             MinWidth = 760,
             MinHeight = 480,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -459,16 +510,37 @@ public partial class MainWindow
         Grid.SetColumn(navPanel, 2);
         headerRow.Children.Add(navPanel);
 
+        // Period title docks left, weekly worked-time label docks right. The worked label is
+        // only made visible in the Week view (toggled inside Render()).
+        var periodHost = new DockPanel
+        {
+            Margin = new Thickness(16, 0, 8, 0),
+            LastChildFill = true
+        };
+        Grid.SetColumn(periodHost, 3);
+        headerRow.Children.Add(periodHost);
+
+        // Today's running work-time total — pinned to the top-right of every view.
+        var todayWorkedLabel = new TextBlock
+        {
+            FontWeight = FontWeights.Bold,
+            FontSize = 22,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Foreground = new SolidColorBrush(ComputerStatisticsActiveColor),
+            Margin = new Thickness(12, 0, 0, 0)
+        };
+        DockPanel.SetDock(todayWorkedLabel, Dock.Right);
+        periodHost.Children.Add(todayWorkedLabel);
+
         var periodTitle = new TextBlock
         {
             FontWeight = FontWeights.SemiBold,
             FontSize = 16,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(16, 0, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis
         };
-        Grid.SetColumn(periodTitle, 3);
-        headerRow.Children.Add(periodTitle);
+        periodHost.Children.Add(periodTitle);
 
         var btnSettings = new Button { Content = "⚙", Width = 30, Height = 28, FontSize = 16, ToolTip = "Settings" };
         Grid.SetColumn(btnSettings, 4);
@@ -521,6 +593,17 @@ public partial class MainWindow
 
                 var states = BuildSlotStates(rangeStart, rangeEnd, slotSeconds);
                 var totals = AggregateSlots(states);
+
+                // Today's total — always shown top-right, regardless of view or anchor.
+                long todayWorkSec = ComputeTodayWorkSeconds(slotSeconds);
+                todayWorkedLabel.Text = FormatHoursMinutes(todayWorkSec);
+                SetInstantTooltip(
+                    todayWorkedLabel,
+                    string.Format(
+                        CultureInfo.CurrentCulture,
+                        "Today's {0} time ({1:dddd d MMM}).",
+                        _computerStatisticsWorkTimeIncludesPassive ? "Active + Passive" : "Active",
+                        DateTime.Now));
 
                 totalsPanel.Children.Clear();
                 totalsPanel.Children.Add(BuildTotalCard("Active", ComputerStatisticsActiveColor, totals.ActiveSlots, slotSeconds, totals.TotalSlots));
@@ -743,15 +826,53 @@ public partial class MainWindow
             perDay[day].Add(states[i]);
         }
 
+        long targetWorkSec = (long)_computerStatisticsWorkMinutesPerDay * 60;
+        bool includePassive = _computerStatisticsWorkTimeIncludesPassive;
+        bool forecastFullWeek = _computerStatisticsForecastFullWeek;
+
+        var dayWorkSec = new long[days];
+        var fullDayAt = new DateTime?[days];
+        var dayIsWorkDay = new bool[days];
+        for (int d = 0; d < days; d++)
+        {
+            var dayStart = start.AddDays(d);
+            var dow = dayStart.Date.DayOfWeek;
+            dayIsWorkDay[d] = forecastFullWeek
+                || (dow != DayOfWeek.Saturday && dow != DayOfWeek.Sunday);
+            (dayWorkSec[d], fullDayAt[d]) = ComputeDayWorkAndFullDayAt(
+                perDay[d], dayStart, slotSeconds, includePassive, targetWorkSec);
+        }
+
+        var stats = ComputeForecastStats(dayWorkSec, start, dayIsWorkDay);
+
+        int maxDayAbbrevLen = 0;
+        for (int d = 0; d < days; d++)
+        {
+            var n = start.AddDays(d).ToString("ddd", CultureInfo.CurrentCulture);
+            if (n.Length > maxDayAbbrevLen) maxDayAbbrevLen = n.Length;
+        }
+
         host.Children.Add(BuildSectionHeader("Daily breakdown"));
         for (int d = 0; d < days; d++)
         {
             var dayStart = start.AddDays(d);
-            var label = string.Format(CultureInfo.CurrentCulture, "{0:ddd}  {1:dd}", dayStart, dayStart);
+            var dayAbbrev = dayStart.ToString("ddd", CultureInfo.CurrentCulture);
+            var label = dayAbbrev.PadRight(maxDayAbbrevLen) + "  " + dayStart.ToString("dd", CultureInfo.CurrentCulture);
             host.Children.Add(BuildPeriodRow(
                 label, perDay[d], dayStart, slotSeconds, multiDay: false,
-                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour));
+                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour,
+                dayIsWorkDay[d] ? fullDayAt[d] : null,
+                dayIsWorkDay[d] ? targetWorkSec : 0));
         }
+
+        // Month totals — same shape as the week summary, placed under the last day.
+        host.Children.Add(BuildSectionHeader("Month totals", topSpacing: 14));
+        host.Children.Add(BuildPeriodSummaryRow(
+            periodLabel: "month",
+            targetPerDaySec: targetWorkSec,
+            forecastFullWeek: forecastFullWeek,
+            includePassive: includePassive,
+            stats: stats));
     }
 
     private void RenderWeekView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
@@ -773,15 +894,182 @@ public partial class MainWindow
             perDay[day].Add(states[i]);
         }
 
+        long targetWorkSec = (long)_computerStatisticsWorkMinutesPerDay * 60;
+        bool includePassive = _computerStatisticsWorkTimeIncludesPassive;
+        bool forecastFullWeek = _computerStatisticsForecastFullWeek;
+
+        var dayWorkSec = new long[7];
+        var fullDayAt = new DateTime?[7];
+        var dayIsWorkDay = new bool[7];
+        for (int d = 0; d < 7; d++)
+        {
+            // d=0..4 are Mon–Fri; d=5..6 are Sat/Sun. ForecastFullWeek includes weekends.
+            dayIsWorkDay[d] = forecastFullWeek || d < ComputerStatisticsBusinessDaysPerWeek;
+            (dayWorkSec[d], fullDayAt[d]) = ComputeDayWorkAndFullDayAt(
+                perDay[d], start.AddDays(d), slotSeconds, includePassive, targetWorkSec);
+        }
+
+        var stats = ComputeForecastStats(dayWorkSec, start, dayIsWorkDay);
+
+        // Pad the longest day name so dates line up in a column (Consolas, fixed-width).
+        int maxDayNameLen = 0;
+        for (int d = 0; d < 7; d++)
+        {
+            var n = start.AddDays(d).ToString("dddd", CultureInfo.CurrentCulture);
+            if (n.Length > maxDayNameLen) maxDayNameLen = n.Length;
+        }
+
         host.Children.Add(BuildSectionHeader("Daily breakdown"));
         for (int d = 0; d < 7; d++)
         {
             var dayStart = start.AddDays(d);
-            var label = string.Format(CultureInfo.CurrentCulture, "{0:dddd}  {1:dd MMM}", dayStart, dayStart);
+            var dayName = dayStart.ToString("dddd", CultureInfo.CurrentCulture);
+            var dateText = dayStart.ToString("dd MMM", CultureInfo.CurrentCulture);
+            var label = dayName.PadRight(maxDayNameLen) + "  " + dateText;
             host.Children.Add(BuildPeriodRow(
                 label, perDay[d], dayStart, slotSeconds, multiDay: false,
-                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour));
+                _computerStatisticsAwakeStartHour, _computerStatisticsAwakeEndHour,
+                dayIsWorkDay[d] ? fullDayAt[d] : null,
+                dayIsWorkDay[d] ? targetWorkSec : 0));
         }
+
+        // Summary block goes BELOW Sunday so the week ends with its totals.
+        host.Children.Add(BuildSectionHeader("Week totals", topSpacing: 14));
+        host.Children.Add(BuildPeriodSummaryRow(
+            periodLabel: "week",
+            targetPerDaySec: targetWorkSec,
+            forecastFullWeek: forecastFullWeek,
+            includePassive: includePassive,
+            stats: stats));
+    }
+
+    /// <summary>
+    /// Sum work seconds (Active, optionally + Passive) for one day's slots and report the moment
+    /// the daily target was first hit (or null if it wasn't).
+    /// </summary>
+    private static (long workSec, DateTime? fullDayAt) ComputeDayWorkAndFullDayAt(
+        IList<ComputerStatisticsSlotState> daySlots,
+        DateTime dayStart,
+        int slotSeconds,
+        bool includePassive,
+        long targetWorkSec)
+    {
+        long workSec = 0;
+        DateTime? fullDayAt = null;
+        for (int i = 0; i < daySlots.Count; i++)
+        {
+            if (!IsWorkState(daySlots[i], includePassive))
+                continue;
+            workSec += slotSeconds;
+            if (targetWorkSec > 0 && fullDayAt == null && workSec >= targetWorkSec)
+                fullDayAt = dayStart.AddSeconds((long)(i + 1) * slotSeconds);
+        }
+        return (workSec, fullDayAt);
+    }
+
+    private static bool IsWorkState(ComputerStatisticsSlotState state, bool includePassive)
+        => state == ComputerStatisticsSlotState.Active
+        || (includePassive && state == ComputerStatisticsSlotState.Passive);
+
+    /// <summary>
+    /// Bucket the per-day work seconds into completed/in-progress/future work-day stats and
+    /// produce a pace-based forecast. Shared by the Week and Month views so the math is
+    /// identical for both periods.
+    /// </summary>
+    private readonly struct ComputerStatisticsForecastStats
+    {
+        public long TotalWorkSec { get; init; }
+        public long AvgPerWorkdaySec { get; init; }
+        public long ForecastSec { get; init; }
+        public int WorkdaysInPeriod { get; init; }
+        public int CompletedWorkdaysCount { get; init; }
+        public int FutureWorkdaysCount { get; init; }
+        public bool TodayIsWorkdayInProgress { get; init; }
+        public string ForecastBasis { get; init; }
+    }
+
+    private static ComputerStatisticsForecastStats ComputeForecastStats(
+        long[] dayWorkSec,
+        DateTime periodStart,
+        bool[] dayIsWorkDay)
+    {
+        DateTime now = DateTime.Now;
+        long completedWorkdayWorkSec = 0;
+        int completedWorkdaysCount = 0;
+        long todayWorkSec = 0;
+        bool todayIsWorkdayInProgress = false;
+        int futureWorkdaysCount = 0;
+        long nonWorkdayWorkSec = 0;
+        int workdaysInPeriod = 0;
+
+        for (int d = 0; d < dayWorkSec.Length; d++)
+        {
+            var dayStart = periodStart.AddDays(d);
+            var dayEnd = dayStart.AddDays(1);
+            if (!dayIsWorkDay[d])
+            {
+                nonWorkdayWorkSec += dayWorkSec[d];
+                continue;
+            }
+            workdaysInPeriod++;
+            if (dayEnd <= now)
+            {
+                completedWorkdayWorkSec += dayWorkSec[d];
+                completedWorkdaysCount++;
+            }
+            else if (dayStart <= now)
+            {
+                todayWorkSec = dayWorkSec[d];
+                todayIsWorkdayInProgress = true;
+            }
+            else
+            {
+                futureWorkdaysCount++;
+            }
+        }
+
+        long avgPerWorkdaySec;
+        string forecastBasis;
+        if (completedWorkdaysCount > 0)
+        {
+            avgPerWorkdaySec = completedWorkdayWorkSec / completedWorkdaysCount;
+            forecastBasis = string.Format(
+                CultureInfo.CurrentCulture,
+                "{0} completed work day{1}",
+                completedWorkdaysCount,
+                completedWorkdaysCount == 1 ? string.Empty : "s");
+        }
+        else if (todayIsWorkdayInProgress && todayWorkSec > 0)
+        {
+            avgPerWorkdaySec = todayWorkSec;
+            forecastBasis = "today's pace so far (no completed work days yet)";
+        }
+        else
+        {
+            avgPerWorkdaySec = 0;
+            forecastBasis = "no work-day data yet";
+        }
+
+        long todayProjectedSec = todayIsWorkdayInProgress
+            ? Math.Max(todayWorkSec, avgPerWorkdaySec)
+            : 0;
+
+        long forecastSec = completedWorkdayWorkSec
+                         + todayProjectedSec
+                         + (long)futureWorkdaysCount * avgPerWorkdaySec
+                         + nonWorkdayWorkSec;
+
+        return new ComputerStatisticsForecastStats
+        {
+            TotalWorkSec = dayWorkSec.Sum(),
+            AvgPerWorkdaySec = avgPerWorkdaySec,
+            ForecastSec = forecastSec,
+            WorkdaysInPeriod = workdaysInPeriod,
+            CompletedWorkdaysCount = completedWorkdaysCount,
+            FutureWorkdaysCount = futureWorkdaysCount,
+            TodayIsWorkdayInProgress = todayIsWorkdayInProgress,
+            ForecastBasis = forecastBasis
+        };
     }
 
     private void RenderDayView(StackPanel host, DateTime anchor, ComputerStatisticsSlotState[] states, int slotSeconds)
@@ -882,6 +1170,159 @@ public partial class MainWindow
         };
 
     /// <summary>
+    /// Summary panel showing total worked, daily-avg-so-far, target, remaining vs target, and a
+    /// pace-based forecast for the period (week or month). Tooltips explain how each number is
+    /// computed.
+    /// </summary>
+    private static UIElement BuildPeriodSummaryRow(
+        string periodLabel,
+        long targetPerDaySec,
+        bool forecastFullWeek,
+        bool includePassive,
+        in ComputerStatisticsForecastStats stats)
+    {
+        string scopeShort = forecastFullWeek ? "Mon–Sun" : "Mon–Fri";
+        string workKind = includePassive ? "Active + Passive" : "Active";
+        int workdays = stats.WorkdaysInPeriod;
+        long targetSec = (long)workdays * targetPerDaySec;
+
+        var outer = new StackPanel();
+
+        var statsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        statsRow.Children.Add(BuildSummaryStat(
+            "Total this " + periodLabel,
+            FormatHoursMinutes(stats.TotalWorkSec),
+            string.Format(
+                CultureInfo.CurrentCulture,
+                "Sum of {0} time across the whole {1} so far ({2} work days in scope).",
+                workKind,
+                periodLabel,
+                workdays)));
+
+        statsRow.Children.Add(BuildSummaryStat(
+            "Avg / work day (so far)",
+            FormatHoursMinutes(stats.AvgPerWorkdaySec),
+            string.Format(
+                CultureInfo.CurrentCulture,
+                "Average {0} time on completed work days this {1}. Based on {2}.",
+                workKind,
+                periodLabel,
+                stats.ForecastBasis)));
+
+        if (targetPerDaySec > 0)
+        {
+            statsRow.Children.Add(BuildSummaryStat(
+                string.Format(
+                    CultureInfo.CurrentCulture,
+                    "Target ({0} × {1})",
+                    workdays,
+                    FormatHoursMinutes(targetPerDaySec)),
+                FormatHoursMinutes(targetSec),
+                string.Format(
+                    CultureInfo.CurrentCulture,
+                    "Daily target ({0}) × {1} work days ({2}) in this {3}.",
+                    FormatHoursMinutes(targetPerDaySec),
+                    workdays,
+                    scopeShort,
+                    periodLabel)));
+
+            var remaining = Math.Max(0, targetSec - stats.TotalWorkSec);
+            statsRow.Children.Add(BuildSummaryStat(
+                "Remaining vs target",
+                FormatHoursMinutes(remaining),
+                string.Format(
+                    CultureInfo.CurrentCulture,
+                    "How much more {0} time is needed this {1} to hit the {2} target.",
+                    workKind,
+                    periodLabel,
+                    scopeShort)));
+        }
+
+        // forecast = recorded(completed work days)
+        //          + projection(today, if in progress)
+        //          + future_work_days × avg/work-day
+        //          + actuals on non-work days
+        string forecastTip = string.Format(
+            CultureInfo.CurrentCulture,
+            "Forecast = recorded {0} on completed work days "
+            + "+ projection for today ({1}) "
+            + "+ {2} future work day{3} × avg/work day "
+            + "+ actuals on non-work days.\n"
+            + "Avg/work day = {4} ({5}).\n"
+            + "Today: {6}.\n"
+            + "Scope: {7} ({8} work days in this {9}).",
+            workKind,
+            stats.TodayIsWorkdayInProgress
+                ? "the larger of today's actual or the average"
+                : "n/a — not a work day in progress",
+            stats.FutureWorkdaysCount,
+            stats.FutureWorkdaysCount == 1 ? string.Empty : "s",
+            FormatHoursMinutes(stats.AvgPerWorkdaySec),
+            stats.ForecastBasis,
+            stats.TodayIsWorkdayInProgress ? "in progress" : "not a work day in progress",
+            scopeShort,
+            workdays,
+            periodLabel);
+        statsRow.Children.Add(BuildSummaryStat(
+            "Forecast",
+            FormatHoursMinutes(stats.ForecastSec),
+            forecastTip));
+
+        outer.Children.Add(statsRow);
+
+        string forecastSummary = string.Format(
+            CultureInfo.CurrentCulture,
+            "Forecast scope: {0} ({1} work days in this {2}). Counting {3} as work time. Basis: {4}.",
+            scopeShort,
+            workdays,
+            periodLabel,
+            workKind,
+            stats.ForecastBasis);
+        outer.Children.Add(new TextBlock
+        {
+            Text = forecastSummary,
+            Foreground = Brushes.DimGray,
+            FontSize = 11,
+            Margin = new Thickness(0, 6, 0, 0),
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0xF0, 0xF4, 0xF8)),
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(0, 0, 0, 10),
+            CornerRadius = new CornerRadius(2),
+            Child = outer
+        };
+    }
+
+    private static UIElement BuildSummaryStat(string label, string value, string tooltip)
+    {
+        var s = new StackPanel { Margin = new Thickness(0, 0, 24, 0) };
+        s.Children.Add(new TextBlock
+        {
+            Text = label,
+            Foreground = Brushes.DimGray,
+            FontSize = 11
+        });
+        s.Children.Add(new TextBlock
+        {
+            Text = value,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 16,
+            Foreground = Brushes.Black
+        });
+        SetInstantTooltip(s, tooltip);
+        return s;
+    }
+
+    /// <summary>
     /// A chronological strip for one period: each slot keeps its real position in
     /// time, so a gap (Offline) in the middle shows where it actually happened.
     /// Hovering a block shows its time range. The right-hand label is the on-window
@@ -896,12 +1337,15 @@ public partial class MainWindow
         int slotSeconds,
         bool multiDay,
         int dayGuideStartHour = -1,
-        int dayGuideEndHour = -1)
+        int dayGuideEndHour = -1,
+        DateTime? fullDayAt = null,
+        long targetWorkSeconds = 0)
     {
+        // Wide enough to fit "Wednesday  21 May" without ellipsis in the Week view.
         var grid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
 
         const double stripHeight = 18;
         var stripHost = new Grid
@@ -976,7 +1420,7 @@ public partial class MainWindow
         var showOnDuration = !multiDay && rowStart <= DateTime.Now;
 
         var leftLabelHost = new Grid();
-        leftLabelHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(62) });
+        leftLabelHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(130) });
         leftLabelHost.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(leftLabelHost, 0);
         grid.Children.Add(leftLabelHost);
@@ -1040,14 +1484,35 @@ public partial class MainWindow
         var rightLabel = new TextBlock
         {
             Text = rightText,
-            VerticalAlignment = VerticalAlignment.Center,
             Foreground = Brushes.DimGray,
             FontFamily = new FontFamily("Consolas, Courier New")
         };
         if (rightTip != null)
             SetInstantTooltip(rightLabel, rightTip);
-        Grid.SetColumn(rightLabel, 2);
-        grid.Children.Add(rightLabel);
+
+        var rightHost = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        rightHost.Children.Add(rightLabel);
+
+        if (targetWorkSeconds > 0 && showOnDuration && fullDayAt.HasValue)
+        {
+            var fdLabel = new TextBlock
+            {
+                Text = "Full day @ " + fullDayAt.Value.ToString("HH:mm", CultureInfo.CurrentCulture),
+                Foreground = new SolidColorBrush(ComputerStatisticsActiveColor),
+                FontFamily = new FontFamily("Consolas, Courier New"),
+                FontSize = 11,
+                FontWeight = FontWeights.SemiBold
+            };
+            SetInstantTooltip(fdLabel, string.Format(
+                CultureInfo.CurrentCulture,
+                "Cumulative work time hit the daily target of {0} at {1:HH:mm}.",
+                FormatHoursMinutes(targetWorkSeconds),
+                fullDayAt.Value));
+            rightHost.Children.Add(fdLabel);
+        }
+
+        Grid.SetColumn(rightHost, 2);
+        grid.Children.Add(rightHost);
 
         return grid;
     }
@@ -1105,8 +1570,8 @@ public partial class MainWindow
         var dialog = new Window
         {
             Title = "Computer Statistics Settings",
-            Width = 460,
-            Height = 660,
+            Width = 520,
+            Height = 800,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Owner = owner,
             ResizeMode = ResizeMode.NoResize
@@ -1204,6 +1669,105 @@ public partial class MainWindow
             VerticalAlignment = VerticalAlignment.Center
         });
         topStack.Children.Add(awakeRow);
+
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "Daily work target",
+            FontWeight = FontWeights.SemiBold
+        });
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "How long a full working day is. Used by the Week view to forecast the week and to mark the moment cumulative Active time hits a full day.",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var workTargetRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        var currentWorkHours = _computerStatisticsWorkMinutesPerDay / 60;
+        var currentWorkMinutes = _computerStatisticsWorkMinutesPerDay % 60;
+        currentWorkMinutes = (currentWorkMinutes / ComputerStatisticsWorkMinutesStep) * ComputerStatisticsWorkMinutesStep;
+
+        var workHoursBox = new ComboBox
+        {
+            Width = 56,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        for (int h = 0; h <= 23; h++)
+            workHoursBox.Items.Add(h);
+        workHoursBox.SelectedItem = Math.Clamp(currentWorkHours, 0, 23);
+
+        var workMinutesBox = new ComboBox
+        {
+            Width = 56,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        for (int m = 0; m < 60; m += ComputerStatisticsWorkMinutesStep)
+            workMinutesBox.Items.Add(m);
+        workMinutesBox.SelectedItem = currentWorkMinutes;
+
+        workTargetRow.Children.Add(workHoursBox);
+        workTargetRow.Children.Add(new TextBlock
+        {
+            Text = "h",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 10, 0)
+        });
+        workTargetRow.Children.Add(workMinutesBox);
+        workTargetRow.Children.Add(new TextBlock
+        {
+            Text = "m",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(4, 0, 8, 0)
+        });
+        workTargetRow.Children.Add(new TextBlock
+        {
+            Text = string.Format(
+                CultureInfo.CurrentCulture,
+                "  (minutes snap to {0}-minute steps)",
+                ComputerStatisticsWorkMinutesStep),
+            Foreground = Brushes.DimGray,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        topStack.Children.Add(workTargetRow);
+
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "Week view forecast",
+            FontWeight = FontWeights.SemiBold
+        });
+        topStack.Children.Add(new TextBlock
+        {
+            Text = "Controls the scope used by the Week view totals, target and forecast, "
+                 + "and whether Passive time (idle with tracked audio playing) counts as work.",
+            Foreground = Brushes.DimGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+
+        var forecastFullWeekCheck = new CheckBox
+        {
+            Content = "Forecast over the full week (Mon–Sun, 7 days)",
+            IsChecked = _computerStatisticsForecastFullWeek,
+            Margin = new Thickness(0, 0, 0, 4)
+        };
+        SetInstantTooltip(forecastFullWeekCheck,
+            "Unchecked: business days only (Mon–Fri, 5 days). Checked: all 7 days.");
+        topStack.Children.Add(forecastFullWeekCheck);
+
+        var includePassiveCheck = new CheckBox
+        {
+            Content = "Include Passive time as work time (top-right total, forecast, full-day marker)",
+            IsChecked = _computerStatisticsWorkTimeIncludesPassive,
+            Margin = new Thickness(0, 0, 0, 12)
+        };
+        SetInstantTooltip(includePassiveCheck,
+            "Unchecked: only Active counts as work. Checked: Active + Passive count as work.");
+        topStack.Children.Add(includePassiveCheck);
 
         topStack.Children.Add(new TextBlock
         {
@@ -1311,9 +1875,20 @@ public partial class MainWindow
                 return;
             }
 
+            int workHours = workHoursBox.SelectedItem is int h ? h : DefaultComputerStatisticsWorkMinutesPerDay / 60;
+            int workMinutes = workMinutesBox.SelectedItem is int m ? m : 0;
+            workMinutes = (workMinutes / ComputerStatisticsWorkMinutesStep) * ComputerStatisticsWorkMinutesStep;
+            var workTotalMinutes = Math.Clamp(
+                workHours * 60 + workMinutes,
+                0,
+                MaxComputerStatisticsWorkMinutesPerDay);
+
             _computerStatisticsIdleThresholdSeconds = idle;
             _computerStatisticsAwakeStartHour = awakeStart;
             _computerStatisticsAwakeEndHour = awakeEnd;
+            _computerStatisticsWorkMinutesPerDay = workTotalMinutes;
+            _computerStatisticsForecastFullWeek = forecastFullWeekCheck.IsChecked == true;
+            _computerStatisticsWorkTimeIncludesPassive = includePassiveCheck.IsChecked == true;
             _computerStatisticsPassiveProgramKeys.Clear();
             foreach (var cb in checkboxes)
             {

@@ -281,7 +281,10 @@ public partial class MainWindow
             IdleThresholdSeconds = _computerStatisticsIdleThresholdSeconds,
             PassiveProgramKeys = _computerStatisticsPassiveProgramKeys.ToList(),
             AwakeStartHour = _computerStatisticsAwakeStartHour,
-            AwakeEndHour = _computerStatisticsAwakeEndHour
+            AwakeEndHour = _computerStatisticsAwakeEndHour,
+            WorkMinutesPerDay = _computerStatisticsWorkMinutesPerDay,
+            ForecastFullWeek = _computerStatisticsForecastFullWeek,
+            WorkTimeIncludesPassive = _computerStatisticsWorkTimeIncludesPassive
         };
         _windowSettingsStore.Save(path, payload, options);
     }

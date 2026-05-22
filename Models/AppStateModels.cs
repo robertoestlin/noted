@@ -358,6 +358,20 @@ public sealed class ComputerStatisticsPluginState
 
     /// <summary>Clock hour (0-24) a typical waking day ends — drawn as a guide line on the timelines.</summary>
     public int? AwakeEndHour { get; set; }
+
+    /// <summary>Target work time per day, in minutes. Used by the Week view to forecast the week
+    /// and to mark the moment cumulative Active time hit a full working day. Stored with 5-minute
+    /// accuracy.</summary>
+    public int? WorkMinutesPerDay { get; set; }
+
+    /// <summary>If true, the Week view forecast/target/totals span Mon–Sun (7 days). If false (default),
+    /// they span only the business week Mon–Fri (5 days).</summary>
+    public bool? ForecastFullWeek { get; set; }
+
+    /// <summary>If true, Passive slots (idle but tracked audio playing) are counted as "work" alongside
+    /// Active. Used by the Week view's top-right total, the weekly summary, and the per-day "Full day @"
+    /// marker. Defaults to false (Active-only).</summary>
+    public bool? WorkTimeIncludesPassive { get; set; }
 }
 
 /// <summary>Session-only UI state in <c>session-state.json</c>.</summary>
