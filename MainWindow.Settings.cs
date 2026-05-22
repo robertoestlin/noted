@@ -285,7 +285,8 @@ public partial class MainWindow
             WorkMinutesPerDay = _computerStatisticsWorkMinutesPerDay,
             WorkTargetEnabled = _computerStatisticsWorkTargetEnabled,
             ForecastFullWeek = _computerStatisticsForecastFullWeek,
-            WorkTimeIncludesPassive = _computerStatisticsWorkTimeIncludesPassive
+            WorkTimeIncludesPassive = _computerStatisticsWorkTimeIncludesPassive,
+            ChipIncludesAway = _computerStatisticsChipIncludesAway
         };
         _windowSettingsStore.Save(path, payload, options);
     }

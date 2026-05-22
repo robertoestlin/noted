@@ -376,6 +376,10 @@ public sealed class ComputerStatisticsPluginState
     /// Active. Used by the Week view's top-right total, the weekly summary, and the per-day "Full day @"
     /// marker. Defaults to false (Active-only).</summary>
     public bool? WorkTimeIncludesPassive { get; set; }
+
+    /// <summary>If true (default), the blue per-day duration chip shows "Time on" — Active + Passive
+    /// + Away. If false, the chip shows only Active + Passive (matches the work-time totals).</summary>
+    public bool? ChipIncludesAway { get; set; }
 }
 
 /// <summary>Session-only UI state in <c>session-state.json</c>.</summary>
