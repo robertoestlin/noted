@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Noted.Models;
 using Noted.Services;
 
@@ -675,6 +676,18 @@ public partial class MainWindow
         };
 
         Render();
+
+        // Auto-refresh the dialog every 5 minutes so the top-right today total (and the rest of
+        // the view) stays current without the user having to reopen it. Tied to the dialog
+        // lifetime so it can't outlive its UI.
+        var refreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(5)
+        };
+        refreshTimer.Tick += (_, _) => Render();
+        refreshTimer.Start();
+        dialog.Closed += (_, _) => refreshTimer.Stop();
+
         dialog.ShowDialog();
     }
 
