@@ -364,6 +364,10 @@ public sealed class ComputerStatisticsPluginState
     /// accuracy.</summary>
     public int? WorkMinutesPerDay { get; set; }
 
+    /// <summary>If false, the daily work target is ignored: the Week/Month summaries hide the
+    /// Target/Remaining stats and no per-day "Full day @" marker is drawn. Defaults to true.</summary>
+    public bool? WorkTargetEnabled { get; set; }
+
     /// <summary>If true, the Week view forecast/target/totals span Mon–Sun (7 days). If false (default),
     /// they span only the business week Mon–Fri (5 days).</summary>
     public bool? ForecastFullWeek { get; set; }

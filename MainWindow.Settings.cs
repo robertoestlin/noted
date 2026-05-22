@@ -283,6 +283,7 @@ public partial class MainWindow
             AwakeStartHour = _computerStatisticsAwakeStartHour,
             AwakeEndHour = _computerStatisticsAwakeEndHour,
             WorkMinutesPerDay = _computerStatisticsWorkMinutesPerDay,
+            WorkTargetEnabled = _computerStatisticsWorkTargetEnabled,
             ForecastFullWeek = _computerStatisticsForecastFullWeek,
             WorkTimeIncludesPassive = _computerStatisticsWorkTimeIncludesPassive
         };

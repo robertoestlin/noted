@@ -33,6 +33,7 @@ public partial class MainWindow
 
     private const bool DefaultComputerStatisticsForecastFullWeek = false;
     private const bool DefaultComputerStatisticsWorkTimeIncludesPassive = false;
+    private const bool DefaultComputerStatisticsWorkTargetEnabled = true;
 
     // A "day" in this view runs from 04:00 to 04:00 the next morning, so late-night
     // sessions are counted under the day they started on.
@@ -50,6 +51,7 @@ public partial class MainWindow
     private int _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
     private int _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
     private int _computerStatisticsWorkMinutesPerDay = DefaultComputerStatisticsWorkMinutesPerDay;
+    private bool _computerStatisticsWorkTargetEnabled = DefaultComputerStatisticsWorkTargetEnabled;
     private bool _computerStatisticsForecastFullWeek = DefaultComputerStatisticsForecastFullWeek;
     private bool _computerStatisticsWorkTimeIncludesPassive = DefaultComputerStatisticsWorkTimeIncludesPassive;
     private readonly HashSet<string> _computerStatisticsPassiveProgramKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -81,6 +83,7 @@ public partial class MainWindow
         _computerStatisticsAwakeStartHour = DefaultComputerStatisticsAwakeStartHour;
         _computerStatisticsAwakeEndHour = DefaultComputerStatisticsAwakeEndHour;
         _computerStatisticsWorkMinutesPerDay = DefaultComputerStatisticsWorkMinutesPerDay;
+        _computerStatisticsWorkTargetEnabled = DefaultComputerStatisticsWorkTargetEnabled;
         _computerStatisticsForecastFullWeek = DefaultComputerStatisticsForecastFullWeek;
         _computerStatisticsWorkTimeIncludesPassive = DefaultComputerStatisticsWorkTimeIncludesPassive;
         _computerStatisticsPassiveProgramKeys.Clear();
@@ -103,6 +106,9 @@ public partial class MainWindow
         workMinutes = Math.Clamp(workMinutes, 0, MaxComputerStatisticsWorkMinutesPerDay);
         _computerStatisticsWorkMinutesPerDay =
             (workMinutes / ComputerStatisticsWorkMinutesStep) * ComputerStatisticsWorkMinutesStep;
+
+        _computerStatisticsWorkTargetEnabled =
+            state?.WorkTargetEnabled ?? DefaultComputerStatisticsWorkTargetEnabled;
 
         _computerStatisticsForecastFullWeek =
             state?.ForecastFullWeek ?? DefaultComputerStatisticsForecastFullWeek;
@@ -826,7 +832,9 @@ public partial class MainWindow
             perDay[day].Add(states[i]);
         }
 
-        long targetWorkSec = (long)_computerStatisticsWorkMinutesPerDay * 60;
+        long targetWorkSec = _computerStatisticsWorkTargetEnabled
+            ? (long)_computerStatisticsWorkMinutesPerDay * 60
+            : 0;
         bool includePassive = _computerStatisticsWorkTimeIncludesPassive;
         bool forecastFullWeek = _computerStatisticsForecastFullWeek;
 
@@ -894,7 +902,9 @@ public partial class MainWindow
             perDay[day].Add(states[i]);
         }
 
-        long targetWorkSec = (long)_computerStatisticsWorkMinutesPerDay * 60;
+        long targetWorkSec = _computerStatisticsWorkTargetEnabled
+            ? (long)_computerStatisticsWorkMinutesPerDay * 60
+            : 0;
         bool includePassive = _computerStatisticsWorkTimeIncludesPassive;
         bool forecastFullWeek = _computerStatisticsForecastFullWeek;
 
@@ -1677,11 +1687,23 @@ public partial class MainWindow
         });
         topStack.Children.Add(new TextBlock
         {
-            Text = "How long a full working day is. Used by the Week view to forecast the week and to mark the moment cumulative Active time hits a full day.",
+            Text = "Optional. When enabled, the Week/Month views show Target and Remaining stats "
+                 + "and mark each day with the time when cumulative work hit a full day. Disable "
+                 + "for personal computers where you don't want to track a target.",
             Foreground = Brushes.DimGray,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 6)
         });
+
+        var workTargetEnabledCheck = new CheckBox
+        {
+            Content = "Track a daily work target",
+            IsChecked = _computerStatisticsWorkTargetEnabled,
+            Margin = new Thickness(0, 0, 0, 6)
+        };
+        SetInstantTooltip(workTargetEnabledCheck,
+            "Unchecked: no target, no 'Full day @' markers, and the Target/Remaining stats are hidden.");
+        topStack.Children.Add(workTargetEnabledCheck);
 
         var workTargetRow = new StackPanel
         {
@@ -1734,6 +1756,18 @@ public partial class MainWindow
             VerticalAlignment = VerticalAlignment.Center
         });
         topStack.Children.Add(workTargetRow);
+
+        // Disable the H/M inputs when the target is off — value is preserved.
+        void SyncWorkTargetInputs()
+        {
+            bool en = workTargetEnabledCheck.IsChecked == true;
+            workHoursBox.IsEnabled = en;
+            workMinutesBox.IsEnabled = en;
+            workTargetRow.Opacity = en ? 1.0 : 0.5;
+        }
+        workTargetEnabledCheck.Checked += (_, _) => SyncWorkTargetInputs();
+        workTargetEnabledCheck.Unchecked += (_, _) => SyncWorkTargetInputs();
+        SyncWorkTargetInputs();
 
         topStack.Children.Add(new TextBlock
         {
@@ -1887,6 +1921,7 @@ public partial class MainWindow
             _computerStatisticsAwakeStartHour = awakeStart;
             _computerStatisticsAwakeEndHour = awakeEnd;
             _computerStatisticsWorkMinutesPerDay = workTotalMinutes;
+            _computerStatisticsWorkTargetEnabled = workTargetEnabledCheck.IsChecked == true;
             _computerStatisticsForecastFullWeek = forecastFullWeekCheck.IsChecked == true;
             _computerStatisticsWorkTimeIncludesPassive = includePassiveCheck.IsChecked == true;
             _computerStatisticsPassiveProgramKeys.Clear();
