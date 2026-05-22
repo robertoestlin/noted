@@ -1682,6 +1682,7 @@ internal sealed partial class DrawingWindow : Window
 
     private List<DrawingTheme> _themes;
     private DrawingTheme _activeTheme;
+    private bool _suppressThemeComboChange;
     private bool _propertiesVisible = true;
     private ScrollViewer? _leftScroll;
 
@@ -1859,6 +1860,7 @@ internal sealed partial class DrawingWindow : Window
         RefreshThemeCombo();
         _themeCombo.SelectionChanged += (_, _) =>
         {
+            if (_suppressThemeComboChange) return;
             if (_themeCombo.SelectedItem is DrawingTheme t)
             {
                 _activeTheme = t;
@@ -1990,23 +1992,31 @@ internal sealed partial class DrawingWindow : Window
     private void RefreshThemeCombo()
     {
         var prev = _activeTheme?.Name;
-        _themeCombo.ItemsSource = null;
-        // ItemTemplate strips the "(built-in)" suffix for display; the underlying DrawingTheme.Name
-        // is unchanged so the Drawing Themes settings window still shows the full name.
-        _themeCombo.DisplayMemberPath = null;
-        if (_themeCombo.ItemTemplate == null)
+        _suppressThemeComboChange = true;
+        try
         {
-            var ft = new FrameworkElementFactory(typeof(TextBlock));
-            ft.SetBinding(TextBlock.TextProperty, new Binding("Name") { Converter = new ThemeDisplayNameConverter() });
-            _themeCombo.ItemTemplate = new DataTemplate { VisualTree = ft };
+            _themeCombo.ItemsSource = null;
+            // ItemTemplate strips the "(built-in)" suffix for display; the underlying DrawingTheme.Name
+            // is unchanged so the Drawing Themes settings window still shows the full name.
+            _themeCombo.DisplayMemberPath = null;
+            if (_themeCombo.ItemTemplate == null)
+            {
+                var ft = new FrameworkElementFactory(typeof(TextBlock));
+                ft.SetBinding(TextBlock.TextProperty, new Binding("Name") { Converter = new ThemeDisplayNameConverter() });
+                _themeCombo.ItemTemplate = new DataTemplate { VisualTree = ft };
+            }
+            _themeCombo.ItemsSource = _themes;
+            var match = _themes.FirstOrDefault(t => string.Equals(t.Name, prev, StringComparison.OrdinalIgnoreCase))
+                ?? _themes.FirstOrDefault();
+            if (match != null)
+            {
+                _activeTheme = match;
+                _themeCombo.SelectedItem = match;
+            }
         }
-        _themeCombo.ItemsSource = _themes;
-        var match = _themes.FirstOrDefault(t => string.Equals(t.Name, prev, StringComparison.OrdinalIgnoreCase))
-            ?? _themes.FirstOrDefault();
-        if (match != null)
+        finally
         {
-            _activeTheme = match;
-            _themeCombo.SelectedItem = match;
+            _suppressThemeComboChange = false;
         }
     }
 
@@ -2076,19 +2086,25 @@ internal sealed partial class DrawingWindow : Window
             Owner = this,
         };
         var saved = dlg.ShowDialog() == true;
-        RefreshDrawingPalettes();
         if (saved)
         {
             _themes = dlg.Themes;
             DrawingThemeStore.Save(_themes);
             RefreshThemeCombo();
-            ApplyTheme(_activeTheme, syncUiOnly: false);
             _host.PersistLastDrawingThemeName(_activeTheme.Name);
         }
-        else
-        {
-            RefreshToolBar();
-        }
+
+        // Returning from theme settings must not recolor the selected object. Reload panel
+        // colors from the selection (if any); only apply the theme tool profile when nothing
+        // is selected (colors drive the next shape drawn).
+        if (SelectionPropertySource() != null)
+            SyncFromSelected();
+        else if (saved)
+            ApplyTheme(_activeTheme, syncUiOnly: false);
+
+        RefreshDrawingPalettes();
+        RefreshToolBar();
+        UpdatePropertyPanelVisibility();
     }
 
     private void RefreshDrawingPalettes()
@@ -5787,7 +5803,18 @@ internal sealed class CompactColorPicker : Border
         SetSelected(initial);
     }
 
-    public void Refresh() => DrawingPaletteColorPicker.Populate(_combo, includeCustomPicker: true);
+    public void Refresh()
+    {
+        _suppress = true;
+        try
+        {
+            DrawingPaletteColorPicker.Populate(_combo, includeCustomPicker: true);
+        }
+        finally
+        {
+            _suppress = false;
+        }
+    }
 
     public void SetSelected(Brush brush)
     {
