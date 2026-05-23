@@ -14,6 +14,31 @@ internal sealed partial class DrawingWindow
         return angleDeg;
     }
 
+    /// <summary>Returns the effective tilt-threshold (deg) above which an arrow's label is rendered
+    /// horizontally. Per-arrow value (copied from the variant) wins when non-zero; otherwise the
+    /// global <c>Settings → Drawing → Arrow label horizontal angle</c> default applies. <c>0</c>
+    /// always means "no horizontal flip — follow the line".</summary>
+    private double GetEffectiveArrowLabelHorizontalThreshold(DrawItem arrow)
+    {
+        if (arrow.HorizontalLabelAngleDeg > 0)
+            return arrow.HorizontalLabelAngleDeg;
+        return _host.DrawingArrowHorizontalLabelAngleDeg;
+    }
+
+    /// <summary>Applies the threshold rule to a (already-normalized) line angle: returns 0 if the
+    /// line tilts more steeply than the threshold, otherwise returns the line angle unchanged.
+    /// A non-positive threshold disables the flip entirely.</summary>
+    private static double ApplyArrowLabelHorizontalThreshold(double angleDeg, double thresholdDeg)
+    {
+        if (thresholdDeg <= 0) return angleDeg;
+        return Math.Abs(angleDeg) > thresholdDeg ? 0 : angleDeg;
+    }
+
+    /// <summary>Resolves the actual on-screen angle for an arrow's label by combining the path's
+    /// natural tilt with the effective horizontal-flip threshold.</summary>
+    private double GetArrowLabelDisplayAngle(DrawItem arrow, double pathAngleDeg)
+        => ApplyArrowLabelHorizontalThreshold(pathAngleDeg, GetEffectiveArrowLabelHorizontalThreshold(arrow));
+
     private static (Point Midpoint, double AngleDeg, double Length) GetArrowPathMetrics(IReadOnlyList<Point> path)
     {
         var length = PathPolylineLength(path);
@@ -213,27 +238,28 @@ internal sealed partial class DrawingWindow
             return;
 
         var path = GetArrowPathPoints(it);
-        var (_, _, length) = GetArrowPathMetrics(path);
+        var (mid, pathAngleDeg, length) = GetArrowPathMetrics(path);
         if (length < 8)
             return;
 
-        var maxWidth = Math.Max(24, length - 24);
+        var size = MeasureArrowLabel(it, text, surface, path);
+        // Width and Padding are baked into size here (size.Width = textWidth + 12). We pass that
+        // same Size to LayoutArrowLabelElement so the on-canvas box width matches what gap-around-text
+        // assumes in TryGetArrowLabelGap — guaranteeing the glyph centroid sits exactly on the line
+        // midpoint regardless of font / font size.
         var tb = new TextBlock
         {
-            Text = it.Text,
+            Text = text,
             FontSize = it.FontSize,
             FontFamily = it.FontFamily,
             Foreground = it.TextColor,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = maxWidth,
+            Padding = new Thickness(0),
             IsHitTestVisible = false,
         };
-        var size = MeasureArrowLabel(it, text, surface, path);
-        tb.Width = size.Width - 12;
-        tb.Measure(new Size(tb.Width, double.PositiveInfinity));
-        var (mid, angleDeg, _) = GetArrowPathMetrics(path);
-        LayoutArrowLabelElement(tb, mid, angleDeg, size);
+        var displayAngle = GetArrowLabelDisplayAngle(it, pathAngleDeg);
+        LayoutArrowLabelElement(tb, mid, displayAngle, size);
         surface.Children.Add(tb);
     }
 }

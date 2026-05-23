@@ -149,6 +149,7 @@ public partial class MainWindow
             DrawingDefaultEllipseHeight = _drawingDefaultEllipseHeight,
             DrawingShapeSizeSnapThresholdPx = _drawingShapeSizeSnapThresholdPx,
             DrawingArrowClearanceMarginPx = _drawingArrowClearanceMarginPx,
+            DrawingArrowHorizontalLabelAngleDeg = _drawingArrowHorizontalLabelAngleDeg,
             ColorPaletteCustomizations = ReadColorPaletteCustomizationsFromSettingsFile(),
         };
 
@@ -1219,6 +1220,7 @@ public partial class MainWindow
         _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
         _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
         _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
+        _drawingArrowHorizontalLabelAngleDeg = DefaultDrawingArrowHorizontalLabelAngleDeg;
     }
 
     private void ApplyBootstrapSettings(string backupFolder, string cloudBackupFolder, WindowSettings bootstrap)
@@ -1397,6 +1399,8 @@ public partial class MainWindow
             state.DrawingShapeSizeSnapThresholdPx);
         _drawingArrowClearanceMarginPx = NormalizeDrawingArrowClearanceMargin(
             state.DrawingArrowClearanceMarginPx);
+        _drawingArrowHorizontalLabelAngleDeg = NormalizeDrawingArrowHorizontalLabelAngle(
+            state.DrawingArrowHorizontalLabelAngleDeg);
 
         var stored = DrawingDefaultSizesStore.Load(_backupFolder);
         if (stored != null)
@@ -1455,6 +1459,13 @@ public partial class MainWindow
         if (value is >= MinDrawingArrowClearanceMarginPx and <= MaxDrawingArrowClearanceMarginPx)
             return value.Value;
         return DefaultDrawingArrowClearanceMarginPx;
+    }
+
+    private static int NormalizeDrawingArrowHorizontalLabelAngle(int? value)
+    {
+        if (value is >= MinDrawingArrowHorizontalLabelAngleDeg and <= MaxDrawingArrowHorizontalLabelAngleDeg)
+            return value.Value;
+        return DefaultDrawingArrowHorizontalLabelAngleDeg;
     }
 
     private static ExternalBrowserChoice NormalizeExternalBrowserChoice(ExternalBrowserChoice value)

@@ -1781,7 +1781,7 @@ public partial class MainWindow
         var drawingGrid = new Grid { Margin = new Thickness(0, 0, 0, 4) };
         drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
         drawingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < 9; i++)
             drawingGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         static void AddDrawingRow(Grid grid, int row, string label, TextBox box)
@@ -1810,6 +1810,13 @@ public partial class MainWindow
         var txtDrawingDiamondHeight = new TextBox { Text = _drawingDefaultDiamondHeight.ToString() };
         var txtDrawingSnapThreshold = new TextBox { Text = _drawingShapeSizeSnapThresholdPx.ToString() };
         var txtDrawingArrowMargin = new TextBox { Text = _drawingArrowClearanceMarginPx.ToString() };
+        var txtDrawingArrowHorizLabelAngle = new TextBox
+        {
+            Text = _drawingArrowHorizontalLabelAngleDeg.ToString(),
+            ToolTip = "When the arrow line tilts more than this many degrees off horizontal, the label is "
+                + "drawn upright instead of rotated. 0 = disabled (label always follows the line). "
+                + "Individual theme variants can override this default under Drawing themes \u2192 Arrow.",
+        };
         AddDrawingRow(drawingGrid, 0, "Rectangle width (px):", txtDrawingRectWidth);
         AddDrawingRow(drawingGrid, 1, "Rectangle height (px):", txtDrawingRectHeight);
         AddDrawingRow(drawingGrid, 2, "Circle width (px):", txtDrawingEllipseWidth);
@@ -1818,6 +1825,7 @@ public partial class MainWindow
         AddDrawingRow(drawingGrid, 5, "Diamond height (px):", txtDrawingDiamondHeight);
         AddDrawingRow(drawingGrid, 6, "Snap threshold (px):", txtDrawingSnapThreshold);
         AddDrawingRow(drawingGrid, 7, "Arrow margin (px):", txtDrawingArrowMargin);
+        AddDrawingRow(drawingGrid, 8, "Arrow label horizontal angle (deg):", txtDrawingArrowHorizLabelAngle);
         drawingPanel.Children.Add(drawingGrid);
         drawingPanel.Children.Add(new TextBlock
         {
@@ -2227,7 +2235,10 @@ public partial class MainWindow
                 && drawingSnapThreshold >= 2 && drawingSnapThreshold <= 80
                 && int.TryParse(txtDrawingArrowMargin.Text, out int drawingArrowMargin)
                 && drawingArrowMargin >= MinDrawingArrowClearanceMarginPx
-                && drawingArrowMargin <= MaxDrawingArrowClearanceMarginPx)
+                && drawingArrowMargin <= MaxDrawingArrowClearanceMarginPx
+                && int.TryParse(txtDrawingArrowHorizLabelAngle.Text, out int drawingArrowHorizLabelAngle)
+                && drawingArrowHorizLabelAngle >= MinDrawingArrowHorizontalLabelAngleDeg
+                && drawingArrowHorizLabelAngle <= MaxDrawingArrowHorizontalLabelAngleDeg)
             {
                 _backupAdditionalIncludeSettingsFile = chkBackupAddSettings.IsChecked == true;
                 _backupAdditionalIncludeAppLog = chkBackupAddLog.IsChecked == true;
@@ -2349,6 +2360,7 @@ public partial class MainWindow
                 _drawingDefaultDiamondHeight = drawingDiamondHeight;
                 _drawingShapeSizeSnapThresholdPx = drawingSnapThreshold;
                 _drawingArrowClearanceMarginPx = drawingArrowMargin;
+                _drawingArrowHorizontalLabelAngleDeg = drawingArrowHorizLabelAngle;
                 SaveDrawingDefaultSizes();
                 SaveClosedTabHistory();
 
@@ -2373,7 +2385,7 @@ public partial class MainWindow
             }
             else
             {
-                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat interval must be selected (1, 2, 3, 4, 5, 6, or 10 minutes — each divides evenly into one hour).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.\nDrawing shape sizes must be {MinDrawingShapeSizePx}–{MaxDrawingShapeSizePx} px.\nDrawing snap threshold must be 2–80 px.\nDrawing arrow margin must be {MinDrawingArrowClearanceMarginPx}–{MaxDrawingArrowClearanceMarginPx} px.",
+                MessageBox.Show($"Auto-save must be >= 5 seconds.\nUptime heartbeat interval must be selected (1, 2, 3, 4, 5, 6, or 10 minutes — each divides evenly into one hour).\nInitial lines must be >= 1.\nFont size must be >= 6.\nVisual wrap column must be {MinVisualLineWrapColumn}-{MaxVisualLineWrapColumn}.\nCloud interval must be 0-50 hours and minutes in 5-minute steps (not 0h 0m).\nColor values must be valid WPF colors (name or #AARRGGBB).\nShortcuts must be valid key gestures.\nTab Cleanup stale days must be 1–3650.\nClosed tabs max count must be {MinClosedTabsMaxCount}–{MaxClosedTabsMaxCount}.\nClosed tab retention days must be {MinClosedTabsRetentionDays}–{MaxClosedTabsRetentionDays}.\nDrawing shape sizes must be {MinDrawingShapeSizePx}–{MaxDrawingShapeSizePx} px.\nDrawing snap threshold must be 2–80 px.\nDrawing arrow margin must be {MinDrawingArrowClearanceMarginPx}–{MaxDrawingArrowClearanceMarginPx} px.\nDrawing arrow label horizontal angle must be {MinDrawingArrowHorizontalLabelAngleDeg}–{MaxDrawingArrowHorizontalLabelAngleDeg} deg (0 = disabled).",
                     "Invalid settings", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         };

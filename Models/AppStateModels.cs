@@ -632,6 +632,12 @@ public sealed class WindowSettings
     /// between an anchored shape and the first bend. Per-arrow overrides are stored on each arrow.</summary>
     public int? DrawingArrowClearanceMarginPx { get; set; }
 
+    /// <summary>Global default for the angle (deg) at which an arrow's text label flips to horizontal
+    /// instead of rotating along the line. <c>0</c> means "disabled" (label always follows the line);
+    /// otherwise, when the line tilts more than this many degrees from horizontal, the label is drawn
+    /// horizontally. Per-variant theme overrides take precedence when non-zero.</summary>
+    public int? DrawingArrowHorizontalLabelAngleDeg { get; set; }
+
     /// <summary>User additions/removals/reorder for built-in color palettes (Main, Diagrams, …).</summary>
     public Dictionary<string, PaletteCustomization>? ColorPaletteCustomizations { get; set; }
 }

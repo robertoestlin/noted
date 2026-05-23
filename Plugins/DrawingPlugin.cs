@@ -36,6 +36,13 @@ public partial class MainWindow
     internal const int MaxDrawingArrowClearanceMarginPx = 200;
     internal const int MinDrawingShapeSizePx = 8;
     internal const int MaxDrawingShapeSizePx = 4096;
+    /// <summary>Global default angle (deg) for arrow label horizontal flip. <c>0</c> = disabled.
+    /// When a non-zero positive value is set, labels on arrows whose line tilts more than this many
+    /// degrees off horizontal render upright instead of rotating with the line. Per-variant theme
+    /// overrides take precedence when non-zero.</summary>
+    internal const int DefaultDrawingArrowHorizontalLabelAngleDeg = 0;
+    internal const int MinDrawingArrowHorizontalLabelAngleDeg = 0;
+    internal const int MaxDrawingArrowHorizontalLabelAngleDeg = 89;
 
     private int _drawingDefaultRectangleWidth = DefaultDrawingRectangleWidth;
     private int _drawingDefaultRectangleHeight = DefaultDrawingRectangleHeight;
@@ -45,6 +52,7 @@ public partial class MainWindow
     private int _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
     private int _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
     private int _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
+    private int _drawingArrowHorizontalLabelAngleDeg = DefaultDrawingArrowHorizontalLabelAngleDeg;
 
     internal void GetDrawingShapeDefaults(string kind, out double standardWidth, out double standardHeight)
     {
@@ -91,6 +99,11 @@ public partial class MainWindow
     internal int DrawingShapeSizeSnapThresholdPx => _drawingShapeSizeSnapThresholdPx;
 
     internal int DrawingArrowClearanceMarginPx => _drawingArrowClearanceMarginPx;
+
+    /// <summary>Global tilt-threshold (deg) at which an arrow label flips to horizontal. <c>0</c>
+    /// means the label always follows the line; otherwise lines tilted more than this many degrees
+    /// off horizontal draw their labels upright. Per-variant theme values override when non-zero.</summary>
+    internal int DrawingArrowHorizontalLabelAngleDeg => _drawingArrowHorizontalLabelAngleDeg;
 
     private void ShowDrawingDialog()
     {
@@ -353,6 +366,12 @@ internal sealed class ThemeToolStyle
     /// <summary>Per-variant custom default height in px. <c>0</c> means "no override".</summary>
     public double Height { get; set; }
 
+    /// <summary>For arrow variants only: when the arrow line's tilt exceeds this many degrees,
+    /// the label is rendered horizontally instead of rotated along the line. <c>0</c> means
+    /// "disabled" — the label always follows the line angle. Positive values override the global
+    /// <c>Settings → Drawing → Arrow label horizontal angle</c> default.</summary>
+    public double HorizontalLabelAngleDeg { get; set; }
+
     public ThemeToolStyle Clone() => new()
     {
         Enabled = Enabled,
@@ -367,6 +386,7 @@ internal sealed class ThemeToolStyle
         FreeThickness = FreeThickness,
         Width = Width,
         Height = Height,
+        HorizontalLabelAngleDeg = HorizontalLabelAngleDeg,
     };
 
     public static ThemeToolStyle FromLegacyRoot(DrawingTheme t) => new()
@@ -1557,6 +1577,9 @@ internal sealed class DrawItemDto
     /// <summary>Per-arrow perpendicular clearance from anchored shapes (px). Drives the
     /// length of the straight leg leaving/entering a shape for non-direct arrows.</summary>
     public double ClearanceMargin { get; set; } = 35;
+    /// <summary>Per-arrow override for the angle (deg) at which the label flips to horizontal
+    /// instead of following the line. <c>0</c> means "not set" → fall back to the global setting.</summary>
+    public double HorizontalLabelAngleDeg { get; set; }
     public List<double> RouteBendsX { get; set; } = new();
     public List<double> RouteBendsY { get; set; } = new();
     public List<double> PointsX { get; set; } = new();
@@ -1611,6 +1634,10 @@ internal sealed partial class DrawingWindow : Window
         public bool Direct = true;
         public bool SimpleHeadAtP2 = true;
         public double ClearanceMargin = DrawingWindow.DefaultArrowClearanceMargin;
+        /// <summary>Per-arrow tilt threshold (deg) above which the label is drawn horizontally.
+        /// <c>0</c> means "use the global setting" so changes to the Settings → Drawing default
+        /// apply retroactively to arrows that have never had an explicit per-variant override.</summary>
+        public double HorizontalLabelAngleDeg;
         public List<Point> RouteBends = new();
         public List<Point> Points = new();
         /// <summary>Strokes drawn in the same freehand-tool session share a group id for move/delete.</summary>
@@ -1640,6 +1667,7 @@ internal sealed partial class DrawingWindow : Window
             Direct = Direct,
             SimpleHeadAtP2 = SimpleHeadAtP2,
             ClearanceMargin = ClearanceMargin,
+            HorizontalLabelAngleDeg = HorizontalLabelAngleDeg,
             RouteBends = new List<Point>(RouteBends),
             Points = new List<Point>(Points),
             FreehandGroupId = FreehandGroupId,
@@ -1751,6 +1779,9 @@ internal sealed partial class DrawingWindow : Window
     private double _fontSize = 22;
     private FontFamily _fontFamily = new("Segoe UI");
     private ArrowHeadStyle _arrowHead = ArrowHeadStyle.Simple;
+    /// <summary>Active arrow variant's tilt threshold (deg) at which new arrows render the label
+    /// horizontally. <c>0</c> = inherit from the global setting at render time.</summary>
+    private double _arrowHorizontalLabelAngleDeg;
     private bool _arrowDirect = true;
     private double _arrowMargin = DefaultArrowClearanceMargin;
     private double _freeThickness = 6;
@@ -2077,6 +2108,18 @@ internal sealed partial class DrawingWindow : Window
         _cornerRadius = st.CornerRadius;
         _freeThickness = st.FreeThickness;
         _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
+        _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
+    }
+
+    /// <summary>Clamps a variant- or item-supplied horizontal-label angle to the valid range. Returns
+    /// <c>0</c> for "disabled / inherit". Negative or nonsense values are normalized to <c>0</c>
+    /// so a corrupt theme/legacy file never breaks rendering.</summary>
+    internal static double ClampArrowHorizontalLabelAngle(double value)
+    {
+        if (double.IsNaN(value) || value <= 0) return 0;
+        if (value > MainWindow.MaxDrawingArrowHorizontalLabelAngleDeg)
+            return MainWindow.MaxDrawingArrowHorizontalLabelAngleDeg;
+        return value;
     }
 
     private void ShowThemeSettings()
@@ -2506,6 +2549,7 @@ internal sealed partial class DrawingWindow : Window
                     it.FontSize = st.FontSize;
                     it.StrokeThickness = st.Thickness;
                     it.ArrowHead = ahParsed;
+                    it.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
                     break;
                 case "text":
                     it.TextColor = ParseBrush(st.TextColor);
@@ -2720,6 +2764,7 @@ internal sealed partial class DrawingWindow : Window
             _arrowHead = sel.ArrowHead;
             _arrowDirect = sel.Direct;
             _arrowMargin = sel.ClearanceMargin > 0 ? sel.ClearanceMargin : DefaultArrowClearanceMargin;
+            _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(sel.HorizontalLabelAngleDeg);
         }
         SyncPropertyControlsFromCurrent();
     }
@@ -3729,6 +3774,7 @@ internal sealed partial class DrawingWindow : Window
                 FontSize = _fontSize,
                 FontFamily = _fontFamily,
                 TextColor = _textColor,
+                HorizontalLabelAngleDeg = _arrowHorizontalLabelAngleDeg,
             },
             Tool.Freehand => new DrawItem
             {
@@ -4298,7 +4344,7 @@ internal sealed partial class DrawingWindow : Window
                 var labelText = preservedEditor is TextBox tb ? tb.Text : _editingItem.Text;
                 var size = MeasureArrowLabel(_editingItem, labelText, _canvas, path);
                 var (mid, angleDeg, _) = GetArrowPathMetrics(path);
-                LayoutArrowLabelElement(preservedEditor, mid, angleDeg, size);
+                LayoutArrowLabelElement(preservedEditor, mid, GetArrowLabelDisplayAngle(_editingItem, angleDeg), size);
             }
             if (_editingItem.Kind is "rect" or "ellipse" or "diamond")
                 ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
@@ -4881,7 +4927,7 @@ internal sealed partial class DrawingWindow : Window
         {
             var path = GetArrowPathPoints(it);
             var (mid, angleDeg, _) = GetArrowPathMetrics(path);
-            LayoutArrowLabelElement(box, mid, angleDeg, new Size(w, h));
+            LayoutArrowLabelElement(box, mid, GetArrowLabelDisplayAngle(it, angleDeg), new Size(w, h));
         }
         else
         {
@@ -4971,7 +5017,7 @@ internal sealed partial class DrawingWindow : Window
                 var path = GetArrowPathPoints(it);
                 var size = MeasureArrowLabel(it, text, box, path);
                 var (mid, angleDeg, _) = GetArrowPathMetrics(path);
-                LayoutArrowLabelElement(box, mid, angleDeg, size);
+                LayoutArrowLabelElement(box, mid, GetArrowLabelDisplayAngle(it, angleDeg), size);
                 Redraw();
             }
         }
@@ -5421,6 +5467,7 @@ internal sealed partial class DrawingWindow : Window
             Direct = it.Direct,
             SimpleHeadAtP2 = it.SimpleHeadAtP2,
             ClearanceMargin = it.ClearanceMargin,
+            HorizontalLabelAngleDeg = it.HorizontalLabelAngleDeg,
             FreehandGroupId = it.FreehandGroupId,
             Id = it.Id,
             AnchorStartShapeId = it.AnchorStartShapeId,
@@ -5466,6 +5513,7 @@ internal sealed partial class DrawingWindow : Window
             Direct = dto.Direct,
             SimpleHeadAtP2 = dto.SimpleHeadAtP2,
             ClearanceMargin = dto.ClearanceMargin > 0 ? dto.ClearanceMargin : DefaultArrowClearanceMargin,
+            HorizontalLabelAngleDeg = Math.Clamp(dto.HorizontalLabelAngleDeg, 0, 89),
             FreehandGroupId = dto.FreehandGroupId,
             Id = dto.Id,
             AnchorStartShapeId = dto.AnchorStartShapeId,
@@ -6231,6 +6279,9 @@ internal sealed class ThemeSettingsWindow : Window
         public ComboBox? Fill, Stroke, TextColor, Font, ArrowHead;
         public TextBox? FontSize, Thickness, Corner, FreeThickness;
         public TextBox? Width, Height;
+        /// <summary>Arrow-only: tilt angle (deg) above which the label flips to horizontal.
+        /// <c>0</c> means "disabled / inherit global Settings → Drawing default".</summary>
+        public TextBox? HorizontalLabelAngle;
         public TextBlock? SizeHint;
     }
 
@@ -6646,6 +6697,24 @@ internal sealed class ThemeSettingsWindow : Window
                 ui.ArrowHead.Items.Add("Double");
                 sp.Children.Add(ui.ArrowHead);
                 ui.ArrowHead.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.ArrowHead = ui.ArrowHead!.SelectedItem as string ?? "Simple");
+                sp.Children.Add(EditorLabel("Horizontal label angle (deg)"));
+                ui.HorizontalLabelAngle = new TextBox
+                {
+                    Margin = new Thickness(0, 0, 0, 4),
+                    ToolTip = "When the arrow line tilts more than this many degrees off horizontal, the label "
+                        + "is drawn upright instead of rotated. 0 = disabled (inherit the Settings → Drawing "
+                        + "global default; if that is also 0, the label always follows the line).",
+                };
+                sp.Children.Add(ui.HorizontalLabelAngle);
+                sp.Children.Add(new TextBlock
+                {
+                    Text = "0 disables / inherits global setting.",
+                    Foreground = Brushes.Gray,
+                    FontSize = 11,
+                    Margin = new Thickness(0, 0, 0, 8),
+                });
+                ui.HorizontalLabelAngle.TextChanged += (_, _) => MutateVariant(kind, index,
+                    s => s.HorizontalLabelAngleDeg = ParseHorizontalLabelAngle(ui.HorizontalLabelAngle!.Text));
                 break;
             case "text":
                 sp.Children.Add(EditorLabel("Text color"));
@@ -6803,6 +6872,17 @@ internal sealed class ThemeSettingsWindow : Window
         if (!double.TryParse(text.Trim(), out var v)) return 0;
         if (v <= 0) return 0;
         return Math.Min(v, MainWindow.MaxDrawingShapeSizePx);
+    }
+
+    /// <summary>Parse text into a per-variant arrow label horizontal angle (deg). Empty / whitespace
+    /// / unparseable / non-positive all mean "disabled — inherit global". Positive values are clamped
+    /// to the supported range so a misconfigured theme can never produce a label that points nowhere.</summary>
+    private static double ParseHorizontalLabelAngle(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return 0;
+        if (!double.TryParse(text.Trim(), out var v)) return 0;
+        if (v <= 0) return 0;
+        return Math.Min(v, MainWindow.MaxDrawingArrowHorizontalLabelAngleDeg);
     }
 
     private void MutateVariant(string kind, int index, Action<ThemeToolStyle> set)
@@ -6973,6 +7053,10 @@ internal sealed class ThemeSettingsWindow : Window
         if (ui.FreeThickness != null) ui.FreeThickness.Text = style.FreeThickness.ToString();
         if (ui.Width != null) ui.Width.Text = style.Width > 0 ? style.Width.ToString() : "";
         if (ui.Height != null) ui.Height.Text = style.Height > 0 ? style.Height.ToString() : "";
+        if (ui.HorizontalLabelAngle != null)
+            ui.HorizontalLabelAngle.Text = style.HorizontalLabelAngleDeg > 0
+                ? style.HorizontalLabelAngleDeg.ToString()
+                : "0";
     }
 
     private void RebuildThemePreview()
