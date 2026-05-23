@@ -4287,6 +4287,17 @@ internal sealed partial class DrawingWindow : Window
                     out _arrowDrawEndShape, out _arrowDrawEndAnchorIndex);
                 if (_arrowDrawStartShape != null && _drawingItem.AnchorStartIndex is int startIdx)
                     _drawingItem.P1 = GetShapeAnchorPointByIndex(_arrowDrawStartShape, startIdx);
+                // Mirror the end anchor onto the item so the live preview routes the same way
+                // the post-release path does. Without this, BuildOrthogonalArrowPath has no
+                // outward-direction info for the end and the orthogonal preview can take a
+                // different turn than the final arrow.
+                _drawingItem.AnchorEndShapeId = _arrowDrawEndShape?.Id;
+                _drawingItem.AnchorEndIndex = _arrowDrawEndAnchorIndex;
+                // Match the clearance margin the post-release path uses (inherited from
+                // neighbours, falling back to the user default). Otherwise the preview routes
+                // with the hard-coded DefaultArrowClearanceMargin (35px) while the final uses
+                // a possibly-different inferred value.
+                _drawingItem.ClearanceMargin = InferArrowClearanceMargin(_drawingItem);
             }
             else
             {
