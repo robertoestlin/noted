@@ -1689,7 +1689,8 @@ public partial class MainWindow : Window
     private void RefreshInlineImageReferenceSnapshot()
         => _referencedInlineImagesSnapshot = GetReferencedInlineImageFilesFromDocs();
 
-    private void MoveDeletedInlineImagesToArchive(HashSet<string> removedReferences)
+    private void MoveDeletedInlineImagesToArchive(HashSet<string> removedReferences,
+        HashSet<string> stillReferenced)
     {
         if (removedReferences.Count == 0)
             return;
@@ -1703,12 +1704,51 @@ public partial class MainWindow : Window
 
         foreach (var fileName in removedReferences)
         {
+            // Drawings keep a version chain on disk (one file per <c>-N</c>) and the time-machine
+            // popup walks that chain. When the active marker is bumped from <c>-N</c> to
+            // <c>-N+1</c> the previous version is technically "no longer referenced", but it
+            // belongs to the same chain as the new marker and must stay so the user can still
+            // browse / restore it. Only archive a drawing when nothing else in the document set
+            // points at the same base name.
+            if (IsDrawingFileName(fileName)
+                && AnyOtherDrawingVersionReferenced(fileName, stillReferenced))
+            {
+                continue;
+            }
+
             TryMoveInlineImageFileToDeleted(imagesFolder, fileName);
             _inlineImageCache.Remove(fileName);
             TryMoveDrawingWorkspaceToDeleted(fileName);
         }
 
         PruneDeletedInlineImages();
+    }
+
+    private static bool IsDrawingFileName(string fileName)
+        => !string.IsNullOrEmpty(fileName)
+           && fileName.StartsWith(DrawingFileNamePrefix, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Returns <c>true</c> when <paramref name="stillReferenced"/> contains another
+    /// drawing filename whose <see cref="ExtractDrawingBaseName">base name</see> matches
+    /// <paramref name="drawingFileName"/> — i.e. it's part of the same version chain.</summary>
+    private static bool AnyOtherDrawingVersionReferenced(string drawingFileName,
+        HashSet<string> stillReferenced)
+    {
+        var baseName = ExtractDrawingBaseName(drawingFileName);
+        if (string.IsNullOrEmpty(baseName))
+            return false;
+
+        foreach (var other in stillReferenced)
+        {
+            if (string.Equals(other, drawingFileName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!IsDrawingFileName(other))
+                continue;
+            if (string.Equals(ExtractDrawingBaseName(other), baseName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     private void TryMoveInlineImageFileToDeleted(string sourceFolder, string fileName)
@@ -7778,7 +7818,7 @@ public partial class MainWindow : Window
             var removedReferences = _referencedInlineImagesSnapshot
                 .Except(referencedNow, StringComparer.OrdinalIgnoreCase)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            MoveDeletedInlineImagesToArchive(removedReferences);
+            MoveDeletedInlineImagesToArchive(removedReferences, referencedNow);
             _referencedInlineImagesSnapshot = referencedNow;
 
             var sections = new List<BackupBundleService.BackupBundleSection>();

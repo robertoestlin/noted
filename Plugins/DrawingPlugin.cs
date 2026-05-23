@@ -180,7 +180,13 @@ public partial class MainWindow
 
             int scalePercent = editContext?.ScalePercent ?? 100;
             if (editContext != null)
+            {
                 UpdateExistingMarkerLine(doc.Editor, editContext, fileName, scalePercent);
+                // Re-anchor the edit context to the freshly-written file so a follow-up save in
+                // the same session (e.g. multiple time-machine Applies) can still locate the
+                // marker line — UpdateExistingMarkerLine matches against OriginalFileName.
+                editContext.OriginalFileName = fileName;
+            }
             else
                 InsertImageMarkerLine(doc.Editor, BuildInlineImageMarkerText(fileName, scalePercent));
 
@@ -314,6 +320,58 @@ public partial class MainWindow
         }
 
         return DrawingWindow.TryDeserialize(json);
+    }
+
+    /// <summary>Returns the image filenames (e.g. <c>drawing-2026-05-16-232532-3.png</c>) of every saved version
+    /// that shares the base name in <paramref name="editContext"/>, sorted ascending by suffix (oldest first,
+    /// newest last). A version only counts when both its <c>-N.json</c> workspace and the corresponding
+    /// <c>-N.png</c> image are reachable. Returns an empty list when nothing matches.</summary>
+    internal List<string> EnumerateDrawingVersionImageNames(DrawingEditContext editContext)
+    {
+        var baseName = editContext.BaseName;
+        var withSuffix = new List<(int Suffix, string ImageName)>();
+
+        void Consider(string jsonFileName)
+        {
+            if (!TryExtractDrawingVersionSuffix(jsonFileName, baseName, out var suffix))
+                return;
+            withSuffix.Add((suffix, Path.ChangeExtension(jsonFileName, ".png")));
+        }
+
+        if (!string.IsNullOrEmpty(editContext.PackageId))
+        {
+            foreach (var name in _documentationService.EnumerateDrawingFileNames(_backupFolder, editContext.PackageId!))
+                Consider(name);
+        }
+        else
+        {
+            var drawingsFolder = GetDrawingsFolderPath();
+            if (Directory.Exists(drawingsFolder))
+            {
+                foreach (var path in Directory.EnumerateFiles(drawingsFolder, $"{baseName}-*.json"))
+                    Consider(Path.GetFileName(path));
+            }
+        }
+
+        withSuffix.Sort((a, b) => a.Suffix.CompareTo(b.Suffix));
+        return withSuffix.Select(t => t.ImageName).ToList();
+    }
+
+    /// <summary>Extracts <c>N</c> from <c>{baseName}-N.json</c> (or <c>.png</c>). Returns <c>false</c> if the
+    /// filename doesn't follow that pattern or <c>N</c> isn't a positive integer.</summary>
+    internal static bool TryExtractDrawingVersionSuffix(string fileName, string baseName, out int suffix)
+    {
+        suffix = 0;
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        if (string.IsNullOrEmpty(stem) || string.IsNullOrEmpty(baseName))
+            return false;
+        var prefix = baseName + "-";
+        if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var tail = stem.Substring(prefix.Length);
+        return int.TryParse(tail, System.Globalization.NumberStyles.Integer,
+                   System.Globalization.CultureInfo.InvariantCulture, out suffix)
+               && suffix > 0;
     }
 
     /// <summary>Extracts the version-less base from a drawing filename: <c>drawing-2026-05-16-232532-2.png</c> →
@@ -1598,7 +1656,11 @@ internal sealed class DrawItemDto
 internal sealed class DrawingEditContext
 {
     public required TabDocument Doc { get; init; }
-    public required string OriginalFileName { get; init; }
+    /// <summary>The image filename the marker in <see cref="Doc"/> currently references. Set at
+    /// edit-context creation from the marker the user clicked, then refreshed by the host after
+    /// every successful save so subsequent saves in the same drawing-window session can still
+    /// locate the marker line to replace.</summary>
+    public required string OriginalFileName { get; set; }
     public required string BaseName { get; init; }
     public required int LineNumber { get; init; }
     public int ScalePercent { get; init; } = 100;
@@ -1834,6 +1896,18 @@ internal sealed partial class DrawingWindow : Window
     /// by the <see cref="Window.Closing"/> handler to decide whether to prompt the user before
     /// losing edits.</summary>
     private bool _hasUnsavedChanges;
+
+    // ---- Time machine state ----
+    /// <summary>Image filename currently mirrored on the canvas, used to position the time-machine
+    /// slider when the popup re-opens. Tracks <see cref="DrawingEditContext.OriginalFileName"/>
+    /// initially, then follows the user as they browse / apply versions.</summary>
+    private string? _currentVersionImageName;
+    private Popup? _timeMachinePopup;
+    private Slider? _timeMachineSlider;
+    private TextBlock? _timeMachineLabel;
+    private List<string> _timeMachineVersions = new();
+    private bool _suppressTimeMachineSliderChange;
+
     private ScrollViewer? _canvasScroll;
     private bool _isPanning;
     private Point _panStartScreen;
@@ -1850,6 +1924,7 @@ internal sealed partial class DrawingWindow : Window
     {
         _host = host;
         _editContext = editContext;
+        _currentVersionImageName = editContext?.OriginalFileName;
         Title = editContext == null ? "Drawing" : $"Edit drawing — {editContext.BaseName}";
         Width = 1280;
         Height = 860;
@@ -1936,6 +2011,27 @@ internal sealed partial class DrawingWindow : Window
         var btnSave = MakeButton("Save as PNG");
         btnSave.Click += (_, _) => SavePng();
         actions.Children.Add(btnSave);
+
+        if (_editContext != null)
+        {
+            var btnTimeMachine = new Button
+            {
+                Content = "\U0001F570", // 🕰 mantelpiece clock
+                FontSize = 16,
+                ToolTip = "Time machine — browse and restore older saved versions",
+                Padding = new Thickness(8, 2, 8, 2),
+                Margin = new Thickness(3, 3, 3, 3),
+                MinWidth = 36,
+            };
+            btnTimeMachine.Click += (_, _) =>
+            {
+                if (_timeMachinePopup?.IsOpen == true)
+                    _timeMachinePopup.IsOpen = false;
+                else
+                    ShowTimeMachinePopup(btnTimeMachine);
+            };
+            actions.Children.Add(btnTimeMachine);
+        }
 
         var btnInsert = MakeButton(_editContext == null ? "Insert into editor" : "Save new version");
         btnInsert.Click += (_, _) => InsertIntoEditor();
@@ -2053,6 +2149,180 @@ internal sealed partial class DrawingWindow : Window
             default:
                 e.Cancel = true;
                 break;
+        }
+    }
+
+    private void ShowTimeMachinePopup(Button anchor)
+    {
+        if (_editContext == null)
+            return;
+        var versions = _host.EnumerateDrawingVersionImageNames(_editContext);
+        if (versions.Count == 0)
+        {
+            MessageBox.Show(this, "No saved versions found for this drawing.", "Time machine",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _timeMachineVersions = versions;
+
+        if (_timeMachinePopup == null)
+            BuildTimeMachinePopup();
+
+        var currentIndex = _currentVersionImageName == null
+            ? -1
+            : versions.FindIndex(v => string.Equals(v, _currentVersionImageName, StringComparison.OrdinalIgnoreCase));
+        if (currentIndex < 0) currentIndex = versions.Count - 1;
+
+        _suppressTimeMachineSliderChange = true;
+        _timeMachineSlider!.Minimum = 0;
+        _timeMachineSlider.Maximum = Math.Max(0, versions.Count - 1);
+        _timeMachineSlider.Value = currentIndex;
+        _timeMachineSlider.IsEnabled = versions.Count > 1;
+        _suppressTimeMachineSliderChange = false;
+        UpdateTimeMachineLabel();
+
+        _timeMachinePopup!.PlacementTarget = anchor;
+        _timeMachinePopup.IsOpen = true;
+    }
+
+    private void BuildTimeMachinePopup()
+    {
+        _timeMachinePopup = new Popup
+        {
+            Placement = PlacementMode.Bottom,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            PopupAnimation = PopupAnimation.Slide,
+        };
+
+        var border = new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0xBB, 0xBB, 0xBB)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(16),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                BlurRadius = 8,
+                ShadowDepth = 2,
+                Opacity = 0.25,
+                Color = Colors.Black,
+            },
+        };
+
+        var stack = new StackPanel { MinWidth = 340 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Time machine",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+
+        _timeMachineLabel = new TextBlock
+        {
+            Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        stack.Children.Add(_timeMachineLabel);
+
+        _timeMachineSlider = new Slider
+        {
+            Minimum = 0,
+            Maximum = 0,
+            IsSnapToTickEnabled = true,
+            TickFrequency = 1,
+            TickPlacement = TickPlacement.BottomRight,
+            SmallChange = 1,
+            LargeChange = 1,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        _timeMachineSlider.ValueChanged += (_, _) =>
+        {
+            if (_suppressTimeMachineSliderChange) return;
+            var idx = (int)Math.Round(_timeMachineSlider!.Value);
+            if (idx < 0 || idx >= _timeMachineVersions.Count) return;
+            LoadDrawingVersion(_timeMachineVersions[idx]);
+            UpdateTimeMachineLabel();
+        };
+        stack.Children.Add(_timeMachineSlider);
+
+        var btnApply = new Button
+        {
+            Content = "Apply as last version",
+            Padding = new Thickness(10, 5, 10, 5),
+            Margin = new Thickness(0, 0, 0, 6),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        btnApply.Click += (_, _) =>
+        {
+            if (!TrySaveDrawing()) return;
+            // TrySaveDrawing has already updated _currentVersionImageName to the new latest. Close
+            // the popup — user can re-open it (and the slider will default to the new latest) if
+            // they want to continue browsing.
+            _timeMachinePopup!.IsOpen = false;
+        };
+        stack.Children.Add(btnApply);
+
+        var btnLatest = new Button
+        {
+            Content = "Go back to latest version",
+            Padding = new Thickness(10, 5, 10, 5),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        btnLatest.Click += (_, _) =>
+        {
+            if (_timeMachineVersions.Count == 0) return;
+            var lastIdx = _timeMachineVersions.Count - 1;
+            _suppressTimeMachineSliderChange = true;
+            _timeMachineSlider!.Value = lastIdx;
+            _suppressTimeMachineSliderChange = false;
+            LoadDrawingVersion(_timeMachineVersions[lastIdx]);
+            UpdateTimeMachineLabel();
+        };
+        stack.Children.Add(btnLatest);
+
+        border.Child = stack;
+        _timeMachinePopup.Child = border;
+    }
+
+    private void UpdateTimeMachineLabel()
+    {
+        if (_timeMachineLabel == null || _timeMachineVersions.Count == 0 || _editContext == null)
+            return;
+        var idx = _timeMachineSlider == null ? 0 : (int)Math.Round(_timeMachineSlider.Value);
+        if (idx < 0) idx = 0;
+        if (idx >= _timeMachineVersions.Count) idx = _timeMachineVersions.Count - 1;
+        var fileName = _timeMachineVersions[idx];
+        var isLatest = idx == _timeMachineVersions.Count - 1;
+        var suffixDisplay = MainWindow.TryExtractDrawingVersionSuffix(fileName, _editContext.BaseName, out var n)
+            ? $"#{n}"
+            : "?";
+        _timeMachineLabel.Text = isLatest
+            ? $"Version {suffixDisplay} (latest) — {idx + 1} of {_timeMachineVersions.Count}"
+            : $"Version {suffixDisplay} — {idx + 1} of {_timeMachineVersions.Count}";
+    }
+
+    /// <summary>Loads the workspace JSON for <paramref name="imageFileName"/> into the canvas,
+    /// snapshotting current state for undo so the user can step back through their browsing.
+    /// Silently no-ops when the file can't be read.</summary>
+    private void LoadDrawingVersion(string imageFileName)
+    {
+        if (_editContext == null) return;
+        var workspace = _host.TryLoadDrawingWorkspace(_editContext.Doc.Editor, imageFileName);
+        if (workspace == null)
+            return;
+        SnapshotForUndo();
+        ApplyWorkspace(workspace);
+        _currentVersionImageName = imageFileName;
+
+        // If the loaded version is the one the document marker already points at, the canvas
+        // now matches the on-disk truth — nothing for the close prompt to save. SnapshotForUndo
+        // above flipped the dirty flag (it can't know the load was a no-op), so clear it here
+        // so closing right after a "Go back to latest" / slide-to-current doesn't prompt.
+        if (string.Equals(imageFileName, _editContext.OriginalFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            _hasUnsavedChanges = false;
         }
     }
 
@@ -5500,6 +5770,15 @@ internal sealed partial class DrawingWindow : Window
             return false;
 
         _hasUnsavedChanges = false;
+
+        // The save bumped the version chain — re-anchor the time-machine current pointer to the
+        // freshly-written latest so a popup re-open lands on "the version you just saved".
+        if (_editContext != null)
+        {
+            var versions = _host.EnumerateDrawingVersionImageNames(_editContext);
+            if (versions.Count > 0)
+                _currentVersionImageName = versions[^1];
+        }
         return true;
     }
 
@@ -5749,10 +6028,22 @@ internal sealed partial class DrawingWindow : Window
 
     private void LoadWorkspace(DrawingWorkspaceDto workspace)
     {
-        _items.Clear();
-        _selection.Clear();
         _undoStack.Clear();
         _redoStack.Clear();
+        ApplyWorkspace(workspace);
+        // A freshly-loaded workspace is the on-disk truth — nothing to prompt about until the
+        // user actually edits something.
+        _hasUnsavedChanges = false;
+    }
+
+    /// <summary>Replaces the canvas contents with <paramref name="workspace"/> without touching
+    /// the undo/redo stacks or the dirty flag. Used by both the initial <see cref="LoadWorkspace"/>
+    /// (which clears those separately) and the time-machine browser (which wants undo entries to
+    /// remain available so users can step back through their browsing actions).</summary>
+    private void ApplyWorkspace(DrawingWorkspaceDto workspace)
+    {
+        _items.Clear();
+        _selection.Clear();
         int maxGroupId = 0;
         int maxItemId = 0;
         foreach (var dto in workspace.Items)
@@ -5764,15 +6055,12 @@ internal sealed partial class DrawingWindow : Window
             if (item.Id > maxItemId)
                 maxItemId = item.Id;
         }
-        _nextFreehandGroupId = maxGroupId + 1;
-        _nextItemId = maxItemId + 1;
+        _nextFreehandGroupId = Math.Max(_nextFreehandGroupId, maxGroupId + 1);
+        _nextItemId = Math.Max(_nextItemId, maxItemId + 1);
         EnsureItemIds();
         RefreshAllAnchoredArrows();
         UpdatePropertyPanelForSelection();
         Redraw();
-        // A freshly-loaded workspace is the on-disk truth — nothing to prompt about until the
-        // user actually edits something.
-        _hasUnsavedChanges = false;
     }
 
     public static DrawingWorkspaceDto? TryDeserialize(string? json)

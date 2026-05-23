@@ -292,6 +292,37 @@ public sealed class DocumentationService
         }
     }
 
+    /// <summary>Enumerates the names of every entry under the <c>drawings/</c> folder inside the
+    /// package zip (without the folder prefix). Used by the drawing window's "time machine" to
+    /// discover all saved versions sharing a base name. Returns an empty list on any failure.</summary>
+    public List<string> EnumerateDrawingFileNames(string backupFolder, string packageId)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(packageId))
+            return result;
+        var path = FindPackagePath(backupFolder, packageId);
+        if (path == null || !path.EndsWith(PackageFileExtension, StringComparison.OrdinalIgnoreCase))
+            return result;
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Read);
+            foreach (var entry in zip.Entries)
+            {
+                if (entry.FullName.StartsWith(ZipDrawingsFolder, StringComparison.OrdinalIgnoreCase)
+                    && entry.FullName.Length > ZipDrawingsFolder.Length)
+                {
+                    result.Add(entry.FullName.Substring(ZipDrawingsFolder.Length));
+                }
+            }
+        }
+        catch
+        {
+            // Defensive: a corrupt zip shouldn't crash the drawing window.
+        }
+        return result;
+    }
+
     /// <summary>True when the package zip contains a drawing entry with the given filename.</summary>
     public bool DrawingExists(string backupFolder, string packageId, string fileName)
     {
