@@ -546,6 +546,10 @@ internal sealed class ThemeToolStyle
     public string ArrowHead { get; set; } = "Simple";
     public double FreeThickness { get; set; } = 6;
 
+    /// <summary>Line-only: render the line with a dashed stroke when <c>true</c>. Ignored by all
+    /// other kinds; only the loose "line" object surfaces this in the property panel.</summary>
+    public bool IsDashed { get; set; }
+
     /// <summary>Per-variant custom default width in px. <c>0</c> means "no override" — fall back to
     /// the global per-kind default from <see cref="DrawingDefaultSizesStore"/>. Only meaningful for
     /// rect/ellipse/diamond variants.</summary>
@@ -575,6 +579,7 @@ internal sealed class ThemeToolStyle
         Width = Width,
         Height = Height,
         HorizontalLabelAngleDeg = HorizontalLabelAngleDeg,
+        IsDashed = IsDashed,
     };
 
     public static ThemeToolStyle FromLegacyRoot(DrawingTheme t) => new()
@@ -1093,6 +1098,10 @@ internal sealed class DrawingLooseObjectStyles
     public ThemeToolStyle? Arrow { get; set; }
     public ThemeToolStyle? Text { get; set; }
     public ThemeToolStyle? Freehand { get; set; }
+    /// <summary>Loose "line" style — color, thickness, and dashed flag. The line kind isn't part
+    /// of the theme system (no toolbar variants, no theme-settings tab); it lives only here so
+    /// the All-objects icon can carry persistent defaults across sessions.</summary>
+    public ThemeToolStyle? Line { get; set; }
 
     public ThemeToolStyle? Get(string kind) => kind switch
     {
@@ -1103,6 +1112,7 @@ internal sealed class DrawingLooseObjectStyles
         "arrow" => Arrow,
         "text" => Text,
         "freehand" => Freehand,
+        "line" => Line,
         _ => null,
     };
 
@@ -1117,6 +1127,7 @@ internal sealed class DrawingLooseObjectStyles
             case "arrow": Arrow = style; break;
             case "text": Text = style; break;
             case "freehand": Freehand = style; break;
+            case "line": Line = style; break;
         }
     }
 }
@@ -1875,6 +1886,8 @@ internal sealed class DrawItemDto
     /// <summary>Per-arrow override for the angle (deg) at which the label flips to horizontal
     /// instead of following the line. <c>0</c> means "not set" → fall back to the global setting.</summary>
     public double HorizontalLabelAngleDeg { get; set; }
+    /// <summary>Line-only: render the line with a dashed stroke when <c>true</c>.</summary>
+    public bool IsDashed { get; set; }
     public List<double> RouteBendsX { get; set; } = new();
     public List<double> RouteBendsY { get; set; } = new();
     public List<double> PointsX { get; set; } = new();
@@ -1905,14 +1918,14 @@ internal sealed class DrawingEditContext
 
 internal sealed partial class DrawingWindow : Window
 {
-    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand, Domain }
+    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand, Domain, Line }
 
     private enum ArrowHeadStyle { None, Simple, Double }
 
     private sealed class DrawItem
     {
         public int Id;
-        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand, domain
+        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand, domain, line
         public Point P1;
         public Point P2;
         public int? AnchorStartShapeId;
@@ -1933,6 +1946,8 @@ internal sealed partial class DrawingWindow : Window
         public bool Direct = true;
         public bool SimpleHeadAtP2 = true;
         public double ClearanceMargin = DrawingWindow.DefaultArrowClearanceMargin;
+        /// <summary>Line-only: render with a dashed stroke when <c>true</c>.</summary>
+        public bool IsDashed;
         /// <summary>Per-arrow tilt threshold (deg) above which the label is drawn horizontally.
         /// <c>0</c> means "use the global setting" so changes to the Settings → Drawing default
         /// apply retroactively to arrows that have never had an explicit per-variant override.</summary>
@@ -1967,6 +1982,7 @@ internal sealed partial class DrawingWindow : Window
             SimpleHeadAtP2 = SimpleHeadAtP2,
             ClearanceMargin = ClearanceMargin,
             HorizontalLabelAngleDeg = HorizontalLabelAngleDeg,
+            IsDashed = IsDashed,
             RouteBends = new List<Point>(RouteBends),
             Points = new List<Point>(Points),
             FreehandGroupId = FreehandGroupId,
@@ -2025,12 +2041,16 @@ internal sealed partial class DrawingWindow : Window
     private CompactColorPicker? _textColorPicker;
     private CompactColorPicker? _freehandColorPicker;
     private CompactColorPicker? _arrowColorPicker;
+    private CompactColorPicker? _lineColorPicker;
     private Grid? _fillColorRow;
     private Grid? _gradientColorRow;
     private Grid? _strokeColorRow;
     private Grid? _textColorRow;
     private Grid? _freehandColorRow;
     private Grid? _arrowColorRow;
+    private Grid? _lineColorRow;
+    private TextBlock? _lineStyleHeader;
+    private ComboBox? _lineStyleCombo;
     private CheckBox? _shadowCheck;
     private TextBlock? _thicknessHeader;
     private TextBox? _thicknessBox;
@@ -2066,7 +2086,7 @@ internal sealed partial class DrawingWindow : Window
     private TextBlock? _allObjectsHeader;
     private WrapPanel? _allObjectsPanel;
     private DrawingLooseObjectStyles _looseObjectStyles = new();
-    /// <summary>Which loose-object kind (rect/ellipse/diamond/arrow/text/freehand) the user is
+    /// <summary>Which loose-object kind (rect/ellipse/diamond/arrow/text/freehand/line) the user is
     /// currently editing in the "All objects" section. <c>null</c> means no loose icon is selected
     /// — in that case the property panel just shows the theme overview and the icon grid. When
     /// non-null, the live <c>_fill</c>/<c>_stroke</c>/... state mirrors the loose style for this
@@ -2098,6 +2118,10 @@ internal sealed partial class DrawingWindow : Window
     private bool _arrowDirect = true;
     private double _arrowMargin = DefaultArrowClearanceMargin;
     private double _freeThickness = 6;
+    /// <summary>Live "dashed?" toggle for the loose Line tool. Mirrors
+    /// <see cref="ThemeToolStyle.IsDashed"/> on the active loose-line style and is the value
+    /// used when a brand-new line is created or applied to selected lines.</summary>
+    private bool _lineDashed;
 
     private bool _isDrawing;
     private DrawItem? _drawingItem;
@@ -2795,6 +2819,7 @@ internal sealed partial class DrawingWindow : Window
         "arrow" => Tool.Arrow,
         "text" => Tool.Text,
         "freehand" => Tool.Freehand,
+        "line" => Tool.Line,
         _ => Tool.Rectangle,
     };
 
@@ -2807,6 +2832,7 @@ internal sealed partial class DrawingWindow : Window
         Tool.Arrow => "arrow",
         Tool.Text => "text",
         Tool.Freehand => "freehand",
+        Tool.Line => "line",
         _ => "rect",
     };
 
@@ -2890,6 +2916,8 @@ internal sealed partial class DrawingWindow : Window
         _freehandColorPicker?.SetSelected(_stroke);
         _arrowColorPicker?.Refresh();
         _arrowColorPicker?.SetSelected(_stroke);
+        _lineColorPicker?.Refresh();
+        _lineColorPicker?.SetSelected(_stroke);
     }
 
     // ---------------- Property panel ----------------
@@ -2972,6 +3000,39 @@ internal sealed partial class DrawingWindow : Window
             onBeginCustomPick: SnapshotForUndo);
         _arrowColorRow = MakeCompactColorRow("Color", _arrowColorPicker);
         _propertyPanel.Children.Add(_arrowColorRow);
+
+        _lineColorPicker = new CompactColorPicker(_stroke,
+            onChanged: b => { _stroke = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
+            onBeginCustomPick: SnapshotForUndo);
+        _lineColorRow = MakeCompactColorRow("Color", _lineColorPicker);
+        _propertyPanel.Children.Add(_lineColorRow);
+
+        _lineStyleHeader = SectionHeader("Style");
+        _propertyPanel.Children.Add(_lineStyleHeader);
+        _lineStyleCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
+        _lineStyleCombo.Items.Add("Line");
+        _lineStyleCombo.Items.Add("Dashed");
+        _lineStyleCombo.SelectedIndex = _lineDashed ? 1 : 0;
+        _lineStyleCombo.SelectionChanged += (_, _) =>
+        {
+            if (_suppressPropertyChanges) return;
+            _lineDashed = _lineStyleCombo.SelectedIndex == 1;
+            var changedAny = false;
+            foreach (var it in _selection.Where(i => i.Kind == "line"))
+            {
+                if (it.IsDashed == _lineDashed) continue;
+                if (!changedAny)
+                {
+                    SnapshotForUndo();
+                    changedAny = true;
+                }
+                it.IsDashed = _lineDashed;
+            }
+            PersistLooseStyleFromCurrent();
+            if (changedAny) Redraw();
+        };
+        _propertyPanel.Children.Add(_lineStyleCombo);
 
         _thicknessHeader = SectionHeader("Thickness");
         _propertyPanel.Children.Add(_thicknessHeader);
@@ -3133,6 +3194,7 @@ internal sealed partial class DrawingWindow : Window
             Tool.Arrow => "arrow",
             Tool.Text => "text",
             Tool.Freehand => "freehand",
+            Tool.Line => "line",
             _ => "rect",
         };
     }
@@ -3168,6 +3230,9 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_thicknessBox, false);
             SetPropertySectionVisibility(_freehandColorRow, false);
             SetPropertySectionVisibility(_arrowColorRow, false);
+            SetPropertySectionVisibility(_lineColorRow, false);
+            SetPropertySectionVisibility(_lineStyleHeader, false);
+            SetPropertySectionVisibility(_lineStyleCombo, false);
             SetPropertySectionVisibility(_cornerRadiusHeader, false);
             SetPropertySectionVisibility(_cornerRadiusBox, false);
             SetPropertySectionVisibility(_fontHeader, false);
@@ -3192,20 +3257,24 @@ internal sealed partial class DrawingWindow : Window
         var isLoose = IsLooseObjectEditMode();
         var isFreehand = kind == "freehand";
         var isArrow = kind == "arrow";
-        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain");
-        SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && kind is "rect" or "domain");
-        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain");
-        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
+        var isLine = kind == "line";
+        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain");
+        SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "domain");
+        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain");
+        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
         SetPropertySectionVisibility(_arrowColorRow, isArrow);
+        SetPropertySectionVisibility(_lineColorRow, isLine);
+        SetPropertySectionVisibility(_lineStyleHeader, isLine);
+        SetPropertySectionVisibility(_lineStyleCombo, isLine);
         SetPropertySectionVisibility(_thicknessHeader, !isFreehand);
         SetPropertySectionVisibility(_thicknessBox, !isFreehand);
         SetPropertySectionVisibility(_freehandColorRow, isFreehand);
-        SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && !isArrow && kind == "rect");
-        SetPropertySectionVisibility(_cornerRadiusBox, !isFreehand && !isArrow && kind == "rect");
-        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && !isArrow && !isLine && kind == "rect");
+        SetPropertySectionVisibility(_cornerRadiusBox, !isFreehand && !isArrow && !isLine && kind == "rect");
+        SetPropertySectionVisibility(_fontHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
@@ -3276,7 +3345,10 @@ internal sealed partial class DrawingWindow : Window
             _allObjectsPanel.Children.Clear();
             var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
             var brushOff = SystemColors.ControlBrush;
-            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand" })
+            // "line" is intentionally not in the theme gallery (above) — it has no themed
+            // variants — but it does show up here so users can grab a plain straight ruler / guide
+            // line. Its persistent defaults live on DrawingLooseObjectStyles.Line.
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand", "line" })
             {
                 var capturedKind = kind;
                 var btn = new Button
@@ -3313,6 +3385,7 @@ internal sealed partial class DrawingWindow : Window
             "arrow" => BuildArrowIcon(stroke),
             "text" => BuildTextIcon(stroke),
             "freehand" => BuildFreeformIcon(stroke),
+            "line" => BuildLineIcon(stroke),
             _ => BuildPointerIcon(),
         };
     }
@@ -3356,11 +3429,38 @@ internal sealed partial class DrawingWindow : Window
     private ThemeToolStyle ResolveLooseStyle(string kind)
     {
         var existing = _looseObjectStyles.Get(kind);
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            // Line is special: every fresh "entry" into loose-line mode should default to dashed,
+            // regardless of the dropdown value the user happened to leave the previous session on.
+            // PersistLooseStyleFromCurrent also skips IsDashed for the same reason.
+            if (kind == "line" && !existing.IsDashed)
+                existing.IsDashed = true;
+            return existing;
+        }
 
-        _activeTheme.EnsureToolStyles();
-        var variants = _activeTheme.GetVariants(kind);
-        var seed = variants.Count > 0 ? variants[0].Clone() : new ThemeToolStyle();
+        ThemeToolStyle seed;
+        if (kind == "line")
+        {
+            // "line" isn't in the theme system, so don't ask GetVariants for it (it would fall
+            // through to Rectangles and seed the line with a fill/text-color/etc that don't make
+            // sense). Use a self-contained default instead: black, modest thickness, dashed by
+            // default so it visually reads as a guide / ruler.
+            seed = new ThemeToolStyle
+            {
+                Fill = "Transparent",
+                Stroke = "#000000",
+                TextColor = "#000000",
+                Thickness = 2,
+                IsDashed = true,
+            };
+        }
+        else
+        {
+            _activeTheme.EnsureToolStyles();
+            var variants = _activeTheme.GetVariants(kind);
+            seed = variants.Count > 0 ? variants[0].Clone() : new ThemeToolStyle();
+        }
         seed.Enabled = true;
         _looseObjectStyles.Set(kind, seed);
         DrawingLooseObjectStylesStore.Save(_looseObjectStyles);
@@ -3384,6 +3484,7 @@ internal sealed partial class DrawingWindow : Window
         _freeThickness = st.FreeThickness;
         _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
         _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
+        _lineDashed = st.IsDashed;
     }
 
     /// <summary>Snapshots the live property state (<c>_fill</c>/<c>_stroke</c>/…) into the active
@@ -3403,6 +3504,9 @@ internal sealed partial class DrawingWindow : Window
         st.FreeThickness = _freeThickness;
         st.ArrowHead = _arrowHead.ToString();
         st.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(_arrowHorizontalLabelAngleDeg);
+        // Deliberately NOT persisting _lineDashed: by design, each new loose-line session starts
+        // dashed (see ResolveLooseStyle for the other half). Per-item IsDashed still round-trips
+        // through DrawItemDto so an existing solid line on the canvas keeps its style.
         DrawingLooseObjectStylesStore.Save(_looseObjectStyles);
     }
 
@@ -3549,7 +3653,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void RefreshSizeInfo(string? kind)
     {
-        var showSize = kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow";
+        var showSize = kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line";
         SetPropertySectionVisibility(_sizeHeader, showSize);
         SetPropertySectionVisibility(_sizeLine1, showSize);
         SetPropertySectionVisibility(_sizeLine2, showSize);
@@ -3627,12 +3731,27 @@ internal sealed partial class DrawingWindow : Window
                 SetPropertySectionVisibility(_sizeLine2, true);
                 break;
             }
+            case "line":
+            {
+                var dx = item.P2.X - item.P1.X;
+                var dy = item.P2.Y - item.P1.Y;
+                var length = Math.Sqrt(dx * dx + dy * dy);
+                // Mirror arrow's convention: 0° = horizontal pointing right, positive = clockwise
+                // (screen Y is downward), so the displayed value matches the visual tilt the user
+                // sees on screen.
+                var angleDeg = length > 0.0001 ? Math.Atan2(dy, dx) * 180.0 / Math.PI : 0;
+                _sizeLine1.Text = $"Length: {Math.Round(length):0} px";
+                _sizeLine2.Text = $"Angle: {angleDeg:0.0}°";
+                SetPropertySectionVisibility(_sizeLine1, true);
+                SetPropertySectionVisibility(_sizeLine2, true);
+                break;
+            }
         }
     }
 
     private DrawItem? GetSizeDisplaySource(string? kind)
     {
-        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow"))
+        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line"))
             return null;
         if (_isDrawing && _drawingItem != null && _drawingItem.Kind == kind)
             return _drawingItem;
@@ -3656,6 +3775,8 @@ internal sealed partial class DrawingWindow : Window
             _textColorPicker?.SetSelected(_textColor);
             _freehandColorPicker?.SetSelected(_stroke);
             _arrowColorPicker?.SetSelected(_stroke);
+            _lineColorPicker?.SetSelected(_stroke);
+            if (_lineStyleCombo != null) _lineStyleCombo.SelectedIndex = _lineDashed ? 1 : 0;
             if (_shadowCheck != null) _shadowCheck.IsChecked = _hasShadow;
             if (_thicknessBox != null) _thicknessBox.Text = Math.Clamp(_thickness, ThicknessMin, ThicknessMax).ToString("0.##");
             if (_cornerRadiusBox != null) _cornerRadiusBox.Text = Math.Clamp(_cornerRadius, CornerRadiusMin, CornerRadiusMax).ToString("0.##");
@@ -3813,6 +3934,8 @@ internal sealed partial class DrawingWindow : Window
             _arrowMargin = sel.ClearanceMargin > 0 ? sel.ClearanceMargin : DefaultArrowClearanceMargin;
             _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(sel.HorizontalLabelAngleDeg);
         }
+        if (sel.Kind == "line")
+            _lineDashed = sel.IsDashed;
         SyncPropertyControlsFromCurrent();
     }
 
@@ -3855,6 +3978,11 @@ internal sealed partial class DrawingWindow : Window
         else if (sel.Kind == "freehand")
         {
             foreach (var it in _selection.Where(i => i.Kind is "freehand"))
+                it.Stroke = _stroke;
+        }
+        else if (sel.Kind == "line")
+        {
+            foreach (var it in _selection.Where(i => i.Kind is "line"))
                 it.Stroke = _stroke;
         }
         else if (sel.Kind == "text")
@@ -4124,6 +4252,28 @@ internal sealed partial class DrawingWindow : Window
             SnapsToDevicePixels = true,
         };
         return WrapIcon(path);
+    }
+
+    /// <summary>Dashed horizontal line icon used by the "All objects" grid for the loose Line
+    /// tool. Drawn as <c>- - - -</c> centered vertically (matches the arrow icon's centering
+    /// trick: explicit <c>Width</c>/<c>Height</c> on a <c>Path</c> with the geometry placed at
+    /// the box's vertical midpoint).</summary>
+    private static FrameworkElement BuildLineIcon(Brush stroke)
+    {
+        var dashed = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 1,9 L 19,9"),
+            Stroke = stroke,
+            StrokeThickness = 2,
+            StrokeDashArray = new DoubleCollection { 2, 1.5 },
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = null,
+            Width = 20,
+            Height = 18,
+            SnapsToDevicePixels = true,
+        };
+        return WrapIcon(dashed);
     }
 
     private static FrameworkElement BuildTextIcon(Brush color)
@@ -4953,6 +5103,14 @@ internal sealed partial class DrawingWindow : Window
                 Points = new List<Point> { p },
                 FreehandGroupId = _currentFreehandGroupId,
             },
+            Tool.Line => new DrawItem
+            {
+                Kind = "line",
+                P1 = p, P2 = p,
+                Stroke = _stroke,
+                StrokeThickness = Math.Max(1, _thickness),
+                IsDashed = _lineDashed,
+            },
             _ => null,
         };
 
@@ -5015,11 +5173,15 @@ internal sealed partial class DrawingWindow : Window
                 // a possibly-different inferred value.
                 _drawingItem.ClearanceMargin = InferArrowClearanceMargin(_drawingItem);
             }
+            else if (_drawingItem.Kind == "line")
+            {
+                _drawingItem.P2 = SnapLineEndpointToAxis(_drawingItem.P1, p);
+            }
             else
             {
                 _drawingItem.P2 = p;
             }
-            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow")
+            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line")
                 RefreshSizeInfo(_drawingItem.Kind);
             Redraw();
             return;
@@ -5084,7 +5246,7 @@ internal sealed partial class DrawingWindow : Window
                     TranslateItem(it, step.Dx, step.Dy);
                 _moveLast = p;
                 if (GetHomogeneousSelectionKind() is { } moveKind
-                    && moveKind is "rect" or "ellipse" or "diamond" or "domain" or "arrow")
+                    && moveKind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line")
                 {
                     RefreshSizeInfo(moveKind);
                 }
@@ -5172,10 +5334,23 @@ internal sealed partial class DrawingWindow : Window
         if (_isDrawing && _drawingItem != null)
         {
             var b = GetBounds(_drawingItem);
-            if (_drawingItem.Kind != "freehand" && _drawingItem.Kind != "arrow" && (b.Width < 3 || b.Height < 3))
+            // Lines and arrows are linear so a "too small" check on bounding-box width AND height
+            // would discard near-vertical (zero width) and near-horizontal (zero height) drags.
+            // Use a length-based check for those kinds and the bbox check for everything else.
+            if (_drawingItem.Kind is not ("freehand" or "arrow" or "line") && (b.Width < 3 || b.Height < 3))
             {
                 _items.Remove(_drawingItem);
                 _selection.Remove(_drawingItem);
+            }
+            else if (_drawingItem.Kind == "line")
+            {
+                var dx = _drawingItem.P2.X - _drawingItem.P1.X;
+                var dy = _drawingItem.P2.Y - _drawingItem.P1.Y;
+                if (Math.Sqrt(dx * dx + dy * dy) < 4)
+                {
+                    _items.Remove(_drawingItem);
+                    _selection.Remove(_drawingItem);
+                }
             }
             else if (_drawingItem.Kind == "arrow")
             {
@@ -5303,6 +5478,7 @@ internal sealed partial class DrawingWindow : Window
             case "domain":
             case "arrow":
             case "text":
+            case "line":
                 return new Rect(
                     Math.Min(it.P1.X, it.P2.X),
                     Math.Min(it.P1.Y, it.P2.Y),
@@ -5368,6 +5544,11 @@ internal sealed partial class DrawingWindow : Window
                 var path = GetArrowPathPoints(it);
                 return HitTestArrowPath(p, path, tol);
             }
+            case "line":
+            {
+                var tol = Math.Max(6, it.StrokeThickness + 4);
+                return PointNearSegment(p, it.P1, it.P2, tol);
+            }
             case "freehand":
             {
                 var outline = DrawingFreehandGeometry.Flatten(it.Points);
@@ -5396,9 +5577,36 @@ internal sealed partial class DrawingWindow : Window
         return (p - proj).Length <= tolerance;
     }
 
+    /// <summary>If <paramref name="candidate"/> is within
+    /// <see cref="LineAxisSnapToleranceDeg"/> of being perfectly horizontal or vertical relative
+    /// to <paramref name="fixedEnd"/>, returns the axis-locked point; otherwise returns
+    /// <paramref name="candidate"/> unchanged. Used for both initial-drawing and endpoint-resize
+    /// of loose Line items so users don't have to pixel-hunt to get a clean axis-aligned guide.</summary>
+    private static Point SnapLineEndpointToAxis(Point fixedEnd, Point candidate)
+    {
+        var dx = candidate.X - fixedEnd.X;
+        var dy = candidate.Y - fixedEnd.Y;
+        var len = Math.Sqrt(dx * dx + dy * dy);
+        // Sub-pixel drags can't meaningfully define an angle; leave them alone.
+        if (len < 0.5) return candidate;
+
+        // Angle off horizontal in [0, 90] degrees.
+        var angleOffHorizontalDeg = Math.Atan2(Math.Abs(dy), Math.Abs(dx)) * 180.0 / Math.PI;
+        if (angleOffHorizontalDeg <= LineAxisSnapToleranceDeg)
+            return new Point(candidate.X, fixedEnd.Y);
+        if (angleOffHorizontalDeg >= 90.0 - LineAxisSnapToleranceDeg)
+            return new Point(fixedEnd.X, candidate.Y);
+        return candidate;
+    }
+
+    /// <summary>Maximum tilt off horizontal/vertical (degrees) at which the loose Line tool snaps
+    /// the dragged endpoint to a perfectly axis-aligned position. Intentionally tight so the snap
+    /// only kicks in for "obviously meant horizontal/vertical" drags.</summary>
+    private const double LineAxisSnapToleranceDeg = 1.0;
+
     private static Point[] GetResizeHandles(DrawItem it)
     {
-        if (it.Kind == "arrow")
+        if (it.Kind == "arrow" || it.Kind == "line")
             return new[] { it.P1, it.P2 };
         if (it.Kind == "text" || it.Kind == "freehand")
             return Array.Empty<Point>();
@@ -5430,7 +5638,7 @@ internal sealed partial class DrawingWindow : Window
 
     private static Cursor CursorForHandle(DrawItem it, int idx)
     {
-        if (it.Kind == "arrow") return Cursors.Hand;
+        if (it.Kind == "arrow" || it.Kind == "line") return Cursors.Hand;
         return idx switch
         {
             0 or 4 => Cursors.SizeNWSE,
@@ -5453,6 +5661,16 @@ internal sealed partial class DrawingWindow : Window
                     it.SimpleHeadAtP2 = true;
             }
             SyncArrowRouteBendsToAnchors(it);
+            return;
+        }
+
+        if (it.Kind == "line")
+        {
+            // Snap relative to the *fixed* endpoint so dragging either handle to within ~1° of
+            // horizontal/vertical locks the line to that axis. Matches the live snap during
+            // initial drawing in Canvas_MouseMove.
+            if (handle == 0) it.P1 = SnapLineEndpointToAxis(it.P2, p);
+            else if (handle == 1) it.P2 = SnapLineEndpointToAxis(it.P1, p);
             return;
         }
 
@@ -5869,6 +6087,30 @@ internal sealed partial class DrawingWindow : Window
                 RenderArrowShaft(it, surface);
                 AddArrowHeads(it, surface);
                 RenderArrowLabel(it, surface);
+                break;
+            }
+            case "line":
+            {
+                var line = new System.Windows.Shapes.Line
+                {
+                    X1 = it.P1.X,
+                    Y1 = it.P1.Y,
+                    X2 = it.P2.X,
+                    Y2 = it.P2.Y,
+                    Stroke = it.Stroke,
+                    StrokeThickness = it.StrokeThickness,
+                    StrokeStartLineCap = PenLineCap.Round,
+                    StrokeEndLineCap = PenLineCap.Round,
+                    IsHitTestVisible = false,
+                };
+                if (it.IsDashed)
+                {
+                    // DashArray units are multiples of the stroke thickness, so this stays visually
+                    // dashed across the whole thickness range without manual rescaling.
+                    line.StrokeDashArray = new DoubleCollection { 4, 3 };
+                    line.StrokeDashCap = PenLineCap.Round;
+                }
+                surface.Children.Add(line);
                 break;
             }
             case "text":
@@ -6802,6 +7044,7 @@ internal sealed partial class DrawingWindow : Window
             SimpleHeadAtP2 = it.SimpleHeadAtP2,
             ClearanceMargin = it.ClearanceMargin,
             HorizontalLabelAngleDeg = it.HorizontalLabelAngleDeg,
+            IsDashed = it.IsDashed,
             FreehandGroupId = it.FreehandGroupId,
             Id = it.Id,
             AnchorStartShapeId = it.AnchorStartShapeId,
@@ -6848,6 +7091,7 @@ internal sealed partial class DrawingWindow : Window
             SimpleHeadAtP2 = dto.SimpleHeadAtP2,
             ClearanceMargin = dto.ClearanceMargin > 0 ? dto.ClearanceMargin : DefaultArrowClearanceMargin,
             HorizontalLabelAngleDeg = Math.Clamp(dto.HorizontalLabelAngleDeg, 0, 89),
+            IsDashed = dto.IsDashed,
             FreehandGroupId = dto.FreehandGroupId,
             Id = dto.Id,
             AnchorStartShapeId = dto.AnchorStartShapeId,
