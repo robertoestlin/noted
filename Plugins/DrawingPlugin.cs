@@ -7838,7 +7838,9 @@ internal sealed class ThemeSettingsWindow : Window
     private void ApplyBuiltInLock(bool locked)
     {
         if (_nameBox != null) _nameBox.IsEnabled = !locked;
-        if (_tabs != null) _tabs.IsEnabled = !locked;
+        // Disable each per-kind panel (rather than the whole TabControl) so the tab headers
+        // themselves remain clickable for read-only inspection of built-in themes.
+        foreach (var panel in _kindPanels.Values) panel.IsEnabled = !locked;
         if (_builtInHint != null)
             _builtInHint.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
     }
