@@ -1218,6 +1218,8 @@ public partial class MainWindow
         _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
         _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
         _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
+        _drawingDefaultDomainWidth = DefaultDrawingDomainWidth;
+        _drawingDefaultDomainHeight = DefaultDrawingDomainHeight;
         _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
         _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
         _drawingArrowHorizontalLabelAngleDeg = DefaultDrawingArrowHorizontalLabelAngleDeg;
@@ -1411,6 +1413,8 @@ public partial class MainWindow
             _drawingDefaultEllipseHeight = stored.EllipseHeight;
             _drawingDefaultDiamondWidth = stored.DiamondWidth;
             _drawingDefaultDiamondHeight = stored.DiamondHeight;
+            _drawingDefaultDomainWidth = stored.DomainWidth;
+            _drawingDefaultDomainHeight = stored.DomainHeight;
             return;
         }
 
@@ -1426,6 +1430,8 @@ public partial class MainWindow
             state.DrawingDefaultEllipseHeight, DefaultDrawingEllipseHeight);
         _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
         _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
+        _drawingDefaultDomainWidth = DefaultDrawingDomainWidth;
+        _drawingDefaultDomainHeight = DefaultDrawingDomainHeight;
         SaveDrawingDefaultSizes();
     }
 
@@ -1438,6 +1444,8 @@ public partial class MainWindow
             EllipseHeight = _drawingDefaultEllipseHeight,
             DiamondWidth = _drawingDefaultDiamondWidth,
             DiamondHeight = _drawingDefaultDiamondHeight,
+            DomainWidth = _drawingDefaultDomainWidth,
+            DomainHeight = _drawingDefaultDomainHeight,
         });
 
     private static int NormalizeDrawingShapeSize(int? value, int defaultValue)

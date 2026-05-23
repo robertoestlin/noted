@@ -120,7 +120,7 @@ internal sealed partial class DrawingWindow
         if (shape == null)
             return new Point(0, 0);
 
-        if (shape.Kind == "rect" && index is int idx)
+        if (shape.Kind is "rect" or "domain" && index is int idx)
         {
             return idx switch
             {

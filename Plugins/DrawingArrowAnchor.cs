@@ -36,7 +36,7 @@ internal sealed partial class DrawingWindow
     }
 
     private static bool IsAnchorableShape(DrawItem it)
-        => it.Kind is "rect" or "ellipse" or "diamond";
+        => it.Kind is "rect" or "ellipse" or "diamond" or "domain";
 
     private DrawItem? HitTestAnchorableShape(Point p)
     {
@@ -98,7 +98,7 @@ internal sealed partial class DrawingWindow
         if (b.Width < 1 || b.Height < 1)
             return Array.Empty<Point>();
 
-        if (shape.Kind == "rect")
+        if (shape.Kind is "rect" or "domain")
         {
             var cx = b.Left + b.Width / 2;
             var cy = b.Top + b.Height / 2;

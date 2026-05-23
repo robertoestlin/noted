@@ -171,6 +171,44 @@
       "FreeThickness": 3
     }
   ],
+  "Domains": [
+    {
+      "Enabled": true,
+      "Fill": "Transparent",
+      "Stroke": "#000000",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 16,
+      "Thickness": 1.5,
+      "CornerRadius": 0,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#F5F5F5",
+      "Stroke": "#9E9E9E",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 16,
+      "Thickness": 1.5,
+      "CornerRadius": 0,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": false,
+      "Fill": "#FFFFFF",
+      "Stroke": "#000000",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 16,
+      "Thickness": 1.5,
+      "CornerRadius": 0,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    }
+  ],
   "Arrows": [
     {
       "Enabled": true,

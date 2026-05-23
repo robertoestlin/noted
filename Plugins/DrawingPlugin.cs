@@ -31,6 +31,8 @@ public partial class MainWindow
     internal const int DefaultDrawingEllipseHeight = 58;
     internal const int DefaultDrawingDiamondWidth = 120;
     internal const int DefaultDrawingDiamondHeight = 120;
+    internal const int DefaultDrawingDomainWidth = 240;
+    internal const int DefaultDrawingDomainHeight = 160;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 20;
     internal const int DefaultDrawingArrowClearanceMarginPx = 35;
     internal const int MinDrawingArrowClearanceMarginPx = 0;
@@ -51,6 +53,8 @@ public partial class MainWindow
     private int _drawingDefaultEllipseHeight = DefaultDrawingEllipseHeight;
     private int _drawingDefaultDiamondWidth = DefaultDrawingDiamondWidth;
     private int _drawingDefaultDiamondHeight = DefaultDrawingDiamondHeight;
+    private int _drawingDefaultDomainWidth = DefaultDrawingDomainWidth;
+    private int _drawingDefaultDomainHeight = DefaultDrawingDomainHeight;
     private int _drawingShapeSizeSnapThresholdPx = DefaultDrawingShapeSizeSnapThresholdPx;
     private int _drawingArrowClearanceMarginPx = DefaultDrawingArrowClearanceMarginPx;
     private int _drawingArrowHorizontalLabelAngleDeg = DefaultDrawingArrowHorizontalLabelAngleDeg;
@@ -66,6 +70,10 @@ public partial class MainWindow
             case "diamond":
                 standardWidth = _drawingDefaultDiamondWidth;
                 standardHeight = _drawingDefaultDiamondHeight;
+                return;
+            case "domain":
+                standardWidth = _drawingDefaultDomainWidth;
+                standardHeight = _drawingDefaultDomainHeight;
                 return;
             default:
                 standardWidth = _drawingDefaultEllipseWidth;
@@ -84,6 +92,8 @@ public partial class MainWindow
         EllipseHeight = _drawingDefaultEllipseHeight,
         DiamondWidth = _drawingDefaultDiamondWidth,
         DiamondHeight = _drawingDefaultDiamondHeight,
+        DomainWidth = _drawingDefaultDomainWidth,
+        DomainHeight = _drawingDefaultDomainHeight,
     };
 
     /// <summary>Returns the effective default size for the given variant: per-variant
@@ -596,6 +606,7 @@ internal sealed class DrawingTheme
     public List<ThemeToolStyle> Rectangles { get; set; } = new();
     public List<ThemeToolStyle> Ellipses { get; set; } = new();
     public List<ThemeToolStyle> Diamonds { get; set; } = new();
+    public List<ThemeToolStyle> Domains { get; set; } = new();
     public List<ThemeToolStyle> Arrows { get; set; } = new();
     public List<ThemeToolStyle> Texts { get; set; } = new();
     public List<ThemeToolStyle> Freehands { get; set; } = new();
@@ -603,6 +614,7 @@ internal sealed class DrawingTheme
     public int ActiveRectangleIndex { get; set; }
     public int ActiveEllipseIndex { get; set; }
     public int ActiveDiamondIndex { get; set; }
+    public int ActiveDomainIndex { get; set; }
     public int ActiveArrowIndex { get; set; }
     public int ActiveTextIndex { get; set; }
     public int ActiveFreehandIndex { get; set; }
@@ -611,6 +623,7 @@ internal sealed class DrawingTheme
     public ThemeToolStyle? Rectangle { get; set; }
     public ThemeToolStyle? Ellipse { get; set; }
     public ThemeToolStyle? Diamond { get; set; }
+    public ThemeToolStyle? Domain { get; set; }
     public ThemeToolStyle? Arrow { get; set; }
     public ThemeToolStyle? Text { get; set; }
     public ThemeToolStyle? Freehand { get; set; }
@@ -633,6 +646,7 @@ internal sealed class DrawingTheme
         Rectangle ??= seed.Clone();
         Ellipse ??= seed.Clone();
         Diamond ??= seed.Clone();
+        Domain ??= seed.Clone();
         if (Arrow == null)
         {
             Arrow = seed.Clone();
@@ -651,6 +665,9 @@ internal sealed class DrawingTheme
         // with all variants disabled so the toolbar/property panel only surfaces the tool after
         // the user explicitly enables it in theme settings.
         EnsureVariantList(Diamonds, Diamond!, defaultFirstEnabled: false);
+        // Domains are opt-in for the same reason — older themes don't carry a Domains list and
+        // shouldn't suddenly grow a domain toolbar slot just because the field now exists.
+        EnsureVariantList(Domains, Domain!, defaultFirstEnabled: false);
         EnsureVariantList(Arrows, Arrow!);
         EnsureVariantList(Texts, Text!);
         EnsureVariantList(Freehands, Freehand!);
@@ -658,6 +675,7 @@ internal sealed class DrawingTheme
         ActiveRectangleIndex = ClampActiveIndex(Rectangles, ActiveRectangleIndex);
         ActiveEllipseIndex = ClampActiveIndex(Ellipses, ActiveEllipseIndex);
         ActiveDiamondIndex = ClampActiveIndex(Diamonds, ActiveDiamondIndex);
+        ActiveDomainIndex = ClampActiveIndex(Domains, ActiveDomainIndex);
         ActiveArrowIndex = ClampActiveIndex(Arrows, ActiveArrowIndex);
         ActiveTextIndex = ClampActiveIndex(Texts, ActiveTextIndex);
         ActiveFreehandIndex = ClampActiveIndex(Freehands, ActiveFreehandIndex);
@@ -694,6 +712,7 @@ internal sealed class DrawingTheme
         "rect" => Rectangles,
         "ellipse" => Ellipses,
         "diamond" => Diamonds,
+        "domain" => Domains,
         "arrow" => Arrows,
         "text" => Texts,
         "freehand" => Freehands,
@@ -705,6 +724,7 @@ internal sealed class DrawingTheme
         "rect" => ActiveRectangleIndex,
         "ellipse" => ActiveEllipseIndex,
         "diamond" => ActiveDiamondIndex,
+        "domain" => ActiveDomainIndex,
         "arrow" => ActiveArrowIndex,
         "text" => ActiveTextIndex,
         "freehand" => ActiveFreehandIndex,
@@ -718,6 +738,7 @@ internal sealed class DrawingTheme
             case "rect": ActiveRectangleIndex = idx; break;
             case "ellipse": ActiveEllipseIndex = idx; break;
             case "diamond": ActiveDiamondIndex = idx; break;
+            case "domain": ActiveDomainIndex = idx; break;
             case "arrow": ActiveArrowIndex = idx; break;
             case "text": ActiveTextIndex = idx; break;
             case "freehand": ActiveFreehandIndex = idx; break;
@@ -744,6 +765,7 @@ internal sealed class DrawingTheme
         Rectangle = r.Clone();
         Ellipse = GetActiveVariant("ellipse").Clone();
         Diamond = GetActiveVariant("diamond").Clone();
+        Domain = GetActiveVariant("domain").Clone();
         Arrow = a.Clone();
         Text = GetActiveVariant("text").Clone();
         Freehand = f.Clone();
@@ -773,18 +795,21 @@ internal sealed class DrawingTheme
         Rectangle = Rectangle?.Clone(),
         Ellipse = Ellipse?.Clone(),
         Diamond = Diamond?.Clone(),
+        Domain = Domain?.Clone(),
         Arrow = Arrow?.Clone(),
         Text = Text?.Clone(),
         Freehand = Freehand?.Clone(),
         Rectangles = Rectangles.Select(s => s.Clone()).ToList(),
         Ellipses = Ellipses.Select(s => s.Clone()).ToList(),
         Diamonds = Diamonds.Select(s => s.Clone()).ToList(),
+        Domains = Domains.Select(s => s.Clone()).ToList(),
         Arrows = Arrows.Select(s => s.Clone()).ToList(),
         Texts = Texts.Select(s => s.Clone()).ToList(),
         Freehands = Freehands.Select(s => s.Clone()).ToList(),
         ActiveRectangleIndex = ActiveRectangleIndex,
         ActiveEllipseIndex = ActiveEllipseIndex,
         ActiveDiamondIndex = ActiveDiamondIndex,
+        ActiveDomainIndex = ActiveDomainIndex,
         ActiveArrowIndex = ActiveArrowIndex,
         ActiveTextIndex = ActiveTextIndex,
         ActiveFreehandIndex = ActiveFreehandIndex,
@@ -972,6 +997,8 @@ internal sealed class DrawingDefaultSizes
     public int EllipseHeight { get; set; } = MainWindow.DefaultDrawingEllipseHeight;
     public int DiamondWidth { get; set; } = MainWindow.DefaultDrawingDiamondWidth;
     public int DiamondHeight { get; set; } = MainWindow.DefaultDrawingDiamondHeight;
+    public int DomainWidth { get; set; } = MainWindow.DefaultDrawingDomainWidth;
+    public int DomainHeight { get; set; } = MainWindow.DefaultDrawingDomainHeight;
 
     public DrawingDefaultSizes Clone() => new()
     {
@@ -981,6 +1008,8 @@ internal sealed class DrawingDefaultSizes
         EllipseHeight = EllipseHeight,
         DiamondWidth = DiamondWidth,
         DiamondHeight = DiamondHeight,
+        DomainWidth = DomainWidth,
+        DomainHeight = DomainHeight,
     };
 }
 
@@ -1037,6 +1066,8 @@ internal static class DrawingDefaultSizesStore
         s.EllipseHeight = Clamp(s.EllipseHeight, MainWindow.DefaultDrawingEllipseHeight);
         s.DiamondWidth = Clamp(s.DiamondWidth, MainWindow.DefaultDrawingDiamondWidth);
         s.DiamondHeight = Clamp(s.DiamondHeight, MainWindow.DefaultDrawingDiamondHeight);
+        s.DomainWidth = Clamp(s.DomainWidth, MainWindow.DefaultDrawingDomainWidth);
+        s.DomainHeight = Clamp(s.DomainHeight, MainWindow.DefaultDrawingDomainHeight);
     }
 
     private static int Clamp(int value, int fallback)
@@ -1058,6 +1089,7 @@ internal sealed class DrawingLooseObjectStyles
     public ThemeToolStyle? Rect { get; set; }
     public ThemeToolStyle? Ellipse { get; set; }
     public ThemeToolStyle? Diamond { get; set; }
+    public ThemeToolStyle? Domain { get; set; }
     public ThemeToolStyle? Arrow { get; set; }
     public ThemeToolStyle? Text { get; set; }
     public ThemeToolStyle? Freehand { get; set; }
@@ -1067,6 +1099,7 @@ internal sealed class DrawingLooseObjectStyles
         "rect" => Rect,
         "ellipse" => Ellipse,
         "diamond" => Diamond,
+        "domain" => Domain,
         "arrow" => Arrow,
         "text" => Text,
         "freehand" => Freehand,
@@ -1080,6 +1113,7 @@ internal sealed class DrawingLooseObjectStyles
             case "rect": Rect = style; break;
             case "ellipse": Ellipse = style; break;
             case "diamond": Diamond = style; break;
+            case "domain": Domain = style; break;
             case "arrow": Arrow = style; break;
             case "text": Text = style; break;
             case "freehand": Freehand = style; break;
@@ -1871,14 +1905,14 @@ internal sealed class DrawingEditContext
 
 internal sealed partial class DrawingWindow : Window
 {
-    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand }
+    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand, Domain }
 
     private enum ArrowHeadStyle { None, Simple, Double }
 
     private sealed class DrawItem
     {
         public int Id;
-        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand
+        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand, domain
         public Point P1;
         public Point P2;
         public int? AnchorStartShapeId;
@@ -2104,6 +2138,10 @@ internal sealed partial class DrawingWindow : Window
     /// (rhombus) just touches the diagonals, so half the bounds is the largest centered rect
     /// that fits and is the area we use for text.</summary>
     private const double DiamondInscribedFactor = 0.5;
+    /// <summary>Vertical inset (px) from the top of a Domain shape to the baseline of its title
+    /// strip. Keeps the title from clipping into the stroke and leaves a small visual gutter
+    /// matching the look of typical diagramming-tool "container" shapes.</summary>
+    private const double DomainTitlePaddingTop = 6;
 
     private readonly MainWindow _host;
     private readonly DrawingEditContext? _editContext;
@@ -2753,6 +2791,7 @@ internal sealed partial class DrawingWindow : Window
         "rect" => Tool.Rectangle,
         "ellipse" => Tool.Ellipse,
         "diamond" => Tool.Diamond,
+        "domain" => Tool.Domain,
         "arrow" => Tool.Arrow,
         "text" => Tool.Text,
         "freehand" => Tool.Freehand,
@@ -2764,6 +2803,7 @@ internal sealed partial class DrawingWindow : Window
         Tool.Rectangle => "rect",
         Tool.Ellipse => "ellipse",
         Tool.Diamond => "diamond",
+        Tool.Domain => "domain",
         Tool.Arrow => "arrow",
         Tool.Text => "text",
         Tool.Freehand => "freehand",
@@ -2973,7 +3013,7 @@ internal sealed partial class DrawingWindow : Window
             if (_fontFamilyCombo.SelectedItem is string s)
             {
                 _fontFamily = new FontFamily(s);
-                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "arrow")
+                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow")
                 {
                     PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
@@ -2988,7 +3028,7 @@ internal sealed partial class DrawingWindow : Window
         _fontSizeBox = MakeNumberBox(_fontSize, FontSizeMin, FontSizeMax, v =>
         {
             _fontSize = v;
-            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "arrow")
+            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow")
             {
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
@@ -3089,6 +3129,7 @@ internal sealed partial class DrawingWindow : Window
             Tool.Rectangle => "rect",
             Tool.Ellipse => "ellipse",
             Tool.Diamond => "diamond",
+            Tool.Domain => "domain",
             Tool.Arrow => "arrow",
             Tool.Text => "text",
             Tool.Freehand => "freehand",
@@ -3151,20 +3192,20 @@ internal sealed partial class DrawingWindow : Window
         var isLoose = IsLooseObjectEditMode();
         var isFreehand = kind == "freehand";
         var isArrow = kind == "arrow";
-        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond");
-        SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && kind == "rect");
-        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond");
-        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "text");
+        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain");
+        SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && kind is "rect" or "domain");
+        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain");
+        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
         SetPropertySectionVisibility(_arrowColorRow, isArrow);
         SetPropertySectionVisibility(_thicknessHeader, !isFreehand);
         SetPropertySectionVisibility(_thicknessBox, !isFreehand);
         SetPropertySectionVisibility(_freehandColorRow, isFreehand);
         SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && !isArrow && kind == "rect");
         SetPropertySectionVisibility(_cornerRadiusBox, !isFreehand && !isArrow && kind == "rect");
-        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "arrow");
-        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "arrow");
-        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "arrow");
-        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "arrow");
+        SetPropertySectionVisibility(_fontHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
@@ -3176,7 +3217,7 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_arrowMarginBox, hasNonDirectArrowSel);
         // Shadow lives on the item, not on theme styles; it's only meaningful with a real
         // selection. Hide it in loose-object edit mode.
-        SetPropertySectionVisibility(_shadowCheck, !isLoose && kind is "rect" or "ellipse" or "diamond" or "text");
+        SetPropertySectionVisibility(_shadowCheck, !isLoose && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
         RefreshSizeInfo(isLoose ? null : kind);
         // The per-shape variant gallery and the theme overview gallery cover the same ground; in
         // theme-overview / loose-edit mode we hide the per-shape variants section.
@@ -3202,7 +3243,7 @@ internal sealed partial class DrawingWindow : Window
         if (_themeGalleryPanel != null)
         {
             _themeGalleryPanel.Children.Clear();
-            foreach (var kind in new[] { "rect", "ellipse", "diamond", "arrow", "text", "freehand" })
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand" })
             {
                 var variants = _activeTheme.GetVariants(kind);
                 var tool = MapDrawKindToTool(kind);
@@ -3235,7 +3276,7 @@ internal sealed partial class DrawingWindow : Window
             _allObjectsPanel.Children.Clear();
             var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
             var brushOff = SystemColors.ControlBrush;
-            foreach (var kind in new[] { "rect", "ellipse", "diamond", "arrow", "text", "freehand" })
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand" })
             {
                 var capturedKind = kind;
                 var btn = new Button
@@ -3268,6 +3309,7 @@ internal sealed partial class DrawingWindow : Window
             "rect" => BuildRectIcon(stroke, fill),
             "ellipse" => BuildEllipseIcon(stroke, fill),
             "diamond" => BuildDiamondIcon(stroke, fill),
+            "domain" => BuildDomainIcon(stroke, fill, stroke),
             "arrow" => BuildArrowIcon(stroke),
             "text" => BuildTextIcon(stroke),
             "freehand" => BuildFreeformIcon(stroke),
@@ -3374,7 +3416,7 @@ internal sealed partial class DrawingWindow : Window
     {
         if (_variantsPanel == null || _variantsHeader == null) return;
         _variantsPanel.Children.Clear();
-        if (kind is not ("rect" or "ellipse" or "diamond" or "arrow" or "text" or "freehand"))
+        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow" or "text" or "freehand"))
         {
             SetPropertySectionVisibility(_variantsHeader, false);
             SetPropertySectionVisibility(_variantsPanel, false);
@@ -3471,6 +3513,14 @@ internal sealed partial class DrawingWindow : Window
                     it.FontSize = st.FontSize;
                     it.StrokeThickness = st.Thickness;
                     break;
+                case "domain":
+                    it.Fill = ParseBrush(st.Fill);
+                    it.Stroke = ParseBrush(st.Stroke);
+                    it.TextColor = ParseBrush(st.TextColor);
+                    it.FontFamily = new FontFamily(st.FontFamilyName);
+                    it.FontSize = st.FontSize;
+                    it.StrokeThickness = st.Thickness;
+                    break;
                 case "arrow":
                     it.Stroke = ParseBrush(st.Stroke);
                     it.TextColor = ParseBrush(st.TextColor);
@@ -3499,7 +3549,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void RefreshSizeInfo(string? kind)
     {
-        var showSize = kind is "rect" or "ellipse" or "diamond" or "arrow";
+        var showSize = kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow";
         SetPropertySectionVisibility(_sizeHeader, showSize);
         SetPropertySectionVisibility(_sizeLine1, showSize);
         SetPropertySectionVisibility(_sizeLine2, showSize);
@@ -3557,6 +3607,15 @@ internal sealed partial class DrawingWindow : Window
                 SetPropertySectionVisibility(_sizeLine2, true);
                 break;
             }
+            case "domain":
+            {
+                var b = GetBounds(item);
+                _sizeLine1.Text = $"Width: {Math.Round(b.Width):0} px";
+                _sizeLine2.Text = $"Height: {Math.Round(b.Height):0} px";
+                SetPropertySectionVisibility(_sizeLine1, true);
+                SetPropertySectionVisibility(_sizeLine2, true);
+                break;
+            }
             case "arrow":
             {
                 var path = GetArrowPathPoints(item);
@@ -3573,7 +3632,7 @@ internal sealed partial class DrawingWindow : Window
 
     private DrawItem? GetSizeDisplaySource(string? kind)
     {
-        if (kind is not ("rect" or "ellipse" or "diamond" or "arrow"))
+        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow"))
             return null;
         if (_isDrawing && _drawingItem != null && _drawingItem.Kind == kind)
             return _drawingItem;
@@ -3739,7 +3798,7 @@ internal sealed partial class DrawingWindow : Window
         var sel = SelectionPropertySource();
         if (sel == null) return;
         _fill = sel.Fill;
-        _gradientFill = sel.Kind == "rect" ? sel.GradientFill : Brushes.Transparent;
+        _gradientFill = sel.Kind is "rect" or "domain" ? sel.GradientFill : Brushes.Transparent;
         _hasShadow = sel.HasShadow;
         _stroke = sel.Stroke;
         _textColor = sel.TextColor;
@@ -3774,14 +3833,14 @@ internal sealed partial class DrawingWindow : Window
 
     private void ApplyColorToSelectedCore(DrawItem sel)
     {
-        if (sel.Kind is "rect" or "ellipse" or "diamond")
+        if (sel.Kind is "rect" or "ellipse" or "diamond" or "domain")
         {
-            foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse" or "diamond"))
+            foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse" or "diamond" or "domain"))
             {
                 it.Fill = _fill;
                 it.Stroke = _stroke;
                 it.TextColor = _textColor;
-                if (it.Kind == "rect")
+                if (it.Kind is "rect" or "domain")
                     it.GradientFill = _gradientFill;
             }
         }
@@ -3851,6 +3910,9 @@ internal sealed partial class DrawingWindow : Window
         // Diamonds are opt-in: when no variant is enabled for the active theme we skip the
         // toolbar slot entirely instead of showing a fallback button.
         AddVariantToolButtons(Tool.Diamond, "diamond", "Diamond", optional: true);
+        // Domains are opt-in for the same reason — themes without an enabled domain variant don't
+        // surface a toolbar button.
+        AddVariantToolButtons(Tool.Domain, "domain", "Domain", optional: true);
         AddVariantToolButtons(Tool.Arrow, "arrow", "Arrow (A)");
         AddVariantToolButtons(Tool.Freehand, "freehand", "Freeform (F)");
         AddVariantToolButtons(Tool.Text, "text", "Text (T)");
@@ -3900,6 +3962,7 @@ internal sealed partial class DrawingWindow : Window
         Tool.Rectangle => BuildRectIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill)),
         Tool.Ellipse => BuildEllipseIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill)),
         Tool.Diamond => BuildDiamondIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill)),
+        Tool.Domain => BuildDomainIcon(ParseBrush(st.Stroke), ParseBrush(st.Fill), ParseBrush(st.TextColor)),
         Tool.Arrow => BuildArrowIcon(ParseBrush(st.Stroke)),
         Tool.Text => BuildTextIcon(ParseBrush(st.TextColor)),
         Tool.Freehand => BuildFreeformIcon(ParseBrush(st.Stroke)),
@@ -4012,6 +4075,37 @@ internal sealed partial class DrawingWindow : Window
             SnapsToDevicePixels = true,
         };
         return WrapIcon(d);
+    }
+
+    /// <summary>Icon for the Domain object — a small rectangle with a horizontal divider near the
+    /// top to suggest the title-strip layout the rendered domain uses.</summary>
+    private static FrameworkElement BuildDomainIcon(Brush stroke, Brush fill, Brush titleColor)
+    {
+        var canvas = new Canvas
+        {
+            Width = 20,
+            Height = 16,
+            SnapsToDevicePixels = true,
+        };
+        canvas.Children.Add(new System.Windows.Shapes.Rectangle
+        {
+            Width = 18,
+            Height = 14,
+            Stroke = stroke,
+            StrokeThickness = 1.6,
+            Fill = HasVisibleFill(fill) ? fill : Brushes.Transparent,
+        });
+        var divider = new Line
+        {
+            X1 = 1.5,
+            Y1 = 5.5,
+            X2 = 18.5,
+            Y2 = 5.5,
+            Stroke = titleColor,
+            StrokeThickness = 0.9,
+        };
+        canvas.Children.Add(divider);
+        return WrapIcon(canvas);
     }
 
     private static FrameworkElement BuildArrowIcon(Brush stroke)
@@ -4526,7 +4620,7 @@ internal sealed partial class DrawingWindow : Window
     /// surprising offsets between an edge and a center.</summary>
     private void SnapDefaultSizedShapeToSiblings(DrawItem item)
     {
-        if (item.Kind is not ("rect" or "ellipse" or "diamond")) return;
+        if (item.Kind is not ("rect" or "ellipse" or "diamond" or "domain")) return;
 
         var others = new List<Rect>();
         foreach (var o in _items)
@@ -4587,7 +4681,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" or "diamond" })
+        if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" or "diamond" or "domain" })
         {
             CommitTextEdit();
             var item = _drawingItem;
@@ -4628,7 +4722,7 @@ internal sealed partial class DrawingWindow : Window
         if (e.ClickCount == 2)
         {
             var hitDbl = HitTestTop(p);
-            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "diamond" || hitDbl.Kind == "text" || hitDbl.Kind == "arrow"))
+            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "diamond" || hitDbl.Kind == "domain" || hitDbl.Kind == "text" || hitDbl.Kind == "arrow"))
             {
                 SetSingleSelection(hitDbl);
                 Redraw();
@@ -4780,6 +4874,15 @@ internal sealed partial class DrawingWindow : Window
                 StrokeThickness = _thickness,
                 FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
             },
+            Tool.Domain => new DrawItem
+            {
+                Kind = "domain",
+                P1 = p, P2 = p,
+                Fill = _fill, GradientFill = _gradientFill, Stroke = _stroke,
+                HasShadow = _hasShadow,
+                StrokeThickness = _thickness,
+                FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
+            },
             Tool.Arrow => new DrawItem
             {
                 Kind = "arrow",
@@ -4833,7 +4936,7 @@ internal sealed partial class DrawingWindow : Window
                 if (_drawingItem.Points.Count == 0 || (_drawingItem.Points[^1] - p).Length > 0.75)
                     _drawingItem.Points.Add(p);
             }
-            else if (_drawingItem.Kind is "rect" or "ellipse" or "diamond")
+            else if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain")
             {
                 _host.GetEffectiveDefaultSize(_drawingItem.Kind,
                     _activeTheme.GetActiveVariant(_drawingItem.Kind),
@@ -4868,7 +4971,7 @@ internal sealed partial class DrawingWindow : Window
             {
                 _drawingItem.P2 = p;
             }
-            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "arrow")
+            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow")
                 RefreshSizeInfo(_drawingItem.Kind);
             Redraw();
             return;
@@ -4933,7 +5036,7 @@ internal sealed partial class DrawingWindow : Window
                     TranslateItem(it, step.Dx, step.Dy);
                 _moveLast = p;
                 if (GetHomogeneousSelectionKind() is { } moveKind
-                    && moveKind is "rect" or "ellipse" or "diamond" or "arrow")
+                    && moveKind is "rect" or "ellipse" or "diamond" or "domain" or "arrow")
                 {
                     RefreshSizeInfo(moveKind);
                 }
@@ -5149,6 +5252,7 @@ internal sealed partial class DrawingWindow : Window
             case "rect":
             case "ellipse":
             case "diamond":
+            case "domain":
             case "arrow":
             case "text":
                 return new Rect(
@@ -5203,6 +5307,7 @@ internal sealed partial class DrawingWindow : Window
             case "rect":
             case "ellipse":
             case "diamond":
+            case "domain":
             case "text":
             {
                 var b = GetBounds(it);
@@ -5366,6 +5471,17 @@ internal sealed partial class DrawingWindow : Window
                 preservedEditor.Width = innerW;
                 preservedEditor.Height = innerH;
             }
+            else if (_editingItem.Kind == "domain")
+            {
+                // Domain title lives in a strip across the top of the box, so the editor anchors
+                // to the same band — full width minus a small inset, height capped to roughly
+                // 1.6× the font size so the rest of the body stays untouched.
+                var titleHeight = Math.Max(22, Math.Min(b.Height - 8, _editingItem.FontSize * 1.6));
+                Canvas.SetLeft(preservedEditor, b.Left + 4);
+                Canvas.SetTop(preservedEditor, b.Top + DomainTitlePaddingTop);
+                preservedEditor.Width = Math.Max(40, b.Width - 8);
+                preservedEditor.Height = titleHeight;
+            }
             else if (_editingItem.Kind == "arrow")
             {
                 var path = GetArrowPathPoints(_editingItem);
@@ -5374,7 +5490,7 @@ internal sealed partial class DrawingWindow : Window
                 var (mid, angleDeg, _) = GetArrowPathMetrics(path);
                 LayoutArrowLabelElement(preservedEditor, mid, GetArrowLabelDisplayAngle(_editingItem, angleDeg), size);
             }
-            if (_editingItem.Kind is "rect" or "ellipse" or "diamond")
+            if (_editingItem.Kind is "rect" or "ellipse" or "diamond" or "domain")
                 ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
             _canvas.Children.Add(preservedEditor);
         }
@@ -5659,6 +5775,47 @@ internal sealed partial class DrawingWindow : Window
                 }
                 break;
             }
+            case "domain":
+            {
+                // Domain renders like a rectangle (fill/gradient/stroke/shadow) but the title
+                // text lives in a single-line strip at the top of the box, centered horizontally.
+                // The body is intentionally empty so the user can place other shapes inside the
+                // visible boundary.
+                var b = GetBounds(it);
+                var box = new Rectangle
+                {
+                    Width = b.Width,
+                    Height = b.Height,
+                    Fill = BuildRectFill(it),
+                    Stroke = it.Stroke,
+                    StrokeThickness = it.StrokeThickness,
+                    IsHitTestVisible = false,
+                };
+                if (it.HasShadow) box.Effect = CreateShadowEffect();
+                Canvas.SetLeft(box, b.Left);
+                Canvas.SetTop(box, b.Top);
+                surface.Children.Add(box);
+
+                if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
+                {
+                    var tb = new TextBlock
+                    {
+                        Text = it.Text,
+                        FontSize = it.FontSize,
+                        FontFamily = it.FontFamily,
+                        Foreground = it.TextColor,
+                        TextAlignment = TextAlignment.Center,
+                        TextWrapping = TextWrapping.NoWrap,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        Width = Math.Max(0, b.Width - 8),
+                        IsHitTestVisible = false,
+                    };
+                    Canvas.SetLeft(tb, b.Left + 4);
+                    Canvas.SetTop(tb, b.Top + DomainTitlePaddingTop);
+                    surface.Children.Add(tb);
+                }
+                break;
+            }
             case "arrow":
             {
                 RenderArrowShaft(it, surface);
@@ -5863,12 +6020,13 @@ internal sealed partial class DrawingWindow : Window
         var b = GetBounds(it);
         var isFreshTextItem = it.Kind == "text" && string.IsNullOrEmpty(it.Text);
         var isShapeContainer = it.Kind == "rect" || it.Kind == "ellipse" || it.Kind == "diamond";
+        var isDomainTitle = it.Kind == "domain";
         var isArrowLabel = it.Kind == "arrow";
 
         Brush boxBackground;
         Brush boxBorder;
         Thickness boxBorderThickness;
-        if (isShapeContainer || isArrowLabel)
+        if (isShapeContainer || isArrowLabel || isDomainTitle)
         {
             boxBackground = Brushes.Transparent;
             boxBorder = Brushes.Transparent;
@@ -5897,10 +6055,12 @@ internal sealed partial class DrawingWindow : Window
             BorderBrush = boxBorder,
             BorderThickness = boxBorderThickness,
             Padding = new Thickness(0),
-            AcceptsReturn = true,
+            // Domain titles are a single line that sits in a fixed-height strip; accepting Return
+            // there would push the rest of the title outside the strip with no recourse.
+            AcceptsReturn = !isDomainTitle,
             TextWrapping = isShapeContainer ? TextWrapping.Wrap : TextWrapping.NoWrap,
-            HorizontalContentAlignment = isShapeContainer || isArrowLabel ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-            VerticalContentAlignment = isShapeContainer || isArrowLabel ? VerticalAlignment.Center : VerticalAlignment.Top,
+            HorizontalContentAlignment = isShapeContainer || isArrowLabel || isDomainTitle ? HorizontalAlignment.Center : HorizontalAlignment.Left,
+            VerticalContentAlignment = isShapeContainer || isArrowLabel ? VerticalAlignment.Center : (isDomainTitle ? VerticalAlignment.Top : VerticalAlignment.Top),
         };
         double left, top, w, h;
         if (it.Kind == "rect")
@@ -5927,6 +6087,15 @@ internal sealed partial class DrawingWindow : Window
             top = b.Top + (b.Height - innerH) / 2;
             w = innerW;
             h = innerH;
+        }
+        else if (it.Kind == "domain")
+        {
+            // Title strip across the top of the box — fixed height (~1.6× font size) so the
+            // body of the domain stays empty.
+            left = b.Left + 4;
+            top = b.Top + DomainTitlePaddingTop;
+            w = Math.Max(40, b.Width - 8);
+            h = Math.Max(22, Math.Min(b.Height - 8, it.FontSize * 1.6));
         }
         else if (isArrowLabel)
         {
@@ -5964,7 +6133,7 @@ internal sealed partial class DrawingWindow : Window
             box.Width = w;
             box.Height = h;
         }
-        if (isShapeContainer)
+        if (isShapeContainer || isDomainTitle)
             ApplyShapeTextEditorChrome(box, it);
 
         var originalText = it.Text ?? "";
@@ -6259,7 +6428,7 @@ internal sealed partial class DrawingWindow : Window
 
     /// <summary>Items whose text can be edited via the in-canvas text editor.</summary>
     private static bool IsTextEditableKind(string kind)
-        => kind is "rect" or "ellipse" or "diamond" or "text" or "arrow";
+        => kind is "rect" or "ellipse" or "diamond" or "domain" or "text" or "arrow";
 
     /// <summary>Find the next (or previous) draw item to jump to when Tab is pressed inside the
     /// text editor of <paramref name="current"/>. Preference order:
@@ -7320,6 +7489,41 @@ internal static class DrawingThemePreview
         c.Children.Add(label);
     }
 
+    public static void AppendDomain(Canvas c, ThemeToolStyle st, double x, double y, double w, double h)
+    {
+        // Domain preview: matches the live renderer — a rectangle with the title text in a
+        // single-line strip at the top.
+        var fill = DrawingWindow.ParseBrush(st.Fill);
+        var stroke = DrawingWindow.ParseBrush(st.Stroke);
+        var rect = new System.Windows.Shapes.Rectangle
+        {
+            Width = w,
+            Height = h,
+            Fill = fill,
+            Stroke = stroke,
+            StrokeThickness = st.Thickness,
+            IsHitTestVisible = false,
+        };
+        Canvas.SetLeft(rect, x);
+        Canvas.SetTop(rect, y);
+        c.Children.Add(rect);
+        var fs = Math.Clamp(st.FontSize * 0.42, 8, Math.Max(8, h * 0.45));
+        var title = new TextBlock
+        {
+            Text = "Domain",
+            FontSize = fs,
+            FontFamily = SafeFont(st.FontFamilyName),
+            Foreground = DrawingWindow.ParseBrush(st.TextColor),
+            TextAlignment = TextAlignment.Center,
+            Width = Math.Max(0, w - 8),
+            IsHitTestVisible = false,
+        };
+        title.Measure(new Size(w - 8, h));
+        Canvas.SetLeft(title, x + 4);
+        Canvas.SetTop(title, y + 4);
+        c.Children.Add(title);
+    }
+
     public static void AppendArrow(Canvas c, ThemeToolStyle st, Point p1, Point p2)
     {
         var stroke = DrawingWindow.ParseBrush(st.Stroke);
@@ -7458,6 +7662,7 @@ internal sealed class ThemeSettingsWindow : Window
         ["rect"] = new(),
         ["ellipse"] = new(),
         ["diamond"] = new(),
+        ["domain"] = new(),
         ["arrow"] = new(),
         ["text"] = new(),
         ["freehand"] = new(),
@@ -7682,6 +7887,7 @@ internal sealed class ThemeSettingsWindow : Window
         foreach (var (kind, header) in new[]
         {
             ("rect", "Rectangle"), ("ellipse", "Circle"), ("diamond", "Diamond"),
+            ("domain", "Domain"),
             ("arrow", "Arrow"), ("text", "Text"), ("freehand", "Freeform"),
         })
         {
@@ -7855,6 +8061,9 @@ internal sealed class ThemeSettingsWindow : Window
             case "diamond":
                 BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: false, kind, index);
                 break;
+            case "domain":
+                BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: false, kind, index);
+                break;
             case "arrow":
                 BuildShapeFields(sp, ui, includeFill: false, includeText: true, includeCorner: false, kind, index);
                 sp.Children.Add(EditorLabel("Arrow head"));
@@ -7972,7 +8181,7 @@ internal sealed class ThemeSettingsWindow : Window
             ui.Corner.TextChanged += (_, _) => MutateVariant(kind, index, s => { if (double.TryParse(ui.Corner!.Text, out var v)) s.CornerRadius = Math.Max(0, v); });
         }
 
-        if (kind is "rect" or "ellipse" or "diamond")
+        if (kind is "rect" or "ellipse" or "diamond" or "domain")
             BuildCustomSizeFields(sp, ui, kind, index);
     }
 
@@ -8028,6 +8237,7 @@ internal sealed class ThemeSettingsWindow : Window
         "rect" => (_globalDefaultSizes.RectangleWidth, _globalDefaultSizes.RectangleHeight),
         "ellipse" => (_globalDefaultSizes.EllipseWidth, _globalDefaultSizes.EllipseHeight),
         "diamond" => (_globalDefaultSizes.DiamondWidth, _globalDefaultSizes.DiamondHeight),
+        "domain" => (_globalDefaultSizes.DomainWidth, _globalDefaultSizes.DomainHeight),
         _ => (0, 0),
     };
 
@@ -8261,6 +8471,7 @@ internal sealed class ThemeSettingsWindow : Window
         Section("Rectangle", _editing.Rectangles, (st, top) => DrawingThemePreview.AppendRect(_previewCanvas!, st, x, top, w, 36), 42);
         Section("Circle", _editing.Ellipses, (st, top) => DrawingThemePreview.AppendEllipse(_previewCanvas!, st, x, top, w, 36), 42);
         Section("Diamond", _editing.Diamonds, (st, top) => DrawingThemePreview.AppendDiamond(_previewCanvas!, st, x, top, w, 36), 42);
+        Section("Domain", _editing.Domains, (st, top) => DrawingThemePreview.AppendDomain(_previewCanvas!, st, x, top, w, 44), 50);
         Section("Arrow", _editing.Arrows, (st, top) => DrawingThemePreview.AppendArrow(_previewCanvas!, st, new Point(x + 12, top + 14), new Point(x + w - 4, top + 4)), 22);
         Section("Text", _editing.Texts, (st, top) => DrawingThemePreview.AppendText(_previewCanvas!, st, x + 2, top, "Sample text"), 26);
         Section("Freeform", _editing.Freehands, (st, top) => DrawingThemePreview.AppendFreehand(_previewCanvas!, st, x, top + 10, w), 26);
