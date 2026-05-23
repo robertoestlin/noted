@@ -1937,6 +1937,10 @@ public partial class MainWindow : Window
         {
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
+            // IgnoreImageCache: WPF otherwise keys its internal bitmap cache by URI, so a file
+            // that's been overwritten on disk (e.g. via the bulk-grid action) would still come
+            // back as the previously-decoded version even after our own _inlineImageCache miss.
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.UriSource = new Uri(imagePath, UriKind.Absolute);
             bitmap.EndInit();
@@ -2460,6 +2464,14 @@ public partial class MainWindow : Window
         var editDrawingItem = new MenuItem { Header = "Edit drawing" };
         editDrawingItem.Click += (_, _) => EditDrawingAtCaret(editor);
 
+        var drawingsGridSubmenu = new MenuItem { Header = "Drawings on this page" };
+        var showGridAllItem = new MenuItem { Header = "Show grid in all drawings" };
+        showGridAllItem.Click += (_, _) => BulkSetGridAndReport(editor, gridOn: true);
+        var hideGridAllItem = new MenuItem { Header = "Hide grid in all drawings" };
+        hideGridAllItem.Click += (_, _) => BulkSetGridAndReport(editor, gridOn: false);
+        drawingsGridSubmenu.Items.Add(showGridAllItem);
+        drawingsGridSubmenu.Items.Add(hideGridAllItem);
+
         var sepSpreadsheet = new Separator();
         var addSpreadsheetItem = new MenuItem { Header = "Add spreadsheet" };
         addSpreadsheetItem.Click += (_, _) => InsertSpreadsheetSection(editor);
@@ -2483,6 +2495,7 @@ public partial class MainWindow : Window
         menu.Items.Add(resetImageSizeItem);
         menu.Items.Add(openImageFolderItem);
         menu.Items.Add(editDrawingItem);
+        menu.Items.Add(drawingsGridSubmenu);
         var sepBeforeLineAssign = new Separator();
         menu.Items.Add(sepBeforeLineAssign);
         menu.Items.Add(assignLineOwnerItem);
@@ -2537,6 +2550,10 @@ public partial class MainWindow : Window
             bool canEditDrawing = CanEditDrawingAtCaret(editor);
             editDrawingItem.Visibility = canEditDrawing ? Visibility.Visible : Visibility.Collapsed;
             editDrawingItem.IsEnabled = canEditDrawing;
+
+            bool hasAnyDrawing = EditorHasAnyDrawingMarker(editor);
+            drawingsGridSubmenu.Visibility = hasAnyDrawing ? Visibility.Visible : Visibility.Collapsed;
+            drawingsGridSubmenu.IsEnabled = hasAnyDrawing;
 
             var isBulletLine = doc != null && TryGetBulletLineAtCaret(editor, out _, out _, out _);
             bulletInfoItem.IsEnabled = isBulletLine;

@@ -357,6 +357,125 @@ public partial class MainWindow
         return withSuffix.Select(t => t.ImageName).ToList();
     }
 
+    /// <summary>Returns <c>true</c> when <paramref name="editor"/>'s document has at least one
+    /// line whose inline-image marker refers to a drawing file (<c>drawing-...png</c>). Cheap —
+    /// stops on the first hit. Used to gate the "Drawings on this page" context menu.</summary>
+    internal bool EditorHasAnyDrawingMarker(TextEditor editor)
+    {
+        if (editor.Document == null) return false;
+        for (int i = 1; i <= editor.Document.LineCount; i++)
+        {
+            var line = editor.Document.GetLineByNumber(i);
+            var lineText = editor.Document.GetText(line.Offset, line.Length);
+            if (TryGetInlineImageMarker(lineText, out var marker)
+                && marker.FileName.StartsWith(DrawingFileNamePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Wrapper around <see cref="SetGridForAllDrawingsInEditor"/> that surfaces a small
+    /// "what just happened" message — bulk PNG re-rendering can take a second per drawing on
+    /// slower machines, so silent failure (or silent success with zero changes) would be
+    /// confusing.</summary>
+    private void BulkSetGridAndReport(TextEditor editor, bool gridOn)
+    {
+        var changed = SetGridForAllDrawingsInEditor(editor, gridOn);
+        var verb = gridOn ? "Showed" : "Hid";
+        string message = changed switch
+        {
+            0 => "No drawings on this page needed updating — they already match.",
+            1 => $"{verb} grid in 1 drawing on this page.",
+            _ => $"{verb} grid in {changed} drawings on this page.",
+        };
+        MessageBox.Show(this, message, "Drawings on this page",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    /// <summary>Iterates every inline drawing marker on <paramref name="editor"/>, sets each
+    /// drawing's <see cref="DrawingWorkspaceDto.GridVisible"/> to <paramref name="gridOn"/>, and
+    /// re-renders the PNG so the editor's inline image view immediately reflects the new state.
+    /// Returns the number of drawings that were actually modified (already-matching ones are
+    /// skipped so a no-op bulk action is cheap). Failures on individual drawings are logged but
+    /// don't stop the loop — partial success is better than aborting halfway.</summary>
+    internal int SetGridForAllDrawingsInEditor(TextEditor editor, bool gridOn)
+    {
+        if (editor.Document == null) return 0;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targets = new List<string>();
+        for (int i = 1; i <= editor.Document.LineCount; i++)
+        {
+            var line = editor.Document.GetLineByNumber(i);
+            var lineText = editor.Document.GetText(line.Offset, line.Length);
+            if (!TryGetInlineImageMarker(lineText, out var marker)) continue;
+            if (!marker.FileName.StartsWith(DrawingFileNamePrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!seen.Add(marker.FileName)) continue;
+            targets.Add(marker.FileName);
+        }
+
+        TryGetDocPackageIdForEditor(editor, out var packageId);
+
+        int changed = 0;
+        foreach (var imageName in targets)
+        {
+            var workspaceFileName = Path.ChangeExtension(imageName, ".json");
+            if (string.IsNullOrEmpty(workspaceFileName)) continue;
+
+            string? json = string.IsNullOrEmpty(packageId)
+                ? (File.Exists(Path.Combine(GetDrawingsFolderPath(), workspaceFileName))
+                    ? File.ReadAllText(Path.Combine(GetDrawingsFolderPath(), workspaceFileName))
+                    : null)
+                : _documentationService.TryReadDrawing(_backupFolder, packageId, workspaceFileName);
+            if (json == null) continue;
+
+            var workspace = DrawingWindow.TryDeserialize(json);
+            if (workspace == null) continue;
+
+            if (workspace.GridVisible == gridOn) continue;
+            workspace.GridVisible = gridOn;
+
+            if (!DrawingWindow.TryRenderWorkspaceToPng(this, _lastDrawingThemeName, workspace, out var pngBytes))
+            {
+                AppendAppLog($"Bulk grid update: failed to render PNG for {imageName} — left untouched.");
+                continue;
+            }
+
+            try
+            {
+                var updatedJson = JsonSerializer.Serialize(workspace,
+                    new JsonSerializerOptions { WriteIndented = true });
+
+                if (string.IsNullOrEmpty(packageId))
+                {
+                    File.WriteAllBytes(Path.Combine(GetBackupImagesFolderPath(), imageName), pngBytes);
+                    File.WriteAllText(Path.Combine(GetDrawingsFolderPath(), workspaceFileName), updatedJson);
+                    _inlineImageCache.Remove(imageName);
+                }
+                else
+                {
+                    _documentationService.WriteImage(_backupFolder, packageId!, imageName, pngBytes);
+                    _documentationService.WriteDrawing(_backupFolder, packageId!, workspaceFileName, updatedJson);
+                    _inlineImageCache.Remove(BuildDocPackageImageCacheKey(packageId!, imageName));
+                }
+
+                changed++;
+            }
+            catch (Exception ex)
+            {
+                AppendAppLog($"Bulk grid update: failed to write {imageName}: {ex.Message}");
+            }
+        }
+
+        if (changed > 0)
+            editor.TextArea.TextView.Redraw();
+
+        return changed;
+    }
+
     /// <summary>Extracts <c>N</c> from <c>{baseName}-N.json</c> (or <c>.png</c>). Returns <c>false</c> if the
     /// filename doesn't follow that pattern or <c>N</c> isn't a positive integer.</summary>
     internal static bool TryExtractDrawingVersionSuffix(string fileName, string baseName, out int suffix)
@@ -1609,6 +1728,13 @@ internal sealed class DrawingWorkspaceDto
     public int Version { get; set; } = 1;
     public double CanvasWidth { get; set; } = 2000;
     public double CanvasHeight { get; set; } = 1400;
+    /// <summary>Editor-only background-grid preference for this drawing model. When the user
+    /// re-opens the drawing window, the grid toggle starts in this state. Persisted per drawing
+    /// so each model remembers whether the author was working "on grid". The PNG export is
+    /// always rendered against a solid white background regardless — see
+    /// <c>DrawingWindow.TryRenderPngBytes</c> — so this flag never leaks into the inserted
+    /// image.</summary>
+    public bool GridVisible { get; set; } = true;
     public List<DrawItemDto> Items { get; set; } = new();
 }
 
@@ -1908,6 +2034,15 @@ internal sealed partial class DrawingWindow : Window
     private List<string> _timeMachineVersions = new();
     private bool _suppressTimeMachineSliderChange;
 
+    // ---- Background grid state ----
+    /// <summary>When <c>true</c> the canvas paints a faint tiled grid behind drawing items. The
+    /// grid is rendered as the canvas's <see cref="Canvas.Background"/> brush so it doesn't
+    /// participate in hit testing, undo state, or item layout. It IS baked into the exported
+    /// PNG (so the editor's inline image view shows the grid too); the preference is persisted
+    /// per drawing model in <see cref="DrawingWorkspaceDto.GridVisible"/>.</summary>
+    private bool _gridVisible = true;
+    private DrawingBrush? _gridBrushCache;
+
     private ScrollViewer? _canvasScroll;
     private bool _isPanning;
     private Point _panStartScreen;
@@ -2008,6 +2143,18 @@ internal sealed partial class DrawingWindow : Window
         };
         actions.Children.Add(btnClear);
 
+        var btnGrid = new Button
+        {
+            Content = "\u25A6", // ▦ box with horizontal rule (closest plain grid glyph)
+            FontSize = 16,
+            ToolTip = "Toggle background grid (editor only — never rendered into the saved PNG)",
+            Padding = new Thickness(8, 2, 8, 2),
+            Margin = new Thickness(3, 3, 3, 3),
+            MinWidth = 36,
+        };
+        btnGrid.Click += (_, _) => SetGridVisible(!_gridVisible);
+        actions.Children.Add(btnGrid);
+
         var btnSave = MakeButton("Save as PNG");
         btnSave.Click += (_, _) => SavePng();
         actions.Children.Add(btnSave);
@@ -2087,6 +2234,8 @@ internal sealed partial class DrawingWindow : Window
 
         Content = root;
 
+        ApplyGridBackground();
+
         _canvas.MouseLeftButtonDown += Canvas_MouseDown;
         _canvas.MouseMove += Canvas_MouseMove;
         _canvas.MouseLeftButtonUp += Canvas_MouseUp;
@@ -2150,6 +2299,67 @@ internal sealed partial class DrawingWindow : Window
                 e.Cancel = true;
                 break;
         }
+    }
+
+    private void SetGridVisible(bool visible)
+    {
+        if (_gridVisible == visible) return;
+        _gridVisible = visible;
+        ApplyGridBackground();
+    }
+
+    private void ApplyGridBackground()
+    {
+        _canvas.Background = _gridVisible ? GetGridBrush() : Brushes.White;
+    }
+
+    /// <summary>Returns the cached tiled grid brush. The tile is 100×100 with minor lines every
+    /// 25 px and slightly darker major lines on the tile boundary (so every 4th minor line is
+    /// emphasised — visible from the user's reference screenshot).</summary>
+    private DrawingBrush GetGridBrush()
+    {
+        if (_gridBrushCache != null)
+            return _gridBrushCache;
+
+        const double tile = 100;
+        const double minorStep = 25;
+        var minorPen = new Pen(new SolidColorBrush(Color.FromRgb(0xEB, 0xEB, 0xEB)), 1);
+        minorPen.Freeze();
+        var majorPen = new Pen(new SolidColorBrush(Color.FromRgb(0xD2, 0xD2, 0xD2)), 1);
+        majorPen.Freeze();
+
+        var group = new DrawingGroup();
+        group.Children.Add(new GeometryDrawing(Brushes.White, null,
+            new RectangleGeometry(new Rect(0, 0, tile, tile))));
+
+        var minorGeo = new GeometryGroup { FillRule = FillRule.Nonzero };
+        for (double v = minorStep; v < tile - 0.001; v += minorStep)
+        {
+            minorGeo.Children.Add(new LineGeometry(new Point(v, 0), new Point(v, tile)));
+            minorGeo.Children.Add(new LineGeometry(new Point(0, v), new Point(tile, v)));
+        }
+        minorGeo.Freeze();
+        group.Children.Add(new GeometryDrawing(null, minorPen, minorGeo));
+
+        // Major lines drawn at x=0 and y=0 only; the x=tile / y=tile edge is the next tile's
+        // x=0 / y=0 line, so painting both would double-draw on the seam (and look heavier
+        // than the rest of the major lattice).
+        var majorGeo = new GeometryGroup { FillRule = FillRule.Nonzero };
+        majorGeo.Children.Add(new LineGeometry(new Point(0, 0), new Point(0, tile)));
+        majorGeo.Children.Add(new LineGeometry(new Point(0, 0), new Point(tile, 0)));
+        majorGeo.Freeze();
+        group.Children.Add(new GeometryDrawing(null, majorPen, majorGeo));
+        group.Freeze();
+
+        _gridBrushCache = new DrawingBrush(group)
+        {
+            TileMode = TileMode.Tile,
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, tile, tile),
+            Stretch = Stretch.None,
+        };
+        _gridBrushCache.Freeze();
+        return _gridBrushCache;
     }
 
     private void ShowTimeMachinePopup(Button anchor)
@@ -5865,7 +6075,11 @@ internal sealed partial class DrawingWindow : Window
         error = string.Empty;
 
         var prevSelection = _selection.ToHashSet();
+        var prevBackground = _canvas.Background;
         ClearSelection();
+        // Reuse the canvas background as-is: when the user has the grid on, we want it baked
+        // into the PNG so the editor's inline image view also shows the grid. When the grid is
+        // off the background is already plain white.
         Redraw();
         try
         {
@@ -5897,6 +6111,7 @@ internal sealed partial class DrawingWindow : Window
         }
         finally
         {
+            _canvas.Background = prevBackground;
             _selection.Clear();
             foreach (var it in prevSelection)
                 _selection.Add(it);
@@ -5984,6 +6199,7 @@ internal sealed partial class DrawingWindow : Window
         {
             CanvasWidth = _canvas.Width,
             CanvasHeight = _canvas.Height,
+            GridVisible = _gridVisible,
         };
         foreach (var it in _items)
             dto.Items.Add(ItemToDto(it));
@@ -6108,6 +6324,10 @@ internal sealed partial class DrawingWindow : Window
         _undoStack.Clear();
         _redoStack.Clear();
         ApplyWorkspace(workspace);
+        // Restore the per-model grid preference. Time-machine version-swaps also go through
+        // ApplyWorkspace but skip this so browsing older versions doesn't override the user's
+        // current grid choice mid-session — only the initial load and explicit reopens use it.
+        SetGridVisible(workspace.GridVisible);
         // A freshly-loaded workspace is the on-disk truth — nothing to prompt about until the
         // user actually edits something.
         _hasUnsavedChanges = false;
@@ -6151,6 +6371,40 @@ internal sealed partial class DrawingWindow : Window
         catch
         {
             return null;
+        }
+    }
+
+    /// <summary>Renders <paramref name="workspace"/> to a PNG headlessly: spins up a never-shown
+    /// <see cref="DrawingWindow"/>, lets the constructor load the workspace (which restores the
+    /// per-model <see cref="DrawingWorkspaceDto.GridVisible"/> state), then asks the canvas for a
+    /// rendered bitmap. Used by the host's bulk grid toggle so it can re-export every drawing on
+    /// a page without flashing a UI. Returns <c>false</c> on any failure; the caller should leave
+    /// the existing PNG file alone in that case.</summary>
+    internal static bool TryRenderWorkspaceToPng(MainWindow host, string? themeName,
+        DrawingWorkspaceDto workspace, out byte[] pngBytes)
+    {
+        pngBytes = Array.Empty<byte>();
+        DrawingWindow? dw = null;
+        try
+        {
+            dw = new DrawingWindow(host, themeName, workspace, editContext: null)
+            {
+                ShowInTaskbar = false,
+                WindowState = WindowState.Minimized,
+                Visibility = Visibility.Hidden,
+            };
+            if (!dw.TryRenderPngBytes(out var bytes, out _))
+                return false;
+            pngBytes = bytes;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            try { dw?.Close(); } catch { /* never shown — Close may no-op or throw, ignore */ }
         }
     }
 }
