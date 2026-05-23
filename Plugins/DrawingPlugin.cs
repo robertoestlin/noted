@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -1828,6 +1829,11 @@ internal sealed partial class DrawingWindow : Window
 
     private readonly MainWindow _host;
     private readonly DrawingEditContext? _editContext;
+    /// <summary>Set whenever an undo snapshot is recorded (which we do for every user-driven
+    /// mutation). Cleared after loading an existing workspace and after a successful save. Used
+    /// by the <see cref="Window.Closing"/> handler to decide whether to prompt the user before
+    /// losing edits.</summary>
+    private bool _hasUnsavedChanges;
     private ScrollViewer? _canvasScroll;
     private bool _isPanning;
     private Point _panStartScreen;
@@ -2005,11 +2011,120 @@ internal sealed partial class DrawingWindow : Window
             SizeWindowToFitItems();
         }
 
+        Closing += DrawingWindow_Closing;
+
         Closed += (_, _) =>
         {
             _host.PersistLastDrawingThemeName(_activeTheme.Name);
             DrawingThemeStore.Save(_themes);
         };
+    }
+
+    private enum UnsavedChangesChoice
+    {
+        Cancel,
+        Save,
+        Discard,
+    }
+
+    private void DrawingWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (!_hasUnsavedChanges)
+            return;
+
+        // Avoid an "are you sure" prompt for a window that has been edited but emptied. The user
+        // can't actually save an empty canvas (TrySaveDrawing rejects it), so prompting would
+        // just trap them in a loop — let the close proceed.
+        if (_items.Count == 0)
+            return;
+
+        switch (PromptUnsavedChanges())
+        {
+            case UnsavedChangesChoice.Save:
+                // If the save bounces (host declines, render fails, …) keep the window open so
+                // the user can fix the issue or choose Discard on a second attempt.
+                if (!TrySaveDrawing())
+                    e.Cancel = true;
+                break;
+            case UnsavedChangesChoice.Discard:
+                // Fall through and let the window close.
+                break;
+            case UnsavedChangesChoice.Cancel:
+            default:
+                e.Cancel = true;
+                break;
+        }
+    }
+
+    private UnsavedChangesChoice PromptUnsavedChanges()
+    {
+        var isExisting = _editContext != null;
+        var saveLabel = isExisting ? "Save new version" : "Save model";
+        var discardLabel = isExisting ? "Discard changes" : "Don't save";
+        var message = isExisting
+            ? $"You have unsaved changes to \u201C{_editContext!.BaseName}\u201D.\n\nSave a new version before closing?"
+            : "You have unsaved changes in this drawing.\n\nSave it before closing?";
+
+        var dlg = new Window
+        {
+            Title = "Unsaved changes",
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+        };
+
+        var root = new StackPanel { Margin = new Thickness(16) };
+        root.Children.Add(new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 16),
+        });
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        var btnSave = new Button
+        {
+            Content = saveLabel,
+            MinWidth = 130,
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(0, 0, 8, 0),
+            IsDefault = true,
+        };
+        var btnDiscard = new Button
+        {
+            Content = discardLabel,
+            MinWidth = 130,
+            Padding = new Thickness(12, 5, 12, 5),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var btnCancel = new Button
+        {
+            Content = "Cancel",
+            MinWidth = 90,
+            Padding = new Thickness(12, 5, 12, 5),
+            IsCancel = true,
+        };
+        row.Children.Add(btnSave);
+        row.Children.Add(btnDiscard);
+        row.Children.Add(btnCancel);
+        root.Children.Add(row);
+
+        dlg.Content = root;
+
+        var choice = UnsavedChangesChoice.Cancel;
+        btnSave.Click += (_, _) => { choice = UnsavedChangesChoice.Save; dlg.Close(); };
+        btnDiscard.Click += (_, _) => { choice = UnsavedChangesChoice.Discard; dlg.Close(); };
+        btnCancel.Click += (_, _) => { choice = UnsavedChangesChoice.Cancel; dlg.Close(); };
+
+        dlg.ShowDialog();
+        return choice;
     }
 
     private static DrawingTheme? ResolveThemeByName(List<DrawingTheme> themes, string? name)
@@ -3453,6 +3568,7 @@ internal sealed partial class DrawingWindow : Window
     private void SnapshotForUndo()
     {
         _redoStack.Clear();
+        _hasUnsavedChanges = true;
         _undoStack.Push(CloneItems());
         while (_undoStack.Count > MaxUndoDepth)
         {
@@ -5352,27 +5468,39 @@ internal sealed partial class DrawingWindow : Window
 
     private void InsertIntoEditor()
     {
+        if (TrySaveDrawing())
+            Close();
+    }
+
+    /// <summary>Attempts to save the current canvas as a drawing in the active editor. Returns
+    /// <c>true</c> only when the host successfully wrote the drawing; returns <c>false</c> (and
+    /// surfaces a message box to the user when the failure has a sensible explanation) for
+    /// "nothing to save", "render failed", and "host declined / user cancelled the host's own
+    /// save dialog" cases. On success clears <see cref="_hasUnsavedChanges"/> so the
+    /// <see cref="Window.Closing"/> prompt won't fire again on the follow-up <c>Close()</c>.</summary>
+    private bool TrySaveDrawing()
+    {
         if (_items.Count == 0)
         {
             MessageBox.Show(this, "Nothing to insert — the canvas is empty.",
                 "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            return false;
         }
 
         if (!TryRenderPngBytes(out var pngBytes, out var error))
         {
             MessageBox.Show(this, error, "Insert drawing", MessageBoxButton.OK, MessageBoxImage.Error);
-            return;
+            return false;
         }
 
         var workspaceJson = JsonSerializer.Serialize(BuildWorkspaceDto(),
             new JsonSerializerOptions { WriteIndented = true });
 
-        var ok = _host.InsertDrawingIntoActiveEditor(pngBytes, workspaceJson, _editContext);
-        if (!ok)
-            return;
+        if (!_host.InsertDrawingIntoActiveEditor(pngBytes, workspaceJson, _editContext))
+            return false;
 
-        Close();
+        _hasUnsavedChanges = false;
+        return true;
     }
 
     private bool TryRenderPngBytes(out byte[] bytes, out string error)
@@ -5642,6 +5770,9 @@ internal sealed partial class DrawingWindow : Window
         RefreshAllAnchoredArrows();
         UpdatePropertyPanelForSelection();
         Redraw();
+        // A freshly-loaded workspace is the on-disk truth — nothing to prompt about until the
+        // user actually edits something.
+        _hasUnsavedChanges = false;
     }
 
     public static DrawingWorkspaceDto? TryDeserialize(string? json)
