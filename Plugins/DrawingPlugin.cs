@@ -4534,7 +4534,7 @@ internal sealed partial class DrawingWindow : Window
             else if (copy.AnchorEndShapeId.HasValue)
                 copy.AnchorEndShapeId = null;
 
-            _items.Add(copy);
+            AddItemMaintainingDomainOrder(copy);
             _selection.Add(copy);
         }
         RefreshAllAnchoredArrows();
@@ -4583,6 +4583,7 @@ internal sealed partial class DrawingWindow : Window
         var snapshot = _undoStack.Pop();
         _items.Clear();
         _items.AddRange(snapshot);
+        NormalizeDomainZOrder();
         PruneSelection();
         Redraw();
     }
@@ -4595,8 +4596,55 @@ internal sealed partial class DrawingWindow : Window
         var snapshot = _redoStack.Pop();
         _items.Clear();
         _items.AddRange(snapshot);
+        NormalizeDomainZOrder();
         PruneSelection();
         Redraw();
+    }
+
+    /// <summary>Adds <paramref name="item"/> to <see cref="_items"/> while keeping every domain at
+    /// the back of the render stack. New domains slot in after any existing domains but before the
+    /// first non-domain item (so multiple domains keep their newest-on-top order among themselves,
+    /// but never paint over a regular shape). Non-domain items go to the very end as usual.</summary>
+    private void AddItemMaintainingDomainOrder(DrawItem item)
+    {
+        if (item.Kind == "domain")
+        {
+            var insertAt = 0;
+            while (insertAt < _items.Count && _items[insertAt].Kind == "domain")
+                insertAt++;
+            _items.Insert(insertAt, item);
+        }
+        else
+        {
+            _items.Add(item);
+        }
+    }
+
+    /// <summary>Re-sorts <see cref="_items"/> so every domain comes before every non-domain
+    /// item, preserving relative order within each group. Used after bulk operations
+    /// (paste, undo/redo, workspace load from disk) where direct <c>Add</c>/<c>AddRange</c> would
+    /// otherwise interleave domains with foreground shapes and let them paint on top.</summary>
+    private void NormalizeDomainZOrder()
+    {
+        var hasNonLeadingDomain = false;
+        var seenNonDomain = false;
+        foreach (var it in _items)
+        {
+            if (it.Kind == "domain" && seenNonDomain)
+            {
+                hasNonLeadingDomain = true;
+                break;
+            }
+            if (it.Kind != "domain")
+                seenNonDomain = true;
+        }
+        if (!hasNonLeadingDomain) return; // already in canonical order, avoid the realloc.
+
+        var domains = _items.Where(i => i.Kind == "domain").ToList();
+        var others = _items.Where(i => i.Kind != "domain").ToList();
+        _items.Clear();
+        _items.AddRange(domains);
+        _items.AddRange(others);
     }
 
     // ---------------- Canvas interaction ----------------
@@ -4821,7 +4869,7 @@ internal sealed partial class DrawingWindow : Window
                 HasShadow = _hasShadow,
             };
             AssignItemId(item);
-            _items.Add(item);
+            AddItemMaintainingDomainOrder(item);
             SetSingleSelection(item);
             Redraw();
             StartTextEdit(item, takeSnapshot: false);
@@ -4918,7 +4966,7 @@ internal sealed partial class DrawingWindow : Window
                 _drawingItem.AnchorStartIndex = GetNearestAnchorIndex(_arrowDrawStartShape, startPt);
                 _drawingItem.P1 = GetShapeAnchorPointByIndex(_arrowDrawStartShape, _drawingItem.AnchorStartIndex.Value);
             }
-            _items.Add(_drawingItem);
+            AddItemMaintainingDomainOrder(_drawingItem);
             SetSingleSelection(_drawingItem);
             _canvas.CaptureMouse();
             Redraw();
@@ -6876,6 +6924,9 @@ internal sealed partial class DrawingWindow : Window
             if (item.Id > maxItemId)
                 maxItemId = item.Id;
         }
+        // Drawings persisted before domain z-ordering was enforced may have domains interleaved
+        // with foreground shapes; canonicalize so domains always render behind.
+        NormalizeDomainZOrder();
         _nextFreehandGroupId = Math.Max(_nextFreehandGroupId, maxGroupId + 1);
         _nextItemId = Math.Max(_nextItemId, maxItemId + 1);
         EnsureItemIds();
