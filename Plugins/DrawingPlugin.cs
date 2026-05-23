@@ -5035,11 +5035,34 @@ internal sealed partial class DrawingWindow : Window
             else if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
             { CommitTextEdit(); e.Handled = true; }
         };
+        // Tab in an object's text editor jumps to the next object of the same kind that has no
+        // text yet. Once every same-kind object has text, Tab falls through to the next
+        // text-editable object overall. Shift+Tab reverses the direction. PreviewKeyDown is
+        // required because WPF would otherwise consume Tab for focus traversal before KeyDown
+        // sees it.
+        box.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Tab) return;
+            if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt)) != 0) return;
+            var current = _editingItem;
+            if (current == null) return;
+            var forward = (Keyboard.Modifiers & ModifierKeys.Shift) == 0;
+            var next = FindNextTextEditTarget(current, forward);
+            e.Handled = true;
+            if (next == null || ReferenceEquals(next, current)) return;
+            CommitTextEdit();
+            SetSingleSelection(next);
+            Redraw();
+            StartTextEdit(next);
+        };
         var sawFocus = false;
         box.GotKeyboardFocus += (_, _) => sawFocus = true;
         box.LostKeyboardFocus += (_, _) =>
         {
-            if (sawFocus) CommitTextEdit();
+            // Only commit when this box is still the active editor. Tab navigation removes the
+            // old box and starts a new one synchronously; a delayed LostKeyboardFocus on the
+            // removed box would otherwise commit (and tear down) the freshly-started editor.
+            if (sawFocus && ReferenceEquals(_activeEditor, box)) CommitTextEdit();
         };
 
         _canvas.Children.Add(box);
@@ -5204,6 +5227,45 @@ internal sealed partial class DrawingWindow : Window
         Canvas.SetTop(box, b.Top + (b.Height - innerH) / 2);
         box.Width = innerW;
         box.Height = innerH;
+    }
+
+    /// <summary>Items whose text can be edited via the in-canvas text editor.</summary>
+    private static bool IsTextEditableKind(string kind)
+        => kind is "rect" or "ellipse" or "diamond" or "text" or "arrow";
+
+    /// <summary>Find the next (or previous) draw item to jump to when Tab is pressed inside the
+    /// text editor of <paramref name="current"/>. Preference order:
+    /// <list type="number">
+    /// <item>The next same-kind item with empty text (so users can fill in a series of empty
+    /// shapes quickly).</item>
+    /// <item>If every same-kind item already has text, the next text-editable item of any kind,
+    /// regardless of whether its text is empty.</item>
+    /// </list>
+    /// Iteration follows <c>_items</c> order (canvas Z order) and wraps around. The current
+    /// item is always skipped. Returns null when no other suitable target exists.</summary>
+    private DrawItem? FindNextTextEditTarget(DrawItem current, bool forward)
+    {
+        var count = _items.Count;
+        if (count <= 1) return null;
+        var startIndex = _items.IndexOf(current);
+        if (startIndex < 0) startIndex = 0;
+        var step = forward ? 1 : -1;
+        DrawItem? sameKindEmpty = null;
+        DrawItem? anyEditable = null;
+        for (var i = 1; i < count + 1; i++)
+        {
+            var idx = ((startIndex + step * i) % count + count) % count;
+            var it = _items[idx];
+            if (ReferenceEquals(it, current)) continue;
+            if (!IsTextEditableKind(it.Kind)) continue;
+            if (it.Kind == current.Kind && string.IsNullOrEmpty(it.Text))
+            {
+                sameKindEmpty = it;
+                break;
+            }
+            anyEditable ??= it;
+        }
+        return sameKindEmpty ?? anyEditable;
     }
 
     private void CommitTextEdit()
