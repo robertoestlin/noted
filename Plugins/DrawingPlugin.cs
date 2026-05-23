@@ -30,7 +30,7 @@ public partial class MainWindow
     internal const int DefaultDrawingEllipseHeight = 58;
     internal const int DefaultDrawingDiamondWidth = 120;
     internal const int DefaultDrawingDiamondHeight = 120;
-    internal const int DefaultDrawingShapeSizeSnapThresholdPx = 12;
+    internal const int DefaultDrawingShapeSizeSnapThresholdPx = 20;
     internal const int DefaultDrawingArrowClearanceMarginPx = 35;
     internal const int MinDrawingArrowClearanceMarginPx = 0;
     internal const int MaxDrawingArrowClearanceMarginPx = 200;
@@ -3457,30 +3457,70 @@ internal sealed partial class DrawingWindow : Window
         item.P2 = new Point(p1.X + signX * stdW, p1.Y + signY * stdH);
     }
 
-    private void SnapDefaultSizedEllipseCenterY(DrawItem item)
+    /// <summary>After right-click commits a default-sized rect/ellipse/diamond, nudge it to line up with
+    /// nearby existing shapes. Prefers a horizontal row (shift Y so top/center/bottom matches a sibling's
+    /// top/center/bottom); only if no row partner is within the snap threshold do we fall back to a
+    /// vertical column (shift X). Same-kind edges only (top↔top, mid↔mid, bottom↔bottom) to avoid
+    /// surprising offsets between an edge and a center.</summary>
+    private void SnapDefaultSizedShapeToSiblings(DrawItem item)
     {
-        if (item.Kind != "ellipse") return;
+        if (item.Kind is not ("rect" or "ellipse" or "diamond")) return;
 
-        var bounds = GetBounds(item);
-        var centerY = bounds.Top + bounds.Height / 2;
-        var startY = item.P1.Y;
-
-        double? bestDy = null;
-        foreach (var other in _items)
+        var others = new List<Rect>();
+        foreach (var o in _items)
         {
-            if (ReferenceEquals(other, item)) continue;
-            var ob = GetBounds(other);
-            if (ob.Height <= 0) continue;
-            if (startY < ob.Top || startY > ob.Bottom) continue;
-            var otherCenterY = ob.Top + ob.Height / 2;
-            var dy = otherCenterY - centerY;
-            if (bestDy == null || Math.Abs(dy) < Math.Abs(bestDy.Value))
-                bestDy = dy;
+            if (ReferenceEquals(o, item)) continue;
+            var b = GetBounds(o);
+            if (b.Width > 0.5 || b.Height > 0.5)
+                others.Add(b);
+        }
+        if (others.Count == 0) return;
+
+        double threshold = _host.DrawingShapeSizeSnapThresholdPx;
+        var bounds = GetBounds(item);
+
+        var dy = FindAxisAlignDelta(bounds, others, vertical: true, threshold);
+        if (dy.HasValue)
+        {
+            item.P1 = new Point(item.P1.X, item.P1.Y + dy.Value);
+            item.P2 = new Point(item.P2.X, item.P2.Y + dy.Value);
+            return;
         }
 
-        if (!bestDy.HasValue || Math.Abs(bestDy.Value) < 0.001) return;
-        item.P1 = new Point(item.P1.X, item.P1.Y + bestDy.Value);
-        item.P2 = new Point(item.P2.X, item.P2.Y + bestDy.Value);
+        var dx = FindAxisAlignDelta(bounds, others, vertical: false, threshold);
+        if (dx.HasValue)
+        {
+            item.P1 = new Point(item.P1.X + dx.Value, item.P1.Y);
+            item.P2 = new Point(item.P2.X + dx.Value, item.P2.Y);
+        }
+    }
+
+    /// <summary>Smallest delta (or null) that snaps the proposed rect's top/middle/bottom (when
+    /// <paramref name="vertical"/>) or left/middle/right (when not) onto a matching edge of any other rect,
+    /// within <paramref name="threshold"/>. Only same-kind pairs are considered.</summary>
+    private static double? FindAxisAlignDelta(Rect proposed, List<Rect> others, bool vertical, double threshold)
+    {
+        var movingEdges = vertical
+            ? new[] { proposed.Top, proposed.Top + proposed.Height / 2, proposed.Bottom }
+            : new[] { proposed.Left, proposed.Left + proposed.Width / 2, proposed.Right };
+
+        double? bestDelta = null;
+        for (var i = 0; i < movingEdges.Length; i++)
+        {
+            var edge = movingEdges[i];
+            foreach (var r in others)
+            {
+                var targets = vertical
+                    ? new[] { r.Top, r.Top + r.Height / 2, r.Bottom }
+                    : new[] { r.Left, r.Left + r.Width / 2, r.Right };
+                var target = targets[i];
+                var delta = target - edge;
+                if (Math.Abs(delta) > threshold) continue;
+                if (bestDelta == null || Math.Abs(delta) < Math.Abs(bestDelta.Value))
+                    bestDelta = delta;
+            }
+        }
+        return bestDelta;
     }
 
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -3490,7 +3530,7 @@ internal sealed partial class DrawingWindow : Window
             CommitTextEdit();
             var item = _drawingItem;
             ApplyDefaultSizeToShape(item);
-            SnapDefaultSizedEllipseCenterY(item);
+            SnapDefaultSizedShapeToSiblings(item);
             if (_canvas.IsMouseCaptured)
                 _canvas.ReleaseMouseCapture();
             _isDrawing = false;
