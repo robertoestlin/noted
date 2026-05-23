@@ -127,13 +127,21 @@ internal sealed partial class DrawingWindow
         if (string.IsNullOrEmpty(text))
             return false;
 
-        var (_, _, length) = GetArrowPathMetrics(path);
+        var (_, pathAngleDeg, length) = GetArrowPathMetrics(path);
         if (length < 8)
             return false;
 
         var size = MeasureArrowLabel(arrow, text, visual, path);
-        var textWidth = Math.Max(8, size.Width - 12);
-        gapHalfLength = textWidth / 2 + 6;
+        // The label is drawn as an axis-aligned box of size.Width × size.Height that's then rotated
+        // by displayAngle around its center. To break the shaft just where the box ends — so the
+        // arrow visually connects to the label whether it follows the line or has been flipped to
+        // horizontal — we use the box's extent projected onto the line direction (rotating-rectangle
+        // projection formula).
+        var displayAngle = GetArrowLabelDisplayAngle(arrow, pathAngleDeg);
+        var relRad = (pathAngleDeg - displayAngle) * Math.PI / 180.0;
+        var projected = size.Width * Math.Abs(Math.Cos(relRad))
+                      + size.Height * Math.Abs(Math.Sin(relRad));
+        gapHalfLength = projected / 2;
         var maxHalf = (length - 20) / 2;
         if (maxHalf > 0 && gapHalfLength > maxHalf)
             gapHalfLength = maxHalf;
