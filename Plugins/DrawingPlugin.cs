@@ -3131,6 +3131,65 @@ internal sealed partial class DrawingWindow : Window
         Redraw();
     }
 
+    /// <summary>Q-keyboard variant of <see cref="OnArrowDirectChanged"/> that guarantees the visual
+    /// arrowhead never moves. The checkbox path re-applies <see cref="ApplySimpleHeadTargetFromDrawOrder"/>,
+    /// which can shift the head when the arrow's endpoints don't match the canonical (upper-left → lower-right)
+    /// order, and toggling back to direct doesn't undo that shift. For Q we snapshot the visual head
+    /// position per arrow, run the same toggle, then flip <c>SimpleHeadAtP2</c> on any arrow whose head
+    /// would otherwise have moved.</summary>
+    private void ToggleArrowDirectPreservingHeading()
+    {
+        var arrows = _selection.Where(i => i.Kind == "arrow").ToList();
+        if (arrows.Count == 0) return;
+
+        SnapshotForUndo();
+
+        var newDirect = !_arrowDirect;
+        _arrowDirect = newDirect;
+
+        var preHead = new Dictionary<DrawItem, Point>();
+        foreach (var it in arrows)
+            preHead[it] = ComputeVisualHeadPosition(it);
+
+        foreach (var it in arrows)
+        {
+            it.Direct = newDirect;
+            if (newDirect)
+            {
+                it.RouteBends.Clear();
+            }
+            else
+            {
+                CommitArrowAnchors(it);
+                ApplySimpleHeadTargetFromDrawOrder(it);
+                CanonicalizeArrowEndpoints(it);
+                CommitArrowAnchors(it);
+                InitializeArrowRouteBends(it);
+            }
+
+            var postHead = ComputeVisualHeadPosition(it);
+            if (!PointsNearlyEqual(preHead[it], postHead))
+                it.SimpleHeadAtP2 = !it.SimpleHeadAtP2;
+        }
+
+        if (_arrowDirectCheck != null)
+        {
+            _suppressPropertyChanges = true;
+            try { _arrowDirectCheck.IsChecked = newDirect; }
+            finally { _suppressPropertyChanges = false; }
+        }
+
+        UpdatePropertyPanelVisibility();
+        Redraw();
+    }
+
+    private Point ComputeVisualHeadPosition(DrawItem arrow)
+    {
+        var path = GetArrowPathPoints(arrow);
+        if (path.Count == 0) return arrow.P2;
+        return arrow.SimpleHeadAtP2 ? path[^1] : path[0];
+    }
+
     private void SyncFromSelected()
     {
         var sel = SelectionPropertySource();
@@ -3656,6 +3715,13 @@ internal sealed partial class DrawingWindow : Window
                 if (HasSelection)
                 {
                     DeleteSelected();
+                    e.Handled = true;
+                }
+                break;
+            case Key.Q:
+                if (_selection.Any(s => s.Kind == "arrow"))
+                {
+                    ToggleArrowDirectPreservingHeading();
                     e.Handled = true;
                 }
                 break;
