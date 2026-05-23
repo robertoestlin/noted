@@ -132,16 +132,29 @@ internal sealed partial class DrawingWindow
             return false;
 
         var size = MeasureArrowLabel(arrow, text, visual, path);
-        // The label is drawn as an axis-aligned box of size.Width × size.Height that's then rotated
-        // by displayAngle around its center. To break the shaft just where the box ends — so the
-        // arrow visually connects to the label whether it follows the line or has been flipped to
-        // horizontal — we use the box's extent projected onto the line direction (rotating-rectangle
-        // projection formula).
+        // The label is an axis-aligned box of size.Width × size.Height (centered on the line's
+        // midpoint) rotated by displayAngle. We need the half-length of the line segment that
+        // actually intersects this rotated box — i.e. how far along the line, in either direction
+        // from the midpoint, the shaft is hidden by the label.
+        //
+        // In the label's local frame the line passes through the origin at angle θ = pathAngleDeg
+        // − displayAngle. It exits the box through either the W or H edge — whichever it reaches
+        // first — at parameter min(W/(2|cos θ|), H/(2|sin θ|)). That's a much tighter (and
+        // geometrically correct) clearance than the bounding-box projection W|cos θ| + H|sin θ|,
+        // which would also clear the rotated box's empty corners.
         var displayAngle = GetArrowLabelDisplayAngle(arrow, pathAngleDeg);
         var relRad = (pathAngleDeg - displayAngle) * Math.PI / 180.0;
-        var projected = size.Width * Math.Abs(Math.Cos(relRad))
-                      + size.Height * Math.Abs(Math.Sin(relRad));
-        gapHalfLength = projected / 2;
+        var cosAbs = Math.Abs(Math.Cos(relRad));
+        var sinAbs = Math.Abs(Math.Sin(relRad));
+        double intersectHalf;
+        const double epsilon = 1e-6;
+        if (cosAbs < epsilon)
+            intersectHalf = size.Height / 2;
+        else if (sinAbs < epsilon)
+            intersectHalf = size.Width / 2;
+        else
+            intersectHalf = Math.Min(size.Width / (2 * cosAbs), size.Height / (2 * sinAbs));
+        gapHalfLength = intersectHalf;
         var maxHalf = (length - 20) / 2;
         if (maxHalf > 0 && gapHalfLength > maxHalf)
             gapHalfLength = maxHalf;
