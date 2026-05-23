@@ -1047,6 +1047,82 @@ internal static class DrawingDefaultSizesStore
     }
 }
 
+/// <summary>Persistent per-object-kind styles for the "All objects" section in the drawing
+/// property panel. These are the user's loose, non-themed defaults: when the Select tool is
+/// active and nothing is selected, clicking a generic icon in "All objects" surfaces the
+/// matching <see cref="ThemeToolStyle"/> here so its fill/stroke/font/… can be tweaked
+/// independently of the active theme. Persisted as
+/// <c>{DrawingThemeStore.NotedDataDirectory}/drawing-loose-objects.json</c>.</summary>
+internal sealed class DrawingLooseObjectStyles
+{
+    public ThemeToolStyle? Rect { get; set; }
+    public ThemeToolStyle? Ellipse { get; set; }
+    public ThemeToolStyle? Diamond { get; set; }
+    public ThemeToolStyle? Arrow { get; set; }
+    public ThemeToolStyle? Text { get; set; }
+    public ThemeToolStyle? Freehand { get; set; }
+
+    public ThemeToolStyle? Get(string kind) => kind switch
+    {
+        "rect" => Rect,
+        "ellipse" => Ellipse,
+        "diamond" => Diamond,
+        "arrow" => Arrow,
+        "text" => Text,
+        "freehand" => Freehand,
+        _ => null,
+    };
+
+    public void Set(string kind, ThemeToolStyle style)
+    {
+        switch (kind)
+        {
+            case "rect": Rect = style; break;
+            case "ellipse": Ellipse = style; break;
+            case "diamond": Diamond = style; break;
+            case "arrow": Arrow = style; break;
+            case "text": Text = style; break;
+            case "freehand": Freehand = style; break;
+        }
+    }
+}
+
+internal static class DrawingLooseObjectStylesStore
+{
+    public const string FileName = "drawing-loose-objects.json";
+    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+
+    public static string FilePath =>
+        System.IO.Path.Combine(DrawingThemeStore.NotedDataDirectory, FileName);
+
+    public static DrawingLooseObjectStyles Load()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return new DrawingLooseObjectStyles();
+            var loaded = JsonSerializer.Deserialize<DrawingLooseObjectStyles>(File.ReadAllText(FilePath));
+            return loaded ?? new DrawingLooseObjectStyles();
+        }
+        catch
+        {
+            return new DrawingLooseObjectStyles();
+        }
+    }
+
+    public static void Save(DrawingLooseObjectStyles styles)
+    {
+        try
+        {
+            Directory.CreateDirectory(DrawingThemeStore.NotedDataDirectory);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(styles, Options));
+        }
+        catch
+        {
+            // non-critical
+        }
+    }
+}
+
 internal static class DrawingColorUtilities
 {
     public static bool TryParseColorString(string? s, out Color color)
@@ -1950,6 +2026,20 @@ internal sealed partial class DrawingWindow : Window
     private TextBlock? _variantsHeader;
     private WrapPanel? _variantsPanel;
 
+    // ---- "Theme overview / All objects" panel (Select tool + empty selection) ----
+    private TextBlock? _themeGalleryHeader;
+    private WrapPanel? _themeGalleryPanel;
+    private TextBlock? _allObjectsHeader;
+    private WrapPanel? _allObjectsPanel;
+    private DrawingLooseObjectStyles _looseObjectStyles = new();
+    /// <summary>Which loose-object kind (rect/ellipse/diamond/arrow/text/freehand) the user is
+    /// currently editing in the "All objects" section. <c>null</c> means no loose icon is selected
+    /// — in that case the property panel just shows the theme overview and the icon grid. When
+    /// non-null, the live <c>_fill</c>/<c>_stroke</c>/... state mirrors the loose style for this
+    /// kind and edits to the shared property controls are persisted back to
+    /// <see cref="_looseObjectStyles"/>.</summary>
+    private string? _looseObjectActiveKind;
+
     private StackPanel? _toolsPanel;
 
     private sealed record ToolBarTag(Tool Tool, string? Kind, int VariantIndex);
@@ -2072,6 +2162,7 @@ internal sealed partial class DrawingWindow : Window
             ?? _themes.FirstOrDefault()
             ?? new DrawingTheme();
         _activeTheme.EnsureToolStyles();
+        _looseObjectStyles = DrawingLooseObjectStylesStore.Load();
         ApplyToolProfileFromTheme(_activeTheme, _tool);
 
         var root = new DockPanel();
@@ -2767,6 +2858,19 @@ internal sealed partial class DrawingWindow : Window
     {
         _propertyPanel.Children.Clear();
 
+        // Theme overview + "All objects" — only visible when Select tool is active and no item is
+        // selected. Lets the user inspect every enabled theme variant and edit a parallel set of
+        // loose, non-themed object defaults (see DrawingLooseObjectStyles).
+        _themeGalleryHeader = SectionHeader("Theme objects");
+        _propertyPanel.Children.Add(_themeGalleryHeader);
+        _themeGalleryPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+        _propertyPanel.Children.Add(_themeGalleryPanel);
+
+        _allObjectsHeader = SectionHeader("All objects");
+        _propertyPanel.Children.Add(_allObjectsHeader);
+        _allObjectsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+        _propertyPanel.Children.Add(_allObjectsPanel);
+
         _sizeHeader = SectionHeader("Size");
         _propertyPanel.Children.Add(_sizeHeader);
         _sizeLine1 = new TextBlock
@@ -2788,8 +2892,8 @@ internal sealed partial class DrawingWindow : Window
         _propertyPanel.Children.Add(_variantsPanel);
 
         _fillColorPicker = new CompactColorPicker(_fill,
-            onChanged: b => { _fill = b; ApplyColorToSelected(); },
-            onPreview: b => { _fill = b; ApplyColorToSelectedNoSnapshot(); },
+            onChanged: b => { _fill = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _fill = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
             onBeginCustomPick: SnapshotForUndo);
         _fillColorRow = MakeCompactColorRow("Fill", _fillColorPicker);
         _propertyPanel.Children.Add(_fillColorRow);
@@ -2802,29 +2906,29 @@ internal sealed partial class DrawingWindow : Window
         _propertyPanel.Children.Add(_gradientColorRow);
 
         _strokeColorPicker = new CompactColorPicker(_stroke,
-            onChanged: b => { _stroke = b; ApplyColorToSelected(); },
-            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); },
+            onChanged: b => { _stroke = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
             onBeginCustomPick: SnapshotForUndo);
         _strokeColorRow = MakeCompactColorRow("Stroke / Frame", _strokeColorPicker);
         _propertyPanel.Children.Add(_strokeColorRow);
 
         _textColorPicker = new CompactColorPicker(_textColor,
-            onChanged: b => { _textColor = b; ApplyColorToSelected(); },
-            onPreview: b => { _textColor = b; ApplyColorToSelectedNoSnapshot(); },
+            onChanged: b => { _textColor = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _textColor = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
             onBeginCustomPick: SnapshotForUndo);
         _textColorRow = MakeCompactColorRow("Text color", _textColorPicker);
         _propertyPanel.Children.Add(_textColorRow);
 
         _freehandColorPicker = new CompactColorPicker(_stroke,
-            onChanged: b => { _stroke = b; ApplyColorToSelected(); },
-            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); },
+            onChanged: b => { _stroke = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _stroke = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
             onBeginCustomPick: SnapshotForUndo);
         _freehandColorRow = MakeCompactColorRow("Color", _freehandColorPicker);
         _propertyPanel.Children.Add(_freehandColorRow);
 
         _arrowColorPicker = new CompactColorPicker(_stroke,
-            onChanged: b => { _stroke = b; _textColor = b; ApplyColorToSelected(); },
-            onPreview: b => { _stroke = b; _textColor = b; ApplyColorToSelectedNoSnapshot(); },
+            onChanged: b => { _stroke = b; _textColor = b; ApplyColorToSelected(); PersistLooseStyleFromCurrent(); },
+            onPreview: b => { _stroke = b; _textColor = b; ApplyColorToSelectedNoSnapshot(); PersistLooseStyleFromCurrent(); },
             onBeginCustomPick: SnapshotForUndo);
         _arrowColorRow = MakeCompactColorRow("Color", _arrowColorPicker);
         _propertyPanel.Children.Add(_arrowColorRow);
@@ -2839,6 +2943,7 @@ internal sealed partial class DrawingWindow : Window
                 PrimarySelection.StrokeThickness = _thickness;
                 Redraw();
             }
+            PersistLooseStyleFromCurrent();
         });
         _propertyPanel.Children.Add(_thicknessBox);
 
@@ -2852,6 +2957,7 @@ internal sealed partial class DrawingWindow : Window
                 PrimarySelection.CornerRadius = _cornerRadius;
                 Redraw();
             }
+            PersistLooseStyleFromCurrent();
         });
         _propertyPanel.Children.Add(_cornerRadiusBox);
 
@@ -2872,6 +2978,7 @@ internal sealed partial class DrawingWindow : Window
                     PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
                 }
+                PersistLooseStyleFromCurrent();
             }
         };
         _propertyPanel.Children.Add(_fontFamilyCombo);
@@ -2886,6 +2993,7 @@ internal sealed partial class DrawingWindow : Window
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
             }
+            PersistLooseStyleFromCurrent();
         });
         _propertyPanel.Children.Add(_fontSizeBox);
 
@@ -2904,6 +3012,7 @@ internal sealed partial class DrawingWindow : Window
                 PrimarySelection.ArrowHead = _arrowHead;
                 Redraw();
             }
+            PersistLooseStyleFromCurrent();
         };
         _propertyPanel.Children.Add(_arrowHeadCombo);
         _arrowDirectCheck = new CheckBox
@@ -2954,13 +3063,27 @@ internal sealed partial class DrawingWindow : Window
         return _selection.FirstOrDefault(s => s.Kind == kind);
     }
 
+    /// <summary>True when the left panel should currently render the theme-overview / "All
+    /// objects" header section instead of the per-shape variant gallery — i.e. the user has the
+    /// Select tool active (or is drawing in loose-object mode) and no item is selected.</summary>
+    private bool IsThemeOverviewMode()
+        => _selection.Count == 0 && (_tool == Tool.Select || _looseObjectActiveKind != null);
+
+    /// <summary>True when the user has picked an "All objects" icon and is editing that loose,
+    /// non-themed object. The attribute controls (fill/stroke/font/…) appear in this mode and
+    /// write through to <see cref="_looseObjectStyles"/>; the canvas behaves as if the matching
+    /// drawing tool was selected, but new shapes pick up the loose style instead of the active
+    /// theme variant.</summary>
+    private bool IsLooseObjectEditMode()
+        => _selection.Count == 0 && _looseObjectActiveKind != null;
+
     private string? PropertyPanelContextKind()
     {
         var selectedKind = GetHomogeneousSelectionKind();
         if (selectedKind != null)
             return selectedKind;
         if (_tool == Tool.Select)
-            return null;
+            return _looseObjectActiveKind; // null unless an "All objects" icon is active
         return _tool switch
         {
             Tool.Rectangle => "rect",
@@ -2975,8 +3098,24 @@ internal sealed partial class DrawingWindow : Window
 
     private void UpdatePropertyPanelVisibility()
     {
+        var isThemeOverview = IsThemeOverviewMode();
         if (_leftScroll != null)
-            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
+            _leftScroll.IsEnabled = isThemeOverview || GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
+
+        // Theme-overview section (theme gallery + "All objects" grid) appears only when the
+        // Select tool is active (or a loose-object kind is being edited) and no item is selected.
+        SetPropertySectionVisibility(_themeGalleryHeader, isThemeOverview);
+        SetPropertySectionVisibility(_themeGalleryPanel, isThemeOverview);
+        SetPropertySectionVisibility(_allObjectsHeader, isThemeOverview);
+        SetPropertySectionVisibility(_allObjectsPanel, isThemeOverview);
+        if (isThemeOverview)
+            RefreshThemeOverviewSection();
+        else
+        {
+            _themeGalleryPanel?.Children.Clear();
+            _allObjectsPanel?.Children.Clear();
+        }
+
         var kind = PropertyPanelContextKind();
         if (kind == null)
         {
@@ -3009,6 +3148,7 @@ internal sealed partial class DrawingWindow : Window
             return;
         }
 
+        var isLoose = IsLooseObjectEditMode();
         var isFreehand = kind == "freehand";
         var isArrow = kind == "arrow";
         SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && kind is "rect" or "ellipse" or "diamond");
@@ -3027,13 +3167,207 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_fontSizeBox, !isFreehand && kind is "text" or "rect" or "ellipse" or "diamond" or "arrow");
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
-        SetPropertySectionVisibility(_arrowDirectCheck, isArrow);
+        // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
+        // loose-object edit mode (no selection) hide them since the loose style doesn't carry
+        // routing toggles.
+        SetPropertySectionVisibility(_arrowDirectCheck, isArrow && !isLoose);
         var hasNonDirectArrowSel = isArrow && _selection.Any(s => s.Kind == "arrow" && !s.Direct);
         SetPropertySectionVisibility(_arrowMarginHeader, hasNonDirectArrowSel);
         SetPropertySectionVisibility(_arrowMarginBox, hasNonDirectArrowSel);
-        SetPropertySectionVisibility(_shadowCheck, kind is "rect" or "ellipse" or "diamond" or "text");
-        RefreshSizeInfo(kind);
-        RefreshVariantsSection(kind);
+        // Shadow lives on the item, not on theme styles; it's only meaningful with a real
+        // selection. Hide it in loose-object edit mode.
+        SetPropertySectionVisibility(_shadowCheck, !isLoose && kind is "rect" or "ellipse" or "diamond" or "text");
+        RefreshSizeInfo(isLoose ? null : kind);
+        // The per-shape variant gallery and the theme overview gallery cover the same ground; in
+        // theme-overview / loose-edit mode we hide the per-shape variants section.
+        if (isThemeOverview)
+        {
+            SetPropertySectionVisibility(_variantsHeader, false);
+            SetPropertySectionVisibility(_variantsPanel, false);
+            _variantsPanel?.Children.Clear();
+        }
+        else
+        {
+            RefreshVariantsSection(kind);
+        }
+    }
+
+    /// <summary>Rebuilds the "Theme objects" gallery (one button per enabled variant across every
+    /// kind in the active theme) and the "All objects" grid (one generic neutral icon per kind).
+    /// Called from <see cref="UpdatePropertyPanelVisibility"/> while in theme-overview mode.</summary>
+    private void RefreshThemeOverviewSection()
+    {
+        _activeTheme.EnsureToolStyles();
+
+        if (_themeGalleryPanel != null)
+        {
+            _themeGalleryPanel.Children.Clear();
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "arrow", "text", "freehand" })
+            {
+                var variants = _activeTheme.GetVariants(kind);
+                var tool = MapDrawKindToTool(kind);
+                for (var i = 0; i < variants.Count; i++)
+                {
+                    if (!variants[i].Enabled) continue;
+                    var captured = i;
+                    var st = variants[i];
+                    var btn = new Button
+                    {
+                        Margin = new Thickness(0, 0, 4, 4),
+                        Padding = new Thickness(6, 4, 6, 4),
+                        MinWidth = 38,
+                        MinHeight = 32,
+                        ToolTip = $"{kind} — variant {i + 1}",
+                        Content = BuildToolIcon(tool, st),
+                        HorizontalContentAlignment = HorizontalAlignment.Center,
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        Background = SystemColors.ControlBrush,
+                    };
+                    var capturedKind = kind;
+                    btn.Click += (_, _) => SelectTool(MapDrawKindToTool(capturedKind), captured);
+                    _themeGalleryPanel.Children.Add(btn);
+                }
+            }
+        }
+
+        if (_allObjectsPanel != null)
+        {
+            _allObjectsPanel.Children.Clear();
+            var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
+            var brushOff = SystemColors.ControlBrush;
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "arrow", "text", "freehand" })
+            {
+                var capturedKind = kind;
+                var btn = new Button
+                {
+                    Margin = new Thickness(0, 0, 4, 4),
+                    Padding = new Thickness(6, 4, 6, 4),
+                    MinWidth = 38,
+                    MinHeight = 32,
+                    ToolTip = kind,
+                    Content = BuildNeutralKindIcon(kind),
+                    HorizontalContentAlignment = HorizontalAlignment.Center,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    Background = _looseObjectActiveKind == capturedKind ? brushOn : brushOff,
+                };
+                btn.Click += (_, _) => OnAllObjectsIconClicked(capturedKind);
+                _allObjectsPanel.Children.Add(btn);
+            }
+        }
+    }
+
+    /// <summary>Generic / theme-less icon for a kind, used in the "All objects" grid. Drawn in a
+    /// neutral grey so it visually reads as "object type" rather than "themed variant".</summary>
+    private static FrameworkElement BuildNeutralKindIcon(string kind)
+    {
+        var stroke = new SolidColorBrush(Color.FromRgb(0x44, 0x44, 0x44));
+        stroke.Freeze();
+        var fill = Brushes.Transparent;
+        return kind switch
+        {
+            "rect" => BuildRectIcon(stroke, fill),
+            "ellipse" => BuildEllipseIcon(stroke, fill),
+            "diamond" => BuildDiamondIcon(stroke, fill),
+            "arrow" => BuildArrowIcon(stroke),
+            "text" => BuildTextIcon(stroke),
+            "freehand" => BuildFreeformIcon(stroke),
+            _ => BuildPointerIcon(),
+        };
+    }
+
+    /// <summary>Click handler for an "All objects" icon. Switches the active drawing tool to the
+    /// clicked kind and enters loose-object edit mode: new shapes drawn on the canvas use the
+    /// persisted loose style (seeded from the theme's first variant, or defaults, on first
+    /// access). Clicking the same icon a second time exits back to the Select tool.</summary>
+    private void OnAllObjectsIconClicked(string kind)
+    {
+        if (_looseObjectActiveKind == kind && _tool != Tool.Select)
+        {
+            _looseObjectActiveKind = null;
+            SelectTool(Tool.Select);
+            return;
+        }
+
+        _looseObjectActiveKind = kind;
+        var st = ResolveLooseStyle(kind);
+        var drawTool = MapDrawKindToTool(kind);
+
+        if (drawTool == Tool.Freehand && _tool != Tool.Freehand)
+            _currentFreehandGroupId = _nextFreehandGroupId++;
+
+        _hoveredAnchorShape = drawTool == Tool.Arrow ? _hoveredAnchorShape : null;
+        _tool = drawTool;
+        _canvas.Cursor = Cursors.Cross;
+        ApplyToolProfileFromStyle(st);
+        SyncPropertyControlsFromCurrent();
+        // The toolbar buttons only highlight when their (tool, variant) matches the theme's
+        // active variant; loose-object drawing doesn't correspond to any toolbar variant, so we
+        // clear the highlight by passing a sentinel update.
+        UpdateToolBarHighlight();
+        UpdatePropertyPanelVisibility();
+    }
+
+    /// <summary>Returns the persisted loose style for <paramref name="kind"/>, creating it on
+    /// first access by seeding from the active theme's first variant (or defaults if the theme
+    /// has none). The seeded style is also saved so subsequent sessions start from the same
+    /// baseline.</summary>
+    private ThemeToolStyle ResolveLooseStyle(string kind)
+    {
+        var existing = _looseObjectStyles.Get(kind);
+        if (existing != null) return existing;
+
+        _activeTheme.EnsureToolStyles();
+        var variants = _activeTheme.GetVariants(kind);
+        var seed = variants.Count > 0 ? variants[0].Clone() : new ThemeToolStyle();
+        seed.Enabled = true;
+        _looseObjectStyles.Set(kind, seed);
+        DrawingLooseObjectStylesStore.Save(_looseObjectStyles);
+        return seed;
+    }
+
+    /// <summary>Like <see cref="ApplyToolProfileFromTheme"/> but takes a single
+    /// <see cref="ThemeToolStyle"/> directly — used to push a loose object's saved style into
+    /// the live editing state when the user enters loose-object edit mode.</summary>
+    private void ApplyToolProfileFromStyle(ThemeToolStyle st)
+    {
+        _fill = ParseBrush(st.Fill);
+        _gradientFill = Brushes.Transparent;
+        _hasShadow = false;
+        _stroke = ParseBrush(st.Stroke);
+        _textColor = ParseBrush(st.TextColor);
+        _fontFamily = new FontFamily(st.FontFamilyName);
+        _fontSize = st.FontSize;
+        _thickness = st.Thickness;
+        _cornerRadius = st.CornerRadius;
+        _freeThickness = st.FreeThickness;
+        _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
+        _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
+    }
+
+    /// <summary>Snapshots the live property state (<c>_fill</c>/<c>_stroke</c>/…) into the active
+    /// loose-object style and persists. No-op outside loose-object edit mode. Called after any
+    /// property control change so the loose defaults track UI edits.</summary>
+    private void PersistLooseStyleFromCurrent()
+    {
+        if (!IsLooseObjectEditMode() || _looseObjectActiveKind == null) return;
+        var st = ResolveLooseStyle(_looseObjectActiveKind);
+        st.Fill = DrawingColorUtilities.FormatHexForTheme(BrushToColor(_fill));
+        st.Stroke = DrawingColorUtilities.FormatHexForTheme(BrushToColor(_stroke));
+        st.TextColor = DrawingColorUtilities.FormatHexForTheme(BrushToColor(_textColor));
+        st.FontFamilyName = _fontFamily.Source;
+        st.FontSize = _fontSize;
+        st.Thickness = _thickness;
+        st.CornerRadius = _cornerRadius;
+        st.FreeThickness = _freeThickness;
+        st.ArrowHead = _arrowHead.ToString();
+        st.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(_arrowHorizontalLabelAngleDeg);
+        DrawingLooseObjectStylesStore.Save(_looseObjectStyles);
+    }
+
+    private static Color BrushToColor(Brush brush)
+    {
+        if (brush is SolidColorBrush scb) return scb.Color;
+        return Colors.Transparent;
     }
 
     private void RefreshVariantsSection(string? kind)
@@ -3577,11 +3911,17 @@ internal sealed partial class DrawingWindow : Window
         if (_toolsPanel == null) return;
         var brushOn = new SolidColorBrush(Color.FromRgb(0xCC, 0xE0, 0xFF));
         var brushOff = SystemColors.ControlBrush;
+        // Loose-object drawing borrows a drawing tool but doesn't correspond to any theme variant;
+        // in that mode the highlighted "active tool" lives in the side panel's "All objects" grid,
+        // so no toolbar button should appear highlighted.
+        var looseActive = IsLooseObjectEditMode();
         foreach (var child in _toolsPanel.Children)
         {
             if (child is not Button btn || btn.Tag is not ToolBarTag tag) continue;
             if (tag.Tool == Tool.Select)
                 btn.Background = _tool == Tool.Select ? brushOn : brushOff;
+            else if (looseActive)
+                btn.Background = brushOff;
             else
             {
                 var activeIdx = _activeTheme.GetActiveIndex(tag.Kind!);
@@ -3858,6 +4198,11 @@ internal sealed partial class DrawingWindow : Window
 
         var hoverCleared = _hoveredAnchorShape != null && tool != Tool.Arrow;
         _hoveredAnchorShape = tool == Tool.Arrow ? _hoveredAnchorShape : null;
+        // Any explicit tool pick (Select, theme variant, hotkey) ends a loose-object session —
+        // the panel reverts to the per-tool variant gallery and the live state is taken from the
+        // tool. (Loose-object mode is re-entered only via the "All objects" icons in the side
+        // panel; that path bypasses SelectTool and sets _looseObjectActiveKind directly.)
+        _looseObjectActiveKind = null;
         _tool = tool;
         UpdateToolBarHighlight();
         _canvas.Cursor = tool == Tool.Select ? Cursors.Arrow : Cursors.Cross;
@@ -4004,9 +4349,19 @@ internal sealed partial class DrawingWindow : Window
     private void UpdatePropertyPanelForSelection()
     {
         if (_leftScroll != null)
-            _leftScroll.IsEnabled = GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
+            _leftScroll.IsEnabled = IsThemeOverviewMode() || GetHomogeneousSelectionKind() != null || _tool != Tool.Select;
         if (SelectionPropertySource() != null)
+        {
             SyncFromSelected();
+        }
+        else if (IsLooseObjectEditMode() && _looseObjectActiveKind != null)
+        {
+            // Selection cleared while a loose-object icon is active — rehydrate the live property
+            // state from the loose style so the attribute controls show that object's values
+            // (instead of the previously-selected item's values).
+            ApplyToolProfileFromStyle(ResolveLooseStyle(_looseObjectActiveKind));
+            SyncPropertyControlsFromCurrent();
+        }
         UpdatePropertyPanelVisibility();
     }
 
