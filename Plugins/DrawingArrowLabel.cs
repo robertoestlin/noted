@@ -80,6 +80,20 @@ internal sealed partial class DrawingWindow
         return (last, lastAngle, length);
     }
 
+    /// <summary>Horizontal clearance added on each side of the label text when computing the
+    /// arrow shaft gap, so the line stops a few pixels before reaching the glyphs.</summary>
+    private const double ArrowLabelGapPadX = 12;
+
+    /// <summary>Vertical clearance added above and below the label text for the shaft gap.</summary>
+    private const double ArrowLabelGapPadY = 8;
+
+    /// <summary>Returns the <em>tight</em> bounds of the arrow label glyphs. The visible TextBlock /
+    /// edit TextBox is sized to this so the box's geometric center coincides with the text's
+    /// geometric center — which keeps the arrow line passing through the visual middle of the
+    /// text instead of dropping toward the baseline (which happened when the box was bigger than
+    /// the text and the glyphs sat at the top of the padded box). The clearance buffer used by
+    /// <see cref="TryGetArrowLabelGap"/> is added there instead, so the line still stops with a
+    /// few pixels of breathing room before touching the glyphs.</summary>
     private static Size MeasureArrowLabel(DrawItem arrow, string? text, Visual visual, IReadOnlyList<Point> path)
     {
         var (_, _, length) = GetArrowPathMetrics(path);
@@ -98,19 +112,36 @@ internal sealed partial class DrawingWindow
         {
             MaxTextWidth = maxWidth,
         };
-        var w = Math.Min(maxWidth, Math.Max(ft.Width, 8)) + 12;
-        var h = Math.Max(arrow.FontSize + 8, ft.Height + 8);
-        return new Size(Math.Max(32, w), h);
+        var w = Math.Min(maxWidth, Math.Max(ft.Width, 8));
+        var h = Math.Max(arrow.FontSize, ft.Height);
+        return new Size(w, h);
     }
 
     private static void LayoutArrowLabelElement(FrameworkElement element, Point midpoint, double angleDeg, Size size)
     {
-        element.Width = size.Width;
-        element.Height = size.Height;
-        Canvas.SetLeft(element, midpoint.X - size.Width / 2);
-        Canvas.SetTop(element, midpoint.Y - size.Height / 2);
+        // Use Display formatting + ClearType so small label text stays crisp instead of falling
+        // back to WPF's animation-friendly (but blurry at small sizes) Ideal text path.
+        TextOptions.SetTextFormattingMode(element, TextFormattingMode.Display);
+        TextOptions.SetTextRenderingMode(element, TextRenderingMode.ClearType);
+        // Round size up to even pixels and round the canvas position to integers so the label
+        // doesn't land on a half-pixel — half-pixel positioning is the other major source of
+        // fuzziness for text on a horizontal arrow.
+        var w = Math.Ceiling(size.Width);
+        if (w % 2 != 0) w += 1;
+        var h = Math.Ceiling(size.Height);
+        if (h % 2 != 0) h += 1;
+        element.Width = w;
+        element.Height = h;
+        element.UseLayoutRounding = true;
+        Canvas.SetLeft(element, Math.Round(midpoint.X - w / 2));
+        Canvas.SetTop(element, Math.Round(midpoint.Y - h / 2));
         element.RenderTransformOrigin = new Point(0.5, 0.5);
-        element.RenderTransform = new RotateTransform(angleDeg);
+        // Skip the rotate transform entirely when the label is effectively horizontal so WPF can
+        // use the pixel-snapped text path. Rotated labels can't be perfectly pixel-aligned but
+        // Display + ClearType above still gives the best available quality.
+        element.RenderTransform = Math.Abs(angleDeg) < 0.05
+            ? Transform.Identity
+            : new RotateTransform(angleDeg);
     }
 
     private string? GetArrowLabelText(DrawItem arrow)
@@ -132,16 +163,19 @@ internal sealed partial class DrawingWindow
             return false;
 
         var size = MeasureArrowLabel(arrow, text, visual, path);
-        // The label is an axis-aligned box of size.Width × size.Height (centered on the line's
-        // midpoint) rotated by displayAngle. We need the half-length of the line segment that
-        // actually intersects this rotated box — i.e. how far along the line, in either direction
-        // from the midpoint, the shaft is hidden by the label.
+        // The label is an axis-aligned box of (size.Width + padX) × (size.Height + padY) — the
+        // tight glyph bounds plus a clearance buffer — centered on the line's midpoint and
+        // rotated by displayAngle. We need the half-length of the line segment that actually
+        // intersects this rotated box, i.e. how far along the line, in either direction from the
+        // midpoint, the shaft should stay hidden so it doesn't crash into the text.
         //
         // In the label's local frame the line passes through the origin at angle θ = pathAngleDeg
         // − displayAngle. It exits the box through either the W or H edge — whichever it reaches
         // first — at parameter min(W/(2|cos θ|), H/(2|sin θ|)). That's a much tighter (and
         // geometrically correct) clearance than the bounding-box projection W|cos θ| + H|sin θ|,
         // which would also clear the rotated box's empty corners.
+        var w = size.Width + ArrowLabelGapPadX;
+        var h = size.Height + ArrowLabelGapPadY;
         var displayAngle = GetArrowLabelDisplayAngle(arrow, pathAngleDeg);
         var relRad = (pathAngleDeg - displayAngle) * Math.PI / 180.0;
         var cosAbs = Math.Abs(Math.Cos(relRad));
@@ -149,11 +183,11 @@ internal sealed partial class DrawingWindow
         double intersectHalf;
         const double epsilon = 1e-6;
         if (cosAbs < epsilon)
-            intersectHalf = size.Height / 2;
+            intersectHalf = h / 2;
         else if (sinAbs < epsilon)
-            intersectHalf = size.Width / 2;
+            intersectHalf = w / 2;
         else
-            intersectHalf = Math.Min(size.Width / (2 * cosAbs), size.Height / (2 * sinAbs));
+            intersectHalf = Math.Min(w / (2 * cosAbs), h / (2 * sinAbs));
         gapHalfLength = intersectHalf;
         var maxHalf = (length - 20) / 2;
         if (maxHalf > 0 && gapHalfLength > maxHalf)
@@ -254,6 +288,16 @@ internal sealed partial class DrawingWindow
 
     private void RenderArrowLabel(DrawItem it, Canvas surface)
     {
+        // Skip the rendered TextBlock while this arrow is being edited; the live edit TextBox is
+        // already on the canvas at the same position. Drawing both produces a visible "double"
+        // because WPF's TextBlock and TextBox don't render glyphs at byte-identical positions
+        // inside an identically-sized box. Other shape kinds (rect / ellipse / diamond) use the
+        // same skip in RenderItem. The shaft-gap calculation still runs (it consults
+        // GetArrowLabelText, which returns the in-progress editor text) so the line stays hidden
+        // behind the TextBox as the user types.
+        if (ReferenceEquals(it, _editingItem))
+            return;
+
         var text = GetArrowLabelText(it);
         if (string.IsNullOrEmpty(text))
             return;
