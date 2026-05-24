@@ -57,6 +57,66 @@
       "CornerRadius": 6,
       "ArrowHead": "Simple",
       "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#D5E8D4",
+      "Stroke": "#82B366",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#F8CECC",
+      "Stroke": "#B85450",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#FFCC99",
+      "Stroke": "#36393D",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#FFE6CC",
+      "Stroke": "#D79B00",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#FFF2CC",
+      "Stroke": "#D6B656",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
     }
   ],
   "Ellipses": [
