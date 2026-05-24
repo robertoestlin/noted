@@ -110,7 +110,10 @@ internal sealed partial class DrawingWindow
             var labelHeight = Math.Min(Math.Max(b.Height * 0.22, 14), Math.Max(0, b.Height - 8));
             var figureH = Math.Max(8, b.Height - labelHeight - 2);
             var headDiameter = Math.Min(Math.Min(figureH * 0.30, b.Width * 0.6), Math.Max(8, figureH));
-            var headRadius = headDiameter / 2;
+            // Side-middle anchors sit a fraction of the head radius out from the body axis —
+            // close enough to the centreline that the arrow visually meets the figure, while
+            // still being separated enough to read as distinct left/right anchors.
+            var sideInset = headDiameter * 0.25;
             var cx = b.Left + b.Width / 2;
             var cy = b.Top + b.Height / 2;
             return new[]
@@ -118,11 +121,11 @@ internal sealed partial class DrawingWindow
                 new Point(b.Left, b.Top),
                 new Point(cx, b.Top),
                 new Point(b.Right, b.Top),
-                new Point(cx + headRadius, cy),
+                new Point(cx + sideInset, cy),
                 new Point(b.Right, b.Bottom),
                 new Point(cx, b.Bottom),
                 new Point(b.Left, b.Bottom),
-                new Point(cx - headRadius, cy),
+                new Point(cx - sideInset, cy),
             };
         }
 

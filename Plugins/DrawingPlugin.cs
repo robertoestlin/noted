@@ -5863,23 +5863,13 @@ internal sealed partial class DrawingWindow : Window
         return Rect.Empty;
     }
 
-    /// <summary>Bounding rectangle used for alignment / centering snapping. For most shapes this
-    /// is the same as <see cref="GetBounds"/>, but for an actor the label strip at the bottom is
-    /// stripped so the rect's vertical centre matches the figure's visible middle (rather than
-    /// being pulled below it by the label) and top/bottom land on the head and the feet rather
-    /// than on the bbox edges that include the label.</summary>
-    private static Rect GetAlignmentBounds(DrawItem it)
-    {
-        var b = GetBounds(it);
-        if (it.Kind == "actor" && b.Height > 0)
-        {
-            var labelHeight = Math.Min(Math.Max(b.Height * 0.22, 14), Math.Max(0, b.Height - 8));
-            var figureH = Math.Max(0, b.Height - labelHeight - 2);
-            if (figureH > 0)
-                return new Rect(b.Left, b.Top, b.Width, figureH);
-        }
-        return b;
-    }
+    /// <summary>Bounding rectangle used for alignment / centering snapping. Equal to
+    /// <see cref="GetBounds"/> in every case — including the actor — so the alignment middle
+    /// always matches the shape's middle anchor-point Y. If we used a label-stripped rect for
+    /// actors, an actor centred against a rectangle would have its anchor Y end up offset
+    /// from the rectangle's anchor Y by the label's half-height, and a horizontal arrow drawn
+    /// between them wouldn't actually be horizontal after the snap.</summary>
+    private static Rect GetAlignmentBounds(DrawItem it) => GetBounds(it);
 
     private static void TranslateItem(DrawItem it, double dx, double dy)
     {
