@@ -2113,11 +2113,13 @@ internal sealed partial class DrawingWindow : Window
     private const double FontSizeMax = 96;
     private ComboBox? _fontFamilyCombo;
     private ComboBox? _arrowHeadCombo;
+    private ComboBox? _arrowDashStyleCombo;
     private CheckBox? _arrowDirectCheck;
     private TextBlock? _cornerRadiusHeader;
     private TextBlock? _fontHeader;
     private TextBlock? _fontSizeHeader;
     private TextBlock? _arrowStyleHeader;
+    private TextBlock? _arrowDashStyleHeader;
     private TextBlock? _sizeHeader;
     private TextBlock? _sizeLine1;
     private TextBlock? _sizeLine2;
@@ -2166,6 +2168,10 @@ internal sealed partial class DrawingWindow : Window
     /// <see cref="ThemeToolStyle.IsDashed"/> on the active loose-line style and is the value
     /// used when a brand-new line is created or applied to selected lines.</summary>
     private bool _lineDashed;
+    /// <summary>Live "dashed?" toggle for the Arrow tool, mirroring the selected arrow's
+    /// <see cref="DrawItem.IsDashed"/>. Used to seed new arrows and pushed to all selected
+    /// arrows when the user changes the Style combo in the property panel.</summary>
+    private bool _arrowDashed;
 
     private bool _isDrawing;
     private DrawItem? _drawingItem;
@@ -2919,6 +2925,10 @@ internal sealed partial class DrawingWindow : Window
         _freeThickness = st.FreeThickness;
         _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
         _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
+        // Theme arrow variants don't carry a dashed flag today; default new arrows to solid when
+        // entering the Arrow tool from the toolbar so a stale _arrowDashed from a prior session
+        // doesn't bleed into fresh arrows.
+        _arrowDashed = kind == "arrow" ? st.IsDashed : _arrowDashed;
     }
 
     /// <summary>Clamps a variant- or item-supplied horizontal-label angle to the valid range. Returns
@@ -3156,7 +3166,33 @@ internal sealed partial class DrawingWindow : Window
         });
         _propertyPanel.Children.Add(_fontSizeBox);
 
-        _arrowStyleHeader = SectionHeader("Arrow style");
+        _arrowDashStyleHeader = SectionHeader("Style");
+        _propertyPanel.Children.Add(_arrowDashStyleHeader);
+        _arrowDashStyleCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
+        _arrowDashStyleCombo.Items.Add("Solid");
+        _arrowDashStyleCombo.Items.Add("Dashed");
+        _arrowDashStyleCombo.SelectedIndex = _arrowDashed ? 1 : 0;
+        _arrowDashStyleCombo.SelectionChanged += (_, _) =>
+        {
+            if (_suppressPropertyChanges) return;
+            _arrowDashed = _arrowDashStyleCombo.SelectedIndex == 1;
+            var changedAny = false;
+            foreach (var it in _selection.Where(i => i.Kind == "arrow"))
+            {
+                if (it.IsDashed == _arrowDashed) continue;
+                if (!changedAny)
+                {
+                    SnapshotForUndo();
+                    changedAny = true;
+                }
+                it.IsDashed = _arrowDashed;
+            }
+            PersistLooseStyleFromCurrent();
+            if (changedAny) Redraw();
+        };
+        _propertyPanel.Children.Add(_arrowDashStyleCombo);
+
+        _arrowStyleHeader = SectionHeader("Head style");
         _propertyPanel.Children.Add(_arrowStyleHeader);
         _arrowHeadCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
         foreach (var v in Enum.GetValues<ArrowHeadStyle>())
@@ -3297,6 +3333,8 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_fontFamilyCombo, false);
             SetPropertySectionVisibility(_fontSizeHeader, false);
             SetPropertySectionVisibility(_fontSizeBox, false);
+            SetPropertySectionVisibility(_arrowDashStyleHeader, false);
+            SetPropertySectionVisibility(_arrowDashStyleCombo, false);
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
             SetPropertySectionVisibility(_arrowDirectCheck, false);
@@ -3333,6 +3371,8 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
         SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
         SetPropertySectionVisibility(_fontSizeBox, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
+        SetPropertySectionVisibility(_arrowDashStyleHeader, isArrow);
+        SetPropertySectionVisibility(_arrowDashStyleCombo, isArrow);
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
@@ -3573,6 +3613,10 @@ internal sealed partial class DrawingWindow : Window
         _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
         _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
         _lineDashed = st.IsDashed;
+        // Arrow shares ThemeToolStyle.IsDashed (no per-kind field), so the same source feeds the
+        // live arrow-dashed toggle. Loose-line mode overwrites _lineDashed above; for arrow loose
+        // mode this is the seed for the Style combo.
+        _arrowDashed = st.IsDashed;
     }
 
     /// <summary>Snapshots the live property state (<c>_fill</c>/<c>_stroke</c>/…) into the active
@@ -3592,6 +3636,8 @@ internal sealed partial class DrawingWindow : Window
         st.FreeThickness = _freeThickness;
         st.ArrowHead = _arrowHead.ToString();
         st.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(_arrowHorizontalLabelAngleDeg);
+        if (_looseObjectActiveKind == "arrow")
+            st.IsDashed = _arrowDashed;
         // Deliberately NOT persisting _lineDashed: by design, each new loose-line session starts
         // dashed (see ResolveLooseStyle for the other half). Per-item IsDashed still round-trips
         // through DrawItemDto so an existing solid line on the canvas keeps its style.
@@ -3867,6 +3913,7 @@ internal sealed partial class DrawingWindow : Window
             _arrowColorPicker?.SetSelected(_stroke);
             _lineColorPicker?.SetSelected(_stroke);
             if (_lineStyleCombo != null) _lineStyleCombo.SelectedIndex = _lineDashed ? 1 : 0;
+            if (_arrowDashStyleCombo != null) _arrowDashStyleCombo.SelectedIndex = _arrowDashed ? 1 : 0;
             if (_shadowCheck != null) _shadowCheck.IsChecked = _hasShadow;
             if (_thicknessBox != null) _thicknessBox.Text = Math.Clamp(_thickness, ThicknessMin, ThicknessMax).ToString("0.##");
             if (_cornerRadiusBox != null) _cornerRadiusBox.Text = Math.Clamp(_cornerRadius, CornerRadiusMin, CornerRadiusMax).ToString("0.##");
@@ -4023,6 +4070,7 @@ internal sealed partial class DrawingWindow : Window
             _arrowDirect = sel.Direct;
             _arrowMargin = sel.ClearanceMargin > 0 ? sel.ClearanceMargin : DefaultArrowClearanceMargin;
             _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(sel.HorizontalLabelAngleDeg);
+            _arrowDashed = sel.IsDashed;
         }
         if (sel.Kind == "line")
             _lineDashed = sel.IsDashed;
@@ -5271,6 +5319,7 @@ internal sealed partial class DrawingWindow : Window
                 FontFamily = _fontFamily,
                 TextColor = _textColor,
                 HorizontalLabelAngleDeg = _arrowHorizontalLabelAngleDeg,
+                IsDashed = _arrowDashed,
             },
             Tool.Freehand => new DrawItem
             {

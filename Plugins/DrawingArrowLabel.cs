@@ -197,7 +197,7 @@ internal sealed partial class DrawingWindow
 
     private static void AddArrowLineSegment(Canvas surface, DrawItem it, Point a, Point b)
     {
-        surface.Children.Add(new System.Windows.Shapes.Line
+        var line = new System.Windows.Shapes.Line
         {
             X1 = a.X,
             Y1 = a.Y,
@@ -208,7 +208,16 @@ internal sealed partial class DrawingWindow
             StrokeStartLineCap = PenLineCap.Round,
             StrokeEndLineCap = PenLineCap.Round,
             IsHitTestVisible = false,
-        });
+        };
+        if (it.IsDashed)
+        {
+            // DashArray units are multiples of the stroke thickness, so the dash pattern stays
+            // visually consistent across the arrow's thickness range. Round-capped dashes match
+            // the line style used by the loose Line tool.
+            line.StrokeDashArray = new System.Windows.Media.DoubleCollection { 4, 3 };
+            line.StrokeDashCap = PenLineCap.Round;
+        }
+        surface.Children.Add(line);
     }
 
     private void RenderArrowShaft(DrawItem it, Canvas surface)
