@@ -45,6 +45,18 @@
       "CornerRadius": 6,
       "ArrowHead": "Simple",
       "FreeThickness": 3
+    },
+    {
+      "Enabled": true,
+      "Fill": "#F5F5F5",
+      "Stroke": "#666666",
+      "TextColor": "#000000",
+      "FontFamilyName": "Helvetica",
+      "FontSize": 18,
+      "Thickness": 1.5,
+      "CornerRadius": 6,
+      "ArrowHead": "Simple",
+      "FreeThickness": 3
     }
   ],
   "Ellipses": [
