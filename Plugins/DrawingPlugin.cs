@@ -40,8 +40,8 @@ public partial class MainWindow
     /// <summary>Default bounding box for the loose Db (database / cylinder) shape. Inside this box
     /// the cylinder is drawn with a top ellipse + body + bottom arc, and the label sits in the
     /// lower part of the body (matching the standard MongoDB-style diagram glyph).</summary>
-    internal const int DefaultDrawingDbWidth = 90;
-    internal const int DefaultDrawingDbHeight = 115;
+    internal const int DefaultDrawingDbWidth = 82;
+    internal const int DefaultDrawingDbHeight = 100;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 20;
     internal const int DefaultDrawingArrowClearanceMarginPx = 35;
     internal const int MinDrawingArrowClearanceMarginPx = 0;
@@ -564,9 +564,10 @@ internal sealed class ThemeToolStyle
     public double FreeThickness { get; set; } = 6;
 
     /// <summary>Render the stroke as dashed when <c>true</c>. Surfaced in the property panel as
-    /// the "Style" combo (Solid / Dashed) for the loose Line tool and for arrow variants (both
-    /// in the per-shape property panel and in the per-variant theme editor). Ignored by closed
-    /// shapes (rect/ellipse/diamond/domain/text/freehand), which don't expose a dash style.</summary>
+    /// the "Style" combo (Solid / Dashed) for the loose Line tool, for arrow variants, and for
+    /// domain shapes — each shows the combo in the per-shape property panel and (for arrow /
+    /// domain) in the per-variant theme editor. Ignored by other closed shapes
+    /// (rect/ellipse/diamond/text/freehand), which don't expose a dash style.</summary>
     public bool IsDashed { get; set; }
 
     /// <summary>Per-variant custom default width in px. <c>0</c> means "no override" — fall back to
@@ -1179,7 +1180,7 @@ internal static class DrawingLooseObjectStylesStore
     /// <summary>Bumped when the built-in seed for a kind changes in a way that should override
     /// any cached entry from an earlier build. <see cref="Load"/> drops the affected entries when
     /// the loaded file's version is lower; new entries are then reseeded via <c>ResolveLooseStyle</c>.</summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static string FilePath =>
@@ -1197,6 +1198,12 @@ internal static class DrawingLooseObjectStylesStore
                 // v2 changed the actor / db seeds (Helvetica font, db fill #00ed64); drop any
                 // cached entries so the next access reseeds with the current defaults.
                 loaded.Actor = null;
+                loaded.Db = null;
+            }
+            if (loaded.Version < 3)
+            {
+                // v3 changed the db seed again (fill #46F473, font size 16). Drop the cached
+                // entry so the next access reseeds; actor was unchanged in this bump.
                 loaded.Db = null;
             }
             loaded.Version = CurrentVersion;
@@ -2124,12 +2131,14 @@ internal sealed partial class DrawingWindow : Window
     private ComboBox? _fontFamilyCombo;
     private ComboBox? _arrowHeadCombo;
     private ComboBox? _arrowDashStyleCombo;
+    private ComboBox? _domainDashStyleCombo;
     private CheckBox? _arrowDirectCheck;
     private TextBlock? _cornerRadiusHeader;
     private TextBlock? _fontHeader;
     private TextBlock? _fontSizeHeader;
     private TextBlock? _arrowStyleHeader;
     private TextBlock? _arrowDashStyleHeader;
+    private TextBlock? _domainDashStyleHeader;
     private TextBlock? _sizeHeader;
     private TextBlock? _sizeLine1;
     private TextBlock? _sizeLine2;
@@ -2182,6 +2191,10 @@ internal sealed partial class DrawingWindow : Window
     /// <see cref="DrawItem.IsDashed"/>. Used to seed new arrows and pushed to all selected
     /// arrows when the user changes the Style combo in the property panel.</summary>
     private bool _arrowDashed;
+    /// <summary>Live "dashed?" toggle for the Domain tool, mirroring the selected domain's
+    /// <see cref="DrawItem.IsDashed"/>. Used to seed new domains and pushed to all selected
+    /// domains when the user changes the Style combo in the property panel.</summary>
+    private bool _domainDashed;
 
     private bool _isDrawing;
     private DrawItem? _drawingItem;
@@ -2939,6 +2952,7 @@ internal sealed partial class DrawingWindow : Window
         // entering the Arrow tool from the toolbar so a stale _arrowDashed from a prior session
         // doesn't bleed into fresh arrows.
         _arrowDashed = kind == "arrow" ? st.IsDashed : _arrowDashed;
+        _domainDashed = kind == "domain" ? st.IsDashed : _domainDashed;
     }
 
     /// <summary>Clamps a variant- or item-supplied horizontal-label angle to the valid range. Returns
@@ -3202,6 +3216,34 @@ internal sealed partial class DrawingWindow : Window
         };
         _propertyPanel.Children.Add(_arrowDashStyleCombo);
 
+        // Domain-only "Style" combo. Same Solid/Dashed semantics as arrow/line — drives the
+        // domain rectangle's StrokeDashArray and the per-item DrawItem.IsDashed flag.
+        _domainDashStyleHeader = SectionHeader("Style");
+        _propertyPanel.Children.Add(_domainDashStyleHeader);
+        _domainDashStyleCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
+        _domainDashStyleCombo.Items.Add("Solid");
+        _domainDashStyleCombo.Items.Add("Dashed");
+        _domainDashStyleCombo.SelectedIndex = _domainDashed ? 1 : 0;
+        _domainDashStyleCombo.SelectionChanged += (_, _) =>
+        {
+            if (_suppressPropertyChanges) return;
+            _domainDashed = _domainDashStyleCombo.SelectedIndex == 1;
+            var changedAny = false;
+            foreach (var it in _selection.Where(i => i.Kind == "domain"))
+            {
+                if (it.IsDashed == _domainDashed) continue;
+                if (!changedAny)
+                {
+                    SnapshotForUndo();
+                    changedAny = true;
+                }
+                it.IsDashed = _domainDashed;
+            }
+            PersistLooseStyleFromCurrent();
+            if (changedAny) Redraw();
+        };
+        _propertyPanel.Children.Add(_domainDashStyleCombo);
+
         _arrowStyleHeader = SectionHeader("Head style");
         _propertyPanel.Children.Add(_arrowStyleHeader);
         _arrowHeadCombo = new ComboBox { Margin = new Thickness(0, 0, 0, 4) };
@@ -3345,6 +3387,8 @@ internal sealed partial class DrawingWindow : Window
             SetPropertySectionVisibility(_fontSizeBox, false);
             SetPropertySectionVisibility(_arrowDashStyleHeader, false);
             SetPropertySectionVisibility(_arrowDashStyleCombo, false);
+            SetPropertySectionVisibility(_domainDashStyleHeader, false);
+            SetPropertySectionVisibility(_domainDashStyleCombo, false);
             SetPropertySectionVisibility(_arrowStyleHeader, false);
             SetPropertySectionVisibility(_arrowHeadCombo, false);
             SetPropertySectionVisibility(_arrowDirectCheck, false);
@@ -3383,6 +3427,9 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_fontSizeBox, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
         SetPropertySectionVisibility(_arrowDashStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowDashStyleCombo, isArrow);
+        var isDomain = kind == "domain";
+        SetPropertySectionVisibility(_domainDashStyleHeader, isDomain);
+        SetPropertySectionVisibility(_domainDashStyleCombo, isDomain);
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
@@ -3581,15 +3628,15 @@ internal sealed partial class DrawingWindow : Window
         }
         else if (kind == "db")
         {
-            // Db cylinder, MongoDB-style green fill, 18pt Helvetica label sitting in the lower
+            // Db cylinder, MongoDB-style green fill, 16pt Helvetica label sitting in the lower
             // part of the body.
             seed = new ThemeToolStyle
             {
-                Fill = "#00ed64",
+                Fill = "#46F473",
                 Stroke = "#000000",
                 TextColor = "#000000",
                 Thickness = 2,
-                FontSize = 18,
+                FontSize = 16,
                 FontFamilyName = "Helvetica",
             };
         }
@@ -3623,10 +3670,11 @@ internal sealed partial class DrawingWindow : Window
         _arrowHead = Enum.TryParse<ArrowHeadStyle>(st.ArrowHead, true, out var ah) ? ah : ArrowHeadStyle.Simple;
         _arrowHorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
         _lineDashed = st.IsDashed;
-        // Arrow shares ThemeToolStyle.IsDashed (no per-kind field), so the same source feeds the
-        // live arrow-dashed toggle. Loose-line mode overwrites _lineDashed above; for arrow loose
-        // mode this is the seed for the Style combo.
+        // Arrow / domain share ThemeToolStyle.IsDashed (no per-kind field), so the same source
+        // feeds the live arrow/domain dashed toggles. The active loose kind decides which one
+        // the user is actually editing; the other gets the same value and is ignored.
         _arrowDashed = st.IsDashed;
+        _domainDashed = st.IsDashed;
     }
 
     /// <summary>Snapshots the live property state (<c>_fill</c>/<c>_stroke</c>/…) into the active
@@ -3648,6 +3696,8 @@ internal sealed partial class DrawingWindow : Window
         st.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(_arrowHorizontalLabelAngleDeg);
         if (_looseObjectActiveKind == "arrow")
             st.IsDashed = _arrowDashed;
+        else if (_looseObjectActiveKind == "domain")
+            st.IsDashed = _domainDashed;
         // Deliberately NOT persisting _lineDashed: by design, each new loose-line session starts
         // dashed (see ResolveLooseStyle for the other half). Per-item IsDashed still round-trips
         // through DrawItemDto so an existing solid line on the canvas keeps its style.
@@ -3768,6 +3818,7 @@ internal sealed partial class DrawingWindow : Window
                     it.FontFamily = new FontFamily(st.FontFamilyName);
                     it.FontSize = st.FontSize;
                     it.StrokeThickness = st.Thickness;
+                    it.IsDashed = st.IsDashed;
                     break;
                 case "arrow":
                     it.Stroke = ParseBrush(st.Stroke);
@@ -3925,6 +3976,7 @@ internal sealed partial class DrawingWindow : Window
             _lineColorPicker?.SetSelected(_stroke);
             if (_lineStyleCombo != null) _lineStyleCombo.SelectedIndex = _lineDashed ? 1 : 0;
             if (_arrowDashStyleCombo != null) _arrowDashStyleCombo.SelectedIndex = _arrowDashed ? 1 : 0;
+            if (_domainDashStyleCombo != null) _domainDashStyleCombo.SelectedIndex = _domainDashed ? 1 : 0;
             if (_shadowCheck != null) _shadowCheck.IsChecked = _hasShadow;
             if (_thicknessBox != null) _thicknessBox.Text = Math.Clamp(_thickness, ThicknessMin, ThicknessMax).ToString("0.##");
             if (_cornerRadiusBox != null) _cornerRadiusBox.Text = Math.Clamp(_cornerRadius, CornerRadiusMin, CornerRadiusMax).ToString("0.##");
@@ -4085,6 +4137,8 @@ internal sealed partial class DrawingWindow : Window
         }
         if (sel.Kind == "line")
             _lineDashed = sel.IsDashed;
+        if (sel.Kind == "domain")
+            _domainDashed = sel.IsDashed;
         SyncPropertyControlsFromCurrent();
     }
 
@@ -5317,6 +5371,7 @@ internal sealed partial class DrawingWindow : Window
                 HasShadow = _hasShadow,
                 StrokeThickness = _thickness,
                 FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
+                IsDashed = _domainDashed,
             },
             Tool.Arrow => new DrawItem
             {
@@ -6352,6 +6407,13 @@ internal sealed partial class DrawingWindow : Window
                     StrokeThickness = it.StrokeThickness,
                     IsHitTestVisible = false,
                 };
+                if (it.IsDashed)
+                {
+                    // Same dash rhythm as arrows/lines: dash units are multiples of the stroke
+                    // thickness, so the pattern stays visually consistent across thicknesses.
+                    box.StrokeDashArray = new DoubleCollection { 4, 3 };
+                    box.StrokeDashCap = PenLineCap.Round;
+                }
                 if (it.HasShadow) box.Effect = CreateShadowEffect();
                 Canvas.SetLeft(box, b.Left);
                 Canvas.SetTop(box, b.Top);
@@ -8871,6 +8933,14 @@ internal sealed class ThemeSettingsWindow : Window
                 break;
             case "domain":
                 BuildShapeFields(sp, ui, includeFill: true, includeText: true, includeCorner: false, kind, index);
+                // Solid / Dashed for the domain frame. Mirrors the per-shape property panel
+                // and matches the arrow variant's Style combo below.
+                sp.Children.Add(EditorLabel("Style"));
+                ui.DashStyle = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+                ui.DashStyle.Items.Add("Solid");
+                ui.DashStyle.Items.Add("Dashed");
+                sp.Children.Add(ui.DashStyle);
+                ui.DashStyle.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.IsDashed = ui.DashStyle!.SelectedIndex == 1);
                 break;
             case "arrow":
                 BuildShapeFields(sp, ui, includeFill: false, includeText: true, includeCorner: false, kind, index);

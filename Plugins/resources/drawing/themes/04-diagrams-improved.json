@@ -182,6 +182,7 @@
       "Thickness": 1.5,
       "CornerRadius": 0,
       "ArrowHead": "Simple",
+      "IsDashed": false,
       "FreeThickness": 3
     },
     {
@@ -194,6 +195,7 @@
       "Thickness": 1.5,
       "CornerRadius": 0,
       "ArrowHead": "Simple",
+      "IsDashed": false,
       "FreeThickness": 3
     },
     {
@@ -206,6 +208,7 @@
       "Thickness": 1.5,
       "CornerRadius": 0,
       "ArrowHead": "Simple",
+      "IsDashed": false,
       "FreeThickness": 3
     }
   ],
