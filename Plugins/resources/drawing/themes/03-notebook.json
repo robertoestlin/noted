@@ -8,5 +8,6 @@
   "Thickness": 2,
   "CornerRadius": 10,
   "ArrowHead": "Simple",
+  "IsDashed": false,
   "FreeThickness": 5
 }

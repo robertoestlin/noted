@@ -563,8 +563,10 @@ internal sealed class ThemeToolStyle
     public string ArrowHead { get; set; } = "Simple";
     public double FreeThickness { get; set; } = 6;
 
-    /// <summary>Line-only: render the line with a dashed stroke when <c>true</c>. Ignored by all
-    /// other kinds; only the loose "line" object surfaces this in the property panel.</summary>
+    /// <summary>Render the stroke as dashed when <c>true</c>. Surfaced in the property panel as
+    /// the "Style" combo (Solid / Dashed) for the loose Line tool and for arrow variants (both
+    /// in the per-shape property panel and in the per-variant theme editor). Ignored by closed
+    /// shapes (rect/ellipse/diamond/domain/text/freehand), which don't expose a dash style.</summary>
     public bool IsDashed { get; set; }
 
     /// <summary>Per-variant custom default width in px. <c>0</c> means "no override" — fall back to
@@ -610,6 +612,7 @@ internal sealed class ThemeToolStyle
         CornerRadius = t.CornerRadius,
         ArrowHead = t.ArrowHead,
         FreeThickness = t.FreeThickness,
+        IsDashed = t.IsDashed,
     };
 }
 
@@ -660,6 +663,11 @@ internal sealed class DrawingTheme
     public double CornerRadius { get; set; } = 14;
     public string ArrowHead { get; set; } = "Simple";
     public double FreeThickness { get; set; } = 6;
+    /// <summary>Legacy top-level dashed flag, propagated to every variant by
+    /// <see cref="ThemeToolStyle.FromLegacyRoot"/>. Only arrow / line variants actually act on
+    /// it; closed shapes ignore it. Present here so flat-format theme JSONs (without explicit
+    /// variant lists) can declare Solid/Dashed alongside the existing top-level <c>ArrowHead</c>.</summary>
+    public bool IsDashed { get; set; }
 
     public void EnsureToolStyles()
     {
@@ -799,6 +807,7 @@ internal sealed class DrawingTheme
         Thickness = r.Thickness;
         CornerRadius = r.CornerRadius;
         ArrowHead = a.ArrowHead;
+        IsDashed = a.IsDashed;
         FreeThickness = f.FreeThickness;
     }
 
@@ -813,6 +822,7 @@ internal sealed class DrawingTheme
         Thickness = Thickness,
         CornerRadius = CornerRadius,
         ArrowHead = ArrowHead,
+        IsDashed = IsDashed,
         FreeThickness = FreeThickness,
         Rectangle = Rectangle?.Clone(),
         Ellipse = Ellipse?.Clone(),
@@ -3767,6 +3777,7 @@ internal sealed partial class DrawingWindow : Window
                     it.StrokeThickness = st.Thickness;
                     it.ArrowHead = ahParsed;
                     it.HorizontalLabelAngleDeg = ClampArrowHorizontalLabelAngle(st.HorizontalLabelAngleDeg);
+                    it.IsDashed = st.IsDashed;
                     break;
                 case "text":
                     it.TextColor = ParseBrush(st.TextColor);
@@ -8443,6 +8454,8 @@ internal sealed class ThemeSettingsWindow : Window
     {
         public CheckBox? Enabled;
         public ComboBox? Fill, Stroke, TextColor, Font, ArrowHead;
+        /// <summary>Arrow-only: Solid / Dashed combo driving <see cref="ThemeToolStyle.IsDashed"/>.</summary>
+        public ComboBox? DashStyle;
         public TextBox? FontSize, Thickness, Corner, FreeThickness;
         public TextBox? Width, Height;
         /// <summary>Arrow-only: tilt angle (deg) above which the label flips to horizontal.
@@ -8861,7 +8874,15 @@ internal sealed class ThemeSettingsWindow : Window
                 break;
             case "arrow":
                 BuildShapeFields(sp, ui, includeFill: false, includeText: true, includeCorner: false, kind, index);
-                sp.Children.Add(EditorLabel("Arrow head"));
+                // Style (Solid / Dashed) comes before Head style — same ordering as the per-shape
+                // property panel for arrows. Drives ThemeToolStyle.IsDashed for this variant.
+                sp.Children.Add(EditorLabel("Style"));
+                ui.DashStyle = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
+                ui.DashStyle.Items.Add("Solid");
+                ui.DashStyle.Items.Add("Dashed");
+                sp.Children.Add(ui.DashStyle);
+                ui.DashStyle.SelectionChanged += (_, _) => MutateVariant(kind, index, s => s.IsDashed = ui.DashStyle!.SelectedIndex == 1);
+                sp.Children.Add(EditorLabel("Head style"));
                 ui.ArrowHead = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
                 ui.ArrowHead.Items.Add("None");
                 ui.ArrowHead.Items.Add("Simple");
@@ -9224,6 +9245,8 @@ internal sealed class ThemeSettingsWindow : Window
             ui.ArrowHead.SelectedItem = style.ArrowHead;
             if (ui.ArrowHead.SelectedItem == null) ui.ArrowHead.SelectedIndex = 1;
         }
+        if (ui.DashStyle != null)
+            ui.DashStyle.SelectedIndex = style.IsDashed ? 1 : 0;
         if (ui.FreeThickness != null) ui.FreeThickness.Text = style.FreeThickness.ToString();
         if (ui.Width != null) ui.Width.Text = style.Width > 0 ? style.Width.ToString() : "";
         if (ui.Height != null) ui.Height.Text = style.Height > 0 ? style.Height.ToString() : "";

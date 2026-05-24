@@ -220,6 +220,7 @@
       "Thickness": 1.5,
       "CornerRadius": 6,
       "ArrowHead": "Simple",
+      "IsDashed": false,
       "FreeThickness": 3
     }
   ],
