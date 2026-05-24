@@ -33,6 +33,15 @@ public partial class MainWindow
     internal const int DefaultDrawingDiamondHeight = 120;
     internal const int DefaultDrawingDomainWidth = 240;
     internal const int DefaultDrawingDomainHeight = 160;
+    /// <summary>Default bounding box for the loose Actor shape. The figure renders inside the box
+    /// with a small label strip reserved underneath for the editable name (default "Actor").</summary>
+    internal const int DefaultDrawingActorWidth = 60;
+    internal const int DefaultDrawingActorHeight = 75;
+    /// <summary>Default bounding box for the loose Db (database / cylinder) shape. Inside this box
+    /// the cylinder is drawn with a top ellipse + body + bottom arc, and the label sits in the
+    /// lower part of the body (matching the standard MongoDB-style diagram glyph).</summary>
+    internal const int DefaultDrawingDbWidth = 90;
+    internal const int DefaultDrawingDbHeight = 115;
     internal const int DefaultDrawingShapeSizeSnapThresholdPx = 20;
     internal const int DefaultDrawingArrowClearanceMarginPx = 35;
     internal const int MinDrawingArrowClearanceMarginPx = 0;
@@ -74,6 +83,14 @@ public partial class MainWindow
             case "domain":
                 standardWidth = _drawingDefaultDomainWidth;
                 standardHeight = _drawingDefaultDomainHeight;
+                return;
+            case "actor":
+                standardWidth = DefaultDrawingActorWidth;
+                standardHeight = DefaultDrawingActorHeight;
+                return;
+            case "db":
+                standardWidth = DefaultDrawingDbWidth;
+                standardHeight = DefaultDrawingDbHeight;
                 return;
             default:
                 standardWidth = _drawingDefaultEllipseWidth;
@@ -1091,6 +1108,10 @@ internal static class DrawingDefaultSizesStore
 /// <c>{DrawingThemeStore.NotedDataDirectory}/drawing-loose-objects.json</c>.</summary>
 internal sealed class DrawingLooseObjectStyles
 {
+    /// <summary>Schema version. Bumped when seed defaults for built-in kinds change; on load,
+    /// entries from an older schema for kinds whose seed has been revised are dropped so the
+    /// next access reseeds from <c>ResolveLooseStyle</c>.</summary>
+    public int Version { get; set; }
     public ThemeToolStyle? Rect { get; set; }
     public ThemeToolStyle? Ellipse { get; set; }
     public ThemeToolStyle? Diamond { get; set; }
@@ -1102,6 +1123,12 @@ internal sealed class DrawingLooseObjectStyles
     /// of the theme system (no toolbar variants, no theme-settings tab); it lives only here so
     /// the All-objects icon can carry persistent defaults across sessions.</summary>
     public ThemeToolStyle? Line { get; set; }
+    /// <summary>Loose "actor" (stick-figure) style. Like line, not part of the theme system —
+    /// only an All-objects icon, persisted defaults live here.</summary>
+    public ThemeToolStyle? Actor { get; set; }
+    /// <summary>Loose "db" (cylinder) style. Like line/actor, loose-only with persistent
+    /// defaults stored here.</summary>
+    public ThemeToolStyle? Db { get; set; }
 
     public ThemeToolStyle? Get(string kind) => kind switch
     {
@@ -1113,6 +1140,8 @@ internal sealed class DrawingLooseObjectStyles
         "text" => Text,
         "freehand" => Freehand,
         "line" => Line,
+        "actor" => Actor,
+        "db" => Db,
         _ => null,
     };
 
@@ -1128,6 +1157,8 @@ internal sealed class DrawingLooseObjectStyles
             case "text": Text = style; break;
             case "freehand": Freehand = style; break;
             case "line": Line = style; break;
+            case "actor": Actor = style; break;
+            case "db": Db = style; break;
         }
     }
 }
@@ -1135,6 +1166,10 @@ internal sealed class DrawingLooseObjectStyles
 internal static class DrawingLooseObjectStylesStore
 {
     public const string FileName = "drawing-loose-objects.json";
+    /// <summary>Bumped when the built-in seed for a kind changes in a way that should override
+    /// any cached entry from an earlier build. <see cref="Load"/> drops the affected entries when
+    /// the loaded file's version is lower; new entries are then reseeded via <c>ResolveLooseStyle</c>.</summary>
+    public const int CurrentVersion = 2;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static string FilePath =>
@@ -1144,13 +1179,22 @@ internal static class DrawingLooseObjectStylesStore
     {
         try
         {
-            if (!File.Exists(FilePath)) return new DrawingLooseObjectStyles();
+            if (!File.Exists(FilePath)) return new DrawingLooseObjectStyles { Version = CurrentVersion };
             var loaded = JsonSerializer.Deserialize<DrawingLooseObjectStyles>(File.ReadAllText(FilePath));
-            return loaded ?? new DrawingLooseObjectStyles();
+            if (loaded == null) return new DrawingLooseObjectStyles { Version = CurrentVersion };
+            if (loaded.Version < 2)
+            {
+                // v2 changed the actor / db seeds (Helvetica font, db fill #00ed64); drop any
+                // cached entries so the next access reseeds with the current defaults.
+                loaded.Actor = null;
+                loaded.Db = null;
+            }
+            loaded.Version = CurrentVersion;
+            return loaded;
         }
         catch
         {
-            return new DrawingLooseObjectStyles();
+            return new DrawingLooseObjectStyles { Version = CurrentVersion };
         }
     }
 
@@ -1918,14 +1962,14 @@ internal sealed class DrawingEditContext
 
 internal sealed partial class DrawingWindow : Window
 {
-    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand, Domain, Line }
+    private enum Tool { Select, Rectangle, Ellipse, Diamond, Arrow, Text, Freehand, Domain, Line, Actor, Db }
 
     private enum ArrowHeadStyle { None, Simple, Double }
 
     private sealed class DrawItem
     {
         public int Id;
-        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand, domain, line
+        public string Kind = "rect"; // rect, ellipse, diamond, arrow, text, freehand, domain, line, actor, db
         public Point P1;
         public Point P2;
         public int? AnchorStartShapeId;
@@ -2820,6 +2864,8 @@ internal sealed partial class DrawingWindow : Window
         "text" => Tool.Text,
         "freehand" => Tool.Freehand,
         "line" => Tool.Line,
+        "actor" => Tool.Actor,
+        "db" => Tool.Db,
         _ => Tool.Rectangle,
     };
 
@@ -2833,6 +2879,8 @@ internal sealed partial class DrawingWindow : Window
         Tool.Text => "text",
         Tool.Freehand => "freehand",
         Tool.Line => "line",
+        Tool.Actor => "actor",
+        Tool.Db => "db",
         _ => "rect",
     };
 
@@ -2848,7 +2896,17 @@ internal sealed partial class DrawingWindow : Window
     private void ApplyToolProfileFromTheme(DrawingTheme theme, Tool profileTool)
     {
         theme.EnsureToolStyles();
-        var st = theme.GetActiveVariant(ToolToKind(profileTool));
+        // Loose-only kinds (Actor/Db/Line) have no theme variants. They're entered via the
+        // "All objects" panel which calls ApplyToolProfileFromStyle directly with a seeded
+        // loose style; if this method is hit for them anyway, seed from the loose store instead
+        // of falling through to Rectangles.
+        var kind = ToolToKind(profileTool);
+        if (kind is "actor" or "db" or "line")
+        {
+            ApplyToolProfileFromStyle(ResolveLooseStyle(kind));
+            return;
+        }
+        var st = theme.GetActiveVariant(kind);
         _fill = ParseBrush(st.Fill);
         _gradientFill = Brushes.Transparent;
         _hasShadow = false;
@@ -3074,7 +3132,7 @@ internal sealed partial class DrawingWindow : Window
             if (_fontFamilyCombo.SelectedItem is string s)
             {
                 _fontFamily = new FontFamily(s);
-                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow")
+                if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db")
                 {
                     PrimarySelection.FontFamily = _fontFamily;
                     Redraw();
@@ -3089,7 +3147,7 @@ internal sealed partial class DrawingWindow : Window
         _fontSizeBox = MakeNumberBox(_fontSize, FontSizeMin, FontSizeMax, v =>
         {
             _fontSize = v;
-            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow")
+            if (PrimarySelection != null && PrimarySelection.Kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db")
             {
                 PrimarySelection.FontSize = _fontSize;
                 Redraw();
@@ -3258,10 +3316,10 @@ internal sealed partial class DrawingWindow : Window
         var isFreehand = kind == "freehand";
         var isArrow = kind == "arrow";
         var isLine = kind == "line";
-        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain");
+        SetPropertySectionVisibility(_fillColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db");
         SetPropertySectionVisibility(_gradientColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "domain");
-        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain");
-        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
+        SetPropertySectionVisibility(_strokeColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db");
+        SetPropertySectionVisibility(_textColorRow, !isFreehand && !isArrow && !isLine && kind is "rect" or "ellipse" or "diamond" or "domain" or "text" or "actor" or "db");
         SetPropertySectionVisibility(_arrowColorRow, isArrow);
         SetPropertySectionVisibility(_lineColorRow, isLine);
         SetPropertySectionVisibility(_lineStyleHeader, isLine);
@@ -3271,10 +3329,10 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_freehandColorRow, isFreehand);
         SetPropertySectionVisibility(_cornerRadiusHeader, !isFreehand && !isArrow && !isLine && kind == "rect");
         SetPropertySectionVisibility(_cornerRadiusBox, !isFreehand && !isArrow && !isLine && kind == "rect");
-        SetPropertySectionVisibility(_fontHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
-        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow");
+        SetPropertySectionVisibility(_fontHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
+        SetPropertySectionVisibility(_fontFamilyCombo, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
+        SetPropertySectionVisibility(_fontSizeHeader, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
+        SetPropertySectionVisibility(_fontSizeBox, !isFreehand && !isLine && kind is "text" or "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "actor" or "db");
         SetPropertySectionVisibility(_arrowStyleHeader, isArrow);
         SetPropertySectionVisibility(_arrowHeadCombo, isArrow);
         // "Direct" + non-direct stub length are only meaningful for actual selected arrows; in
@@ -3286,7 +3344,7 @@ internal sealed partial class DrawingWindow : Window
         SetPropertySectionVisibility(_arrowMarginBox, hasNonDirectArrowSel);
         // Shadow lives on the item, not on theme styles; it's only meaningful with a real
         // selection. Hide it in loose-object edit mode.
-        SetPropertySectionVisibility(_shadowCheck, !isLoose && kind is "rect" or "ellipse" or "diamond" or "domain" or "text");
+        SetPropertySectionVisibility(_shadowCheck, !isLoose && kind is "rect" or "ellipse" or "diamond" or "domain" or "text" or "actor" or "db");
         RefreshSizeInfo(isLoose ? null : kind);
         // The per-shape variant gallery and the theme overview gallery cover the same ground; in
         // theme-overview / loose-edit mode we hide the per-shape variants section.
@@ -3348,7 +3406,7 @@ internal sealed partial class DrawingWindow : Window
             // "line" is intentionally not in the theme gallery (above) — it has no themed
             // variants — but it does show up here so users can grab a plain straight ruler / guide
             // line. Its persistent defaults live on DrawingLooseObjectStyles.Line.
-            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand", "line" })
+            foreach (var kind in new[] { "rect", "ellipse", "diamond", "domain", "arrow", "text", "freehand", "line", "actor", "db" })
             {
                 var capturedKind = kind;
                 var btn = new Button
@@ -3386,6 +3444,8 @@ internal sealed partial class DrawingWindow : Window
             "text" => BuildTextIcon(stroke),
             "freehand" => BuildFreeformIcon(stroke),
             "line" => BuildLineIcon(stroke),
+            "actor" => BuildActorIcon(stroke),
+            "db" => BuildDbIcon(stroke, fill),
             _ => BuildPointerIcon(),
         };
     }
@@ -3453,6 +3513,34 @@ internal sealed partial class DrawingWindow : Window
                 TextColor = "#000000",
                 Thickness = 2,
                 IsDashed = true,
+            };
+        }
+        else if (kind == "actor")
+        {
+            // Actor is loose-only (no theme variants). Black stick figure, transparent fill,
+            // 14pt Helvetica label centered below the figure.
+            seed = new ThemeToolStyle
+            {
+                Fill = "Transparent",
+                Stroke = "#000000",
+                TextColor = "#000000",
+                Thickness = 2,
+                FontSize = 14,
+                FontFamilyName = "Helvetica",
+            };
+        }
+        else if (kind == "db")
+        {
+            // Db cylinder, MongoDB-style green fill, 18pt Helvetica label sitting in the lower
+            // part of the body.
+            seed = new ThemeToolStyle
+            {
+                Fill = "#00ed64",
+                Stroke = "#000000",
+                TextColor = "#000000",
+                Thickness = 2,
+                FontSize = 18,
+                FontFamilyName = "Helvetica",
             };
         }
         else
@@ -3653,7 +3741,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void RefreshSizeInfo(string? kind)
     {
-        var showSize = kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line";
+        var showSize = kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line" or "actor" or "db";
         SetPropertySectionVisibility(_sizeHeader, showSize);
         SetPropertySectionVisibility(_sizeLine1, showSize);
         SetPropertySectionVisibility(_sizeLine2, showSize);
@@ -3712,6 +3800,8 @@ internal sealed partial class DrawingWindow : Window
                 break;
             }
             case "domain":
+            case "actor":
+            case "db":
             {
                 var b = GetBounds(item);
                 _sizeLine1.Text = $"Width: {Math.Round(b.Width):0} px";
@@ -3751,7 +3841,7 @@ internal sealed partial class DrawingWindow : Window
 
     private DrawItem? GetSizeDisplaySource(string? kind)
     {
-        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line"))
+        if (kind is not ("rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line" or "actor" or "db"))
             return null;
         if (_isDrawing && _drawingItem != null && _drawingItem.Kind == kind)
             return _drawingItem;
@@ -3956,9 +4046,9 @@ internal sealed partial class DrawingWindow : Window
 
     private void ApplyColorToSelectedCore(DrawItem sel)
     {
-        if (sel.Kind is "rect" or "ellipse" or "diamond" or "domain")
+        if (sel.Kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db")
         {
-            foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse" or "diamond" or "domain"))
+            foreach (var it in _selection.Where(i => i.Kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db"))
             {
                 it.Fill = _fill;
                 it.Stroke = _stroke;
@@ -4290,6 +4380,91 @@ internal sealed partial class DrawingWindow : Window
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+    }
+
+    /// <summary>Stick-figure icon for the "All objects" grid Actor entry. Drawn with a small head
+    /// circle, vertical torso, V-shaped legs, and outstretched arms — same visual idiom as a UML
+    /// actor.</summary>
+    private static FrameworkElement BuildActorIcon(Brush stroke)
+    {
+        var canvas = new Canvas
+        {
+            Width = 20,
+            Height = 20,
+            SnapsToDevicePixels = true,
+        };
+        // Head
+        var head = new System.Windows.Shapes.Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Stroke = stroke,
+            StrokeThickness = 1.4,
+            Fill = Brushes.Transparent,
+        };
+        Canvas.SetLeft(head, 7);
+        Canvas.SetTop(head, 1);
+        canvas.Children.Add(head);
+        // Torso + arms + legs as a single path so they share stroke settings.
+        var body = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 10,7 L 10,13 M 4,9 L 16,9 M 10,13 L 6,19 M 10,13 L 14,19"),
+            Stroke = stroke,
+            StrokeThickness = 1.4,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = null,
+        };
+        canvas.Children.Add(body);
+        return WrapIcon(canvas);
+    }
+
+    /// <summary>Cylinder icon for the "All objects" grid Db entry. Top ellipse + two vertical
+    /// sides + a half-ellipse for the visible bottom curve — the standard database glyph.</summary>
+    private static FrameworkElement BuildDbIcon(Brush stroke, Brush fill)
+    {
+        var canvas = new Canvas
+        {
+            Width = 20,
+            Height = 20,
+            SnapsToDevicePixels = true,
+        };
+        var paint = HasVisibleFill(fill) ? fill : Brushes.Transparent;
+        // Body — rectangle behind the curves provides the fill for the cylinder side.
+        var body = new System.Windows.Shapes.Rectangle
+        {
+            Width = 12,
+            Height = 9,
+            Fill = paint,
+            Stroke = null,
+        };
+        Canvas.SetLeft(body, 4);
+        Canvas.SetTop(body, 5.5);
+        canvas.Children.Add(body);
+        // Top ellipse
+        var top = new System.Windows.Shapes.Ellipse
+        {
+            Width = 12,
+            Height = 5,
+            Stroke = stroke,
+            StrokeThickness = 1.4,
+            Fill = paint,
+        };
+        Canvas.SetLeft(top, 4);
+        Canvas.SetTop(top, 3);
+        canvas.Children.Add(top);
+        // Sides + bottom arc (open at the top so the top ellipse remains visible above it).
+        var outline = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M 4,5.5 L 4,14.5 A 6,2.5 0 0 0 16,14.5 L 16,5.5"),
+            Stroke = stroke,
+            StrokeThickness = 1.4,
+            Fill = null,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+        };
+        canvas.Children.Add(outline);
+        return WrapIcon(canvas);
     }
 
     private static FrameworkElement WrapIcon(FrameworkElement inner)
@@ -4801,7 +4976,10 @@ internal sealed partial class DrawingWindow : Window
 
     private void ApplyDefaultSizeToShape(DrawItem item)
     {
-        _host.GetEffectiveDefaultSize(item.Kind, _activeTheme.GetActiveVariant(item.Kind),
+        // Loose-only kinds (actor/db) don't participate in themes; skip the variant lookup so the
+        // shape doesn't accidentally inherit a Width/Height from the rectangle fallback variant.
+        var variant = item.Kind is "actor" or "db" ? null : _activeTheme.GetActiveVariant(item.Kind);
+        _host.GetEffectiveDefaultSize(item.Kind, variant,
             out var stdW, out var stdH);
         var p1 = item.P1;
         var dx = item.P2.X - p1.X;
@@ -4818,7 +4996,7 @@ internal sealed partial class DrawingWindow : Window
     /// surprising offsets between an edge and a center.</summary>
     private void SnapDefaultSizedShapeToSiblings(DrawItem item)
     {
-        if (item.Kind is not ("rect" or "ellipse" or "diamond" or "domain")) return;
+        if (item.Kind is not ("rect" or "ellipse" or "diamond" or "domain" or "actor" or "db")) return;
 
         var others = new List<Rect>();
         foreach (var o in _items)
@@ -4879,7 +5057,7 @@ internal sealed partial class DrawingWindow : Window
 
     private void Canvas_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" or "diamond" or "domain" })
+        if (_isDrawing && _drawingItem is { Kind: "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db" })
         {
             CommitTextEdit();
             var item = _drawingItem;
@@ -4920,7 +5098,7 @@ internal sealed partial class DrawingWindow : Window
         if (e.ClickCount == 2)
         {
             var hitDbl = HitTestTop(p);
-            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "diamond" || hitDbl.Kind == "domain" || hitDbl.Kind == "text" || hitDbl.Kind == "arrow"))
+            if (hitDbl != null && (hitDbl.Kind == "rect" || hitDbl.Kind == "ellipse" || hitDbl.Kind == "diamond" || hitDbl.Kind == "domain" || hitDbl.Kind == "text" || hitDbl.Kind == "arrow" || hitDbl.Kind == "actor" || hitDbl.Kind == "db"))
             {
                 SetSingleSelection(hitDbl);
                 Redraw();
@@ -5111,6 +5289,27 @@ internal sealed partial class DrawingWindow : Window
                 StrokeThickness = Math.Max(1, _thickness),
                 IsDashed = _lineDashed,
             },
+            Tool.Actor => new DrawItem
+            {
+                Kind = "actor",
+                P1 = p, P2 = p,
+                Fill = _fill, Stroke = _stroke,
+                HasShadow = _hasShadow,
+                StrokeThickness = _thickness,
+                FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
+                // Default label so a click-out (zero-size release) commits a usable actor with
+                // a name underneath without the user needing to enter text-edit first.
+                Text = "Actor",
+            },
+            Tool.Db => new DrawItem
+            {
+                Kind = "db",
+                P1 = p, P2 = p,
+                Fill = _fill, Stroke = _stroke,
+                HasShadow = _hasShadow,
+                StrokeThickness = _thickness,
+                FontSize = _fontSize, FontFamily = _fontFamily, TextColor = _textColor,
+            },
             _ => null,
         };
 
@@ -5142,10 +5341,14 @@ internal sealed partial class DrawingWindow : Window
                 if (_drawingItem.Points.Count == 0 || (_drawingItem.Points[^1] - p).Length > 0.75)
                     _drawingItem.Points.Add(p);
             }
-            else if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain")
+            else if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db")
             {
-                _host.GetEffectiveDefaultSize(_drawingItem.Kind,
-                    _activeTheme.GetActiveVariant(_drawingItem.Kind),
+                // For actor/db (loose-only kinds without theme variants), pass null so the host
+                // skips theme overrides and falls back to the global default for that kind.
+                var variantForSnap = _drawingItem.Kind is "actor" or "db"
+                    ? null
+                    : _activeTheme.GetActiveVariant(_drawingItem.Kind);
+                _host.GetEffectiveDefaultSize(_drawingItem.Kind, variantForSnap,
                     out var stdW, out var stdH);
                 _drawingItem.P2 = DrawingShapeSizeSnap.SnapDragCorner(
                     _drawingItem.P1,
@@ -5181,7 +5384,7 @@ internal sealed partial class DrawingWindow : Window
             {
                 _drawingItem.P2 = p;
             }
-            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line")
+            if (_drawingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line" or "actor" or "db")
                 RefreshSizeInfo(_drawingItem.Kind);
             Redraw();
             return;
@@ -5246,7 +5449,7 @@ internal sealed partial class DrawingWindow : Window
                     TranslateItem(it, step.Dx, step.Dy);
                 _moveLast = p;
                 if (GetHomogeneousSelectionKind() is { } moveKind
-                    && moveKind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line")
+                    && moveKind is "rect" or "ellipse" or "diamond" or "domain" or "arrow" or "line" or "actor" or "db")
                 {
                     RefreshSizeInfo(moveKind);
                 }
@@ -5339,8 +5542,20 @@ internal sealed partial class DrawingWindow : Window
             // Use a length-based check for those kinds and the bbox check for everything else.
             if (_drawingItem.Kind is not ("freehand" or "arrow" or "line") && (b.Width < 3 || b.Height < 3))
             {
-                _items.Remove(_drawingItem);
-                _selection.Remove(_drawingItem);
+                if (_drawingItem.Kind == "actor")
+                {
+                    // Click-without-drag on Actor: snap to default size + nearby siblings instead
+                    // of discarding the item. The default "Actor" label is already on the item from
+                    // its construction in Canvas_MouseDown, so a single click drops a complete,
+                    // usable actor onto the canvas.
+                    ApplyDefaultSizeToShape(_drawingItem);
+                    SnapDefaultSizedShapeToSiblings(_drawingItem);
+                }
+                else
+                {
+                    _items.Remove(_drawingItem);
+                    _selection.Remove(_drawingItem);
+                }
             }
             else if (_drawingItem.Kind == "line")
             {
@@ -5479,6 +5694,8 @@ internal sealed partial class DrawingWindow : Window
             case "arrow":
             case "text":
             case "line":
+            case "actor":
+            case "db":
                 return new Rect(
                     Math.Min(it.P1.X, it.P2.X),
                     Math.Min(it.P1.Y, it.P2.Y),
@@ -5533,6 +5750,8 @@ internal sealed partial class DrawingWindow : Window
             case "diamond":
             case "domain":
             case "text":
+            case "actor":
+            case "db":
             {
                 var b = GetBounds(it);
                 b.Inflate(HitPadding, HitPadding);
@@ -5748,6 +5967,22 @@ internal sealed partial class DrawingWindow : Window
                 preservedEditor.Width = Math.Max(40, b.Width - 8);
                 preservedEditor.Height = titleHeight;
             }
+            else if (_editingItem.Kind == "actor")
+            {
+                var lr = GetActorLabelRect(b);
+                Canvas.SetLeft(preservedEditor, lr.Left);
+                Canvas.SetTop(preservedEditor, lr.Top);
+                preservedEditor.Width = Math.Max(20, lr.Width);
+                preservedEditor.Height = Math.Max(14, lr.Height);
+            }
+            else if (_editingItem.Kind == "db")
+            {
+                var br = GetDbBodyRect(b);
+                Canvas.SetLeft(preservedEditor, br.Left);
+                Canvas.SetTop(preservedEditor, br.Top);
+                preservedEditor.Width = Math.Max(20, br.Width);
+                preservedEditor.Height = Math.Max(14, br.Height);
+            }
             else if (_editingItem.Kind == "arrow")
             {
                 var path = GetArrowPathPoints(_editingItem);
@@ -5756,7 +5991,7 @@ internal sealed partial class DrawingWindow : Window
                 var (mid, angleDeg, _) = GetArrowPathMetrics(path);
                 LayoutArrowLabelElement(preservedEditor, mid, GetArrowLabelDisplayAngle(_editingItem, angleDeg), size);
             }
-            if (_editingItem.Kind is "rect" or "ellipse" or "diamond" or "domain")
+            if (_editingItem.Kind is "rect" or "ellipse" or "diamond" or "domain" or "actor" or "db")
                 ApplyShapeTextEditorChrome(preservedEditor, _editingItem);
             _canvas.Children.Add(preservedEditor);
         }
@@ -6113,6 +6348,16 @@ internal sealed partial class DrawingWindow : Window
                 surface.Children.Add(line);
                 break;
             }
+            case "actor":
+            {
+                RenderActor(it, surface);
+                break;
+            }
+            case "db":
+            {
+                RenderDb(it, surface);
+                break;
+            }
             case "text":
             {
                 if (string.IsNullOrEmpty(it.Text)) break;
@@ -6149,6 +6394,193 @@ internal sealed partial class DrawingWindow : Window
                 });
                 break;
             }
+        }
+    }
+
+    /// <summary>Inscribed rectangle (within the actor bounding box) where the editable label
+    /// sits. Reserved out of the bottom of the bounds — the stick figure occupies the rest.</summary>
+    private static Rect GetActorLabelRect(Rect b)
+    {
+        var labelHeight = Math.Min(Math.Max(b.Height * 0.22, 14), Math.Max(0, b.Height - 8));
+        return new Rect(b.Left + 2, b.Bottom - labelHeight, Math.Max(0, b.Width - 4), labelHeight);
+    }
+
+    /// <summary>Inscribed rectangle within the db bounding box where the editable label sits.
+    /// Reserved out of the LOWER half of the cylinder body — between the vertical midpoint of the
+    /// body section and the top of the bottom cap — so labels visually anchor to the bottom of
+    /// the cylinder (matching the MongoDB-style diagram glyph).</summary>
+    private static Rect GetDbBodyRect(Rect b)
+    {
+        var capHeight = Math.Min(b.Height * 0.18, Math.Max(8, b.Height / 4));
+        var topMid = b.Top + capHeight;
+        var bottomMid = b.Bottom - capHeight;
+        // Lower half of the body section. Anything above sits behind the top-cap front rim
+        // line, which would visually clip text; anything below would hit the bottom curve.
+        var lowerTop = topMid + (bottomMid - topMid) / 2;
+        return new Rect(b.Left + 4, lowerTop, Math.Max(0, b.Width - 8), Math.Max(0, bottomMid - lowerTop));
+    }
+
+    /// <summary>Renders a stick-figure actor inside <paramref name="it"/>'s bounds. The figure is
+    /// scaled to the bounding box: head ~22% of figure height (above the label strip), torso +
+    /// arms + legs scale proportionally. Label sits below the figure in
+    /// <see cref="GetActorLabelRect"/>.</summary>
+    private void RenderActor(DrawItem it, Canvas surface)
+    {
+        var b = GetBounds(it);
+        if (b.Width <= 0 || b.Height <= 0) return;
+
+        var labelRect = GetActorLabelRect(b);
+        var figureBottom = labelRect.Top - 2;
+        var figureHeight = Math.Max(8, figureBottom - b.Top);
+        var cx = b.Left + b.Width / 2;
+
+        // Head: diameter is ~30% of figure height, capped to the available width.
+        var headDiameter = Math.Min(Math.Min(figureHeight * 0.30, b.Width * 0.6), Math.Max(8, figureHeight));
+        var headTop = b.Top + 1;
+        var head = new System.Windows.Shapes.Ellipse
+        {
+            Width = headDiameter,
+            Height = headDiameter,
+            Stroke = it.Stroke,
+            StrokeThickness = it.StrokeThickness,
+            Fill = it.Fill,
+            IsHitTestVisible = false,
+        };
+        if (it.HasShadow) head.Effect = CreateShadowEffect();
+        Canvas.SetLeft(head, cx - headDiameter / 2);
+        Canvas.SetTop(head, headTop);
+        surface.Children.Add(head);
+
+        var neckY = headTop + headDiameter;
+        var crotchY = neckY + Math.Max(8, figureHeight * 0.42);
+        var armsY = neckY + Math.Max(4, figureHeight * 0.10);
+        var armSpan = Math.Min(b.Width * 0.85, figureHeight * 0.75);
+        var legSpan = Math.Min(b.Width * 0.70, figureHeight * 0.55);
+
+        var armsLeft = cx - armSpan / 2;
+        var armsRight = cx + armSpan / 2;
+        var feetLeft = cx - legSpan / 2;
+        var feetRight = cx + legSpan / 2;
+        var figureFootY = Math.Min(figureBottom, crotchY + Math.Max(8, figureHeight * 0.40));
+
+        var body = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(
+                $"M {cx.ToString(System.Globalization.CultureInfo.InvariantCulture)},{neckY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"L {cx.ToString(System.Globalization.CultureInfo.InvariantCulture)},{crotchY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"M {armsLeft.ToString(System.Globalization.CultureInfo.InvariantCulture)},{armsY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"L {armsRight.ToString(System.Globalization.CultureInfo.InvariantCulture)},{armsY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"M {cx.ToString(System.Globalization.CultureInfo.InvariantCulture)},{crotchY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"L {feetLeft.ToString(System.Globalization.CultureInfo.InvariantCulture)},{figureFootY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"M {cx.ToString(System.Globalization.CultureInfo.InvariantCulture)},{crotchY.ToString(System.Globalization.CultureInfo.InvariantCulture)} "
+                + $"L {feetRight.ToString(System.Globalization.CultureInfo.InvariantCulture)},{figureFootY.ToString(System.Globalization.CultureInfo.InvariantCulture)}"),
+            Stroke = it.Stroke,
+            StrokeThickness = it.StrokeThickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = null,
+            IsHitTestVisible = false,
+        };
+        if (it.HasShadow) body.Effect = CreateShadowEffect();
+        surface.Children.Add(body);
+
+        if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
+        {
+            var tb = new TextBlock
+            {
+                Text = it.Text,
+                FontSize = it.FontSize,
+                FontFamily = it.FontFamily,
+                Foreground = it.TextColor,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.NoWrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Width = Math.Max(0, labelRect.Width),
+                IsHitTestVisible = false,
+            };
+            tb.Measure(new Size(labelRect.Width, labelRect.Height));
+            var th = Math.Min(labelRect.Height, tb.DesiredSize.Height);
+            Canvas.SetLeft(tb, labelRect.Left);
+            Canvas.SetTop(tb, labelRect.Top + Math.Max(0, (labelRect.Height - th) / 2));
+            surface.Children.Add(tb);
+        }
+    }
+
+    /// <summary>Renders a database cylinder inside <paramref name="it"/>'s bounds. The fill
+    /// covers the entire visible cylinder silhouette (top cap + body + bottom bulge) in a single
+    /// closed path so the user's fill color paints the whole shape, not just the rectangular
+    /// body. A second stroked path on top draws the front rim of the top cap (the curved line
+    /// that makes the shape read as 3D). Text label is centered in
+    /// <see cref="GetDbBodyRect"/> — the lower half of the body section.</summary>
+    private void RenderDb(DrawItem it, Canvas surface)
+    {
+        var b = GetBounds(it);
+        if (b.Width <= 0 || b.Height <= 0) return;
+
+        var capHeight = Math.Min(b.Height * 0.18, Math.Max(8, b.Height / 4));
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var rx = b.Width / 2;
+        var ry = capHeight;
+        var topMid = b.Top + ry;        // y of the top-ellipse horizontal diameter (cap waist).
+        var bottomMid = b.Bottom - ry;  // y of the bottom-ellipse horizontal diameter.
+        var paint = HasVisibleFill(it.Fill) ? it.Fill : Brushes.Transparent;
+
+        // Silhouette: upper half of top ellipse + right side + lower half of bottom ellipse +
+        // left side, closed. Filling this paints the entire visible cylinder in one piece.
+        // SVG arc sweep flags (with screen y-down): sweep=1 = visually clockwise. The path
+        // walks clockwise — over the top, down the right, under the bottom, up the left.
+        var silhouette = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(
+                $"M {b.Left.ToString(inv)},{topMid.ToString(inv)} "
+                + $"A {rx.ToString(inv)},{ry.ToString(inv)} 0 0 1 {b.Right.ToString(inv)},{topMid.ToString(inv)} "
+                + $"L {b.Right.ToString(inv)},{bottomMid.ToString(inv)} "
+                + $"A {rx.ToString(inv)},{ry.ToString(inv)} 0 0 1 {b.Left.ToString(inv)},{bottomMid.ToString(inv)} "
+                + $"Z"),
+            Fill = paint,
+            Stroke = it.Stroke,
+            StrokeThickness = it.StrokeThickness,
+            StrokeLineJoin = PenLineJoin.Round,
+            IsHitTestVisible = false,
+        };
+        if (it.HasShadow) silhouette.Effect = CreateShadowEffect();
+        surface.Children.Add(silhouette);
+
+        // Front rim of the top cap — the visible curve where the top ellipse meets the body.
+        // Drawn on top of the fill with no fill of its own so the cylinder reads as 3D.
+        var capRim = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(
+                $"M {b.Left.ToString(inv)},{topMid.ToString(inv)} "
+                + $"A {rx.ToString(inv)},{ry.ToString(inv)} 0 0 0 {b.Right.ToString(inv)},{topMid.ToString(inv)}"),
+            Stroke = it.Stroke,
+            StrokeThickness = it.StrokeThickness,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            Fill = null,
+            IsHitTestVisible = false,
+        };
+        surface.Children.Add(capRim);
+
+        if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
+        {
+            var bodyRect = GetDbBodyRect(b);
+            var tb = new TextBlock
+            {
+                Text = it.Text,
+                FontSize = it.FontSize,
+                FontFamily = it.FontFamily,
+                Foreground = it.TextColor,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Width = Math.Max(0, bodyRect.Width),
+                IsHitTestVisible = false,
+            };
+            tb.Measure(new Size(bodyRect.Width, bodyRect.Height));
+            var th = tb.DesiredSize.Height;
+            Canvas.SetLeft(tb, bodyRect.Left);
+            Canvas.SetTop(tb, bodyRect.Top + Math.Max(0, (bodyRect.Height - th) / 2));
+            surface.Children.Add(tb);
         }
     }
 
@@ -6309,7 +6741,8 @@ internal sealed partial class DrawingWindow : Window
         _editingItem = it;
         var b = GetBounds(it);
         var isFreshTextItem = it.Kind == "text" && string.IsNullOrEmpty(it.Text);
-        var isShapeContainer = it.Kind == "rect" || it.Kind == "ellipse" || it.Kind == "diamond";
+        var isShapeContainer = it.Kind == "rect" || it.Kind == "ellipse" || it.Kind == "diamond"
+            || it.Kind == "actor" || it.Kind == "db";
         var isDomainTitle = it.Kind == "domain";
         var isArrowLabel = it.Kind == "arrow";
 
@@ -6386,6 +6819,24 @@ internal sealed partial class DrawingWindow : Window
             top = b.Top + DomainTitlePaddingTop;
             w = Math.Max(40, b.Width - 8);
             h = Math.Max(22, Math.Min(b.Height - 8, it.FontSize * 1.6));
+        }
+        else if (it.Kind == "actor")
+        {
+            // Actor label sits in the reserved strip beneath the stick figure.
+            var lr = GetActorLabelRect(b);
+            left = lr.Left;
+            top = lr.Top;
+            w = Math.Max(20, lr.Width);
+            h = Math.Max(14, lr.Height);
+        }
+        else if (it.Kind == "db")
+        {
+            // Db label sits centered in the cylinder body (between the top and bottom caps).
+            var br = GetDbBodyRect(b);
+            left = br.Left;
+            top = br.Top;
+            w = Math.Max(20, br.Width);
+            h = Math.Max(14, br.Height);
         }
         else if (isArrowLabel)
         {
@@ -6718,7 +7169,7 @@ internal sealed partial class DrawingWindow : Window
 
     /// <summary>Items whose text can be edited via the in-canvas text editor.</summary>
     private static bool IsTextEditableKind(string kind)
-        => kind is "rect" or "ellipse" or "diamond" or "domain" or "text" or "arrow";
+        => kind is "rect" or "ellipse" or "diamond" or "domain" or "text" or "arrow" or "actor" or "db";
 
     /// <summary>Find the next (or previous) draw item to jump to when Tab is pressed inside the
     /// text editor of <paramref name="current"/>. Preference order:
