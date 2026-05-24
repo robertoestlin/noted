@@ -1180,7 +1180,7 @@ internal static class DrawingLooseObjectStylesStore
     /// <summary>Bumped when the built-in seed for a kind changes in a way that should override
     /// any cached entry from an earlier build. <see cref="Load"/> drops the affected entries when
     /// the loaded file's version is lower; new entries are then reseeded via <c>ResolveLooseStyle</c>.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 5;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static string FilePath =>
@@ -1204,6 +1204,19 @@ internal static class DrawingLooseObjectStylesStore
             {
                 // v3 changed the db seed again (fill #46F473, font size 16). Drop the cached
                 // entry so the next access reseeds; actor was unchanged in this bump.
+                loaded.Db = null;
+            }
+            if (loaded.Version < 4)
+            {
+                // v4 retuned the db fill to #D5E8D4 (pastel green matching the diagrams-improved
+                // theme palette). Drop the cached entry so the next access reseeds.
+                loaded.Db = null;
+            }
+            if (loaded.Version < 5)
+            {
+                // v5 retuned the db fill again to #C2FAD0 — keeps the spring-green hue of the
+                // user's original #46F473 but at the palette's pastel lightness. Drop the
+                // cached entry so the next access reseeds.
                 loaded.Db = null;
             }
             loaded.Version = CurrentVersion;
@@ -3628,11 +3641,15 @@ internal sealed partial class DrawingWindow : Window
         }
         else if (kind == "db")
         {
-            // Db cylinder, MongoDB-style green fill, 16pt Helvetica label sitting in the lower
+            // Db cylinder. Fill keeps the original spring-green hue of #46F473 (HSL h≈135°)
+            // but lifts the lightness to ~87% and trims saturation to ~85% — the same pastel
+            // band as the diagrams-improved palette family (#DAE8FC blue, #FFF2CC yellow,
+            // #B0E3E6 cyan), so the green still reads as the user's chosen tone but slots in
+            // visually with the rest of the theme. 16pt Helvetica label sits in the lower
             // part of the body.
             seed = new ThemeToolStyle
             {
-                Fill = "#46F473",
+                Fill = "#C2FAD0",
                 Stroke = "#000000",
                 TextColor = "#000000",
                 Thickness = 2,

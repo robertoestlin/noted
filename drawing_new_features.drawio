@@ -102,6 +102,12 @@
         <mxCell id="WZCapQaakk82NMq8D53a-4" value="Actor" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
           <mxGeometry x="80" y="315" width="30" height="60" as="geometry" />
         </mxCell>
+        <mxCell id="WZCapQaakk82NMq8D53a-5" value="System A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6a00ff;fontColor=#ffffff;strokeColor=#3700CC;" vertex="1" parent="1">
+          <mxGeometry x="410" y="445" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="WZCapQaakk82NMq8D53a-6" value="Cloud" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="480" width="120" height="80" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
