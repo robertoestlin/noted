@@ -98,7 +98,35 @@ internal sealed partial class DrawingWindow
         if (b.Width < 1 || b.Height < 1)
             return Array.Empty<Point>();
 
-        if (shape.Kind is "rect" or "domain" or "actor" or "db")
+        if (shape.Kind == "actor")
+        {
+            // Actor side-middle anchors land near the body's vertical centreline (just outside
+            // the head circle) instead of the far-away bbox left/right, so an incoming arrow
+            // visually connects to the figure rather than to empty space beside it. The
+            // vertical position of those anchors is left at the bbox middle on purpose — the
+            // user prefers the original Y so horizontal arrows still hit the actor where they
+            // always did. Top/bottom and corner anchors keep their bbox positions; that
+            // matches the look the user had before this tweak.
+            var labelHeight = Math.Min(Math.Max(b.Height * 0.22, 14), Math.Max(0, b.Height - 8));
+            var figureH = Math.Max(8, b.Height - labelHeight - 2);
+            var headDiameter = Math.Min(Math.Min(figureH * 0.30, b.Width * 0.6), Math.Max(8, figureH));
+            var headRadius = headDiameter / 2;
+            var cx = b.Left + b.Width / 2;
+            var cy = b.Top + b.Height / 2;
+            return new[]
+            {
+                new Point(b.Left, b.Top),
+                new Point(cx, b.Top),
+                new Point(b.Right, b.Top),
+                new Point(cx + headRadius, cy),
+                new Point(b.Right, b.Bottom),
+                new Point(cx, b.Bottom),
+                new Point(b.Left, b.Bottom),
+                new Point(cx - headRadius, cy),
+            };
+        }
+
+        if (shape.Kind is "rect" or "domain" or "db")
         {
             var cx = b.Left + b.Width / 2;
             var cy = b.Top + b.Height / 2;

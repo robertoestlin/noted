@@ -2246,8 +2246,12 @@ internal sealed partial class DrawingWindow : Window
 
     private const double HandleSize = 8;
     private const double HitPadding = 6;
-    private const double CanvasWidth = 2000;
-    private const double CanvasHeight = 1400;
+    /// <summary>Minimum drawable canvas size. The canvas grows beyond these dimensions to always
+    /// fill the surrounding <see cref="ScrollViewer"/>'s viewport so the user never sees a
+    /// non-drawable white margin around the grid; below the viewport, scrollbars take over and
+    /// the canvas stays at this minimum.</summary>
+    private const double MinCanvasWidth = 2000;
+    private const double MinCanvasHeight = 1400;
     private const double InsertPaddingPx = 20;
     private const double EllipseInscribedFactor = 0.70710678118654752;
     /// <summary>An axis-aligned rectangle of half-width/half-height centered inside a diamond
@@ -2392,7 +2396,7 @@ internal sealed partial class DrawingWindow : Window
         {
             Content = "\u25A6", // ▦ box with horizontal rule (closest plain grid glyph)
             FontSize = 16,
-            ToolTip = "Toggle background grid (editor only — never rendered into the saved PNG)",
+            ToolTip = "Toggle background grid (G) — editor only, never rendered into the saved PNG",
             Padding = new Thickness(8, 2, 8, 2),
             Margin = new Thickness(3, 3, 3, 3),
             MinWidth = 36,
@@ -2460,15 +2464,15 @@ internal sealed partial class DrawingWindow : Window
         _canvas = new Canvas
         {
             Background = Brushes.White,
-            Width = CanvasWidth,
-            Height = CanvasHeight,
+            Width = MinCanvasWidth,
+            Height = MinCanvasHeight,
             ClipToBounds = true,
         };
         _overlay = new Canvas
         {
             Background = null,
-            Width = CanvasWidth,
-            Height = CanvasHeight,
+            Width = MinCanvasWidth,
+            Height = MinCanvasHeight,
             IsHitTestVisible = false,
         };
         canvasHost.Children.Add(_canvas);
@@ -2490,6 +2494,12 @@ internal sealed partial class DrawingWindow : Window
         scroll.PreviewMouseMove += CanvasScroll_PreviewMouseMove;
         scroll.PreviewMouseUp += CanvasScroll_PreviewMouseUp;
         scroll.LostMouseCapture += (_, _) => _isPanning = false;
+        // Resize the drawable canvas to always fill the viewport. Without this, when the
+        // window is wider/taller than MinCanvasWidth/Height (e.g. after SizeWindowToFitItems
+        // or maximize) the user sees a non-drawable white margin around the grid where the
+        // ScrollViewer's background shows through.
+        scroll.SizeChanged += (_, _) => UpdateCanvasSizeForViewport();
+        scroll.Loaded += (_, _) => UpdateCanvasSizeForViewport();
 
         PreviewKeyDown += DrawingWindow_PreviewKeyDown;
 
@@ -4814,6 +4824,10 @@ internal sealed partial class DrawingWindow : Window
             case Key.A: SelectTool(Tool.Arrow); e.Handled = true; break;
             case Key.T: SelectTool(Tool.Text); e.Handled = true; break;
             case Key.F: SelectTool(Tool.Freehand); e.Handled = true; break;
+            case Key.G:
+                SetGridVisible(!_gridVisible);
+                e.Handled = true;
+                break;
             case Key.V:
                 TogglePropertiesPanel();
                 e.Handled = true;
@@ -5135,14 +5149,14 @@ internal sealed partial class DrawingWindow : Window
         foreach (var o in _items)
         {
             if (ReferenceEquals(o, item)) continue;
-            var b = GetBounds(o);
+            var b = GetAlignmentBounds(o);
             if (b.Width > 0.5 || b.Height > 0.5)
                 others.Add(b);
         }
         if (others.Count == 0) return;
 
         double threshold = _host.DrawingShapeSizeSnapThresholdPx;
-        var bounds = GetBounds(item);
+        var bounds = GetAlignmentBounds(item);
 
         var dy = FindAxisAlignDelta(bounds, others, vertical: true, threshold);
         if (dy.HasValue)
@@ -5571,9 +5585,9 @@ internal sealed partial class DrawingWindow : Window
                     SnapshotForUndo();
                     _pendingUndoForGesture = false;
                 }
-                var moving = GetSelectionBounds();
+                var moving = GetSelectionAlignmentBounds();
                 var selected = GetSelectionMembers().ToHashSet();
-                var others = _items.Where(i => !selected.Contains(i)).Select(GetBounds).ToList();
+                var others = _items.Where(i => !selected.Contains(i)).Select(GetAlignmentBounds).ToList();
                 var step = DrawingSnapGuides.StickyStep(dx, dy, _snapHeldDx, _snapHeldDy, moving, others);
                 _snapHeldDx = step.NextHeldDx;
                 _snapHeldDy = step.NextHeldDy;
@@ -5847,6 +5861,24 @@ internal sealed partial class DrawingWindow : Window
                     : geomBounds;
         }
         return Rect.Empty;
+    }
+
+    /// <summary>Bounding rectangle used for alignment / centering snapping. For most shapes this
+    /// is the same as <see cref="GetBounds"/>, but for an actor the label strip at the bottom is
+    /// stripped so the rect's vertical centre matches the figure's visible middle (rather than
+    /// being pulled below it by the label) and top/bottom land on the head and the feet rather
+    /// than on the bbox edges that include the label.</summary>
+    private static Rect GetAlignmentBounds(DrawItem it)
+    {
+        var b = GetBounds(it);
+        if (it.Kind == "actor" && b.Height > 0)
+        {
+            var labelHeight = Math.Min(Math.Max(b.Height * 0.22, 14), Math.Max(0, b.Height - 8));
+            var figureH = Math.Max(0, b.Height - labelHeight - 2);
+            if (figureH > 0)
+                return new Rect(b.Left, b.Top, b.Width, figureH);
+        }
+        return b;
     }
 
     private static void TranslateItem(DrawItem it, double dx, double dy)
@@ -6162,7 +6194,15 @@ internal sealed partial class DrawingWindow : Window
         }
     }
 
-    private Rect GetSelectionBounds()
+    private Rect GetSelectionBounds() => UnionSelectionBounds(GetBounds);
+
+    /// <summary>Selection bounds for alignment / centering snapping. Differs from
+    /// <see cref="GetSelectionBounds"/> only in that actor items contribute their figure rect
+    /// (excluding the label strip) so a multi-shape selection's centre tracks the visible
+    /// middle of any included actors.</summary>
+    private Rect GetSelectionAlignmentBounds() => UnionSelectionBounds(GetAlignmentBounds);
+
+    private Rect UnionSelectionBounds(Func<DrawItem, Rect> rectFor)
     {
         var first = true;
         var left = 0d;
@@ -6171,7 +6211,7 @@ internal sealed partial class DrawingWindow : Window
         var bottom = 0d;
         foreach (var it in GetSelectionMembers())
         {
-            var b = GetBounds(it);
+            var b = rectFor(it);
             if (b.Width <= 0 && b.Height <= 0) continue;
             if (first)
             {
@@ -6628,6 +6668,10 @@ internal sealed partial class DrawingWindow : Window
 
         if (!string.IsNullOrEmpty(it.Text) && !ReferenceEquals(it, _editingItem))
         {
+            // Let the actor name render at its natural width and overflow the bounding box if
+            // necessary so long names aren't truncated. The label is then centered horizontally
+            // around the figure's vertical axis (cx) so widening the text grows symmetrically
+            // outward from under the figure.
             var tb = new TextBlock
             {
                 Text = it.Text,
@@ -6636,13 +6680,13 @@ internal sealed partial class DrawingWindow : Window
                 Foreground = it.TextColor,
                 TextAlignment = TextAlignment.Center,
                 TextWrapping = TextWrapping.NoWrap,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Width = Math.Max(0, labelRect.Width),
                 IsHitTestVisible = false,
             };
-            tb.Measure(new Size(labelRect.Width, labelRect.Height));
+            tb.Measure(new Size(double.PositiveInfinity, labelRect.Height));
+            var tw = Math.Max(labelRect.Width, tb.DesiredSize.Width);
             var th = Math.Min(labelRect.Height, tb.DesiredSize.Height);
-            Canvas.SetLeft(tb, labelRect.Left);
+            tb.Width = tw;
+            Canvas.SetLeft(tb, cx - tw / 2);
             Canvas.SetTop(tb, labelRect.Top + Math.Max(0, (labelRect.Height - th) / 2));
             surface.Children.Add(tb);
         }
@@ -7726,6 +7770,34 @@ internal sealed partial class DrawingWindow : Window
 
         Width = desiredW;
         Height = desiredH;
+    }
+
+    /// <summary>Stretches the drawing canvas (and overlay) to at least the size of the
+    /// surrounding <see cref="ScrollViewer"/>'s viewport, so the user never sees a non-drawable
+    /// white margin between the canvas and the scroll viewer's edge. Falls back to
+    /// <see cref="MinCanvasWidth"/>/<see cref="MinCanvasHeight"/> when the viewport is smaller —
+    /// scrollbars then take over as before.</summary>
+    private void UpdateCanvasSizeForViewport()
+    {
+        if (_canvasScroll == null) return;
+
+        var viewportW = _canvasScroll.ViewportWidth;
+        var viewportH = _canvasScroll.ViewportHeight;
+        if (viewportW <= 0 || viewportH <= 0) return;
+
+        var newW = Math.Max(MinCanvasWidth, viewportW);
+        var newH = Math.Max(MinCanvasHeight, viewportH);
+
+        if (Math.Abs(_canvas.Width - newW) > 0.5)
+        {
+            _canvas.Width = newW;
+            _overlay.Width = newW;
+        }
+        if (Math.Abs(_canvas.Height - newH) > 0.5)
+        {
+            _canvas.Height = newH;
+            _overlay.Height = newH;
+        }
     }
 
     private void LoadWorkspace(DrawingWorkspaceDto workspace)

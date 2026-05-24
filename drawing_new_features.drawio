@@ -45,23 +45,35 @@
         <mxCell id="IoMFr63Kf6SbIUUsfnmx-31" value="97D077" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" parent="1" vertex="1">
           <mxGeometry x="810" y="830" width="60" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-6" value="Cloud" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-6" value="Cloud" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="650" y="480" width="120" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-8" value="DAE8FC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;shadow=0;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-8" value="DAE8FC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;shadow=0;" parent="1" vertex="1">
           <mxGeometry x="200" y="180" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-9" value="F5F5F5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcc99;strokeColor=#36393d;shadow=0;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-9" value="F5F5F5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffcc99;strokeColor=#36393d;shadow=0;" parent="1" vertex="1">
           <mxGeometry x="410" y="60" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-10" value="F5F5F5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;shadow=0;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-10" value="F5F5F5" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;shadow=0;" parent="1" vertex="1">
           <mxGeometry x="410" y="180" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-11" value="D5E8D4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-11" value="D5E8D4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
           <mxGeometry x="200" y="60" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="WZCapQaakk82NMq8D53a-12" value="B0E3E6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+        <mxCell id="WZCapQaakk82NMq8D53a-12" value="B0E3E6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
           <mxGeometry x="670" y="60" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hTucFAYOrcJwr4jNZDlt-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="hTucFAYOrcJwr4jNZDlt-1" target="hTucFAYOrcJwr4jNZDlt-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="hTucFAYOrcJwr4jNZDlt-1" value="Actor" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="960" y="400" width="30" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hTucFAYOrcJwr4jNZDlt-2" value="D5E8D4" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1215" y="400" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hTucFAYOrcJwr4jNZDlt-4" value="Actor" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="590" width="30" height="60" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
