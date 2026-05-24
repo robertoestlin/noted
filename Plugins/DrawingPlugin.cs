@@ -1180,7 +1180,7 @@ internal static class DrawingLooseObjectStylesStore
     /// <summary>Bumped when the built-in seed for a kind changes in a way that should override
     /// any cached entry from an earlier build. <see cref="Load"/> drops the affected entries when
     /// the loaded file's version is lower; new entries are then reseeded via <c>ResolveLooseStyle</c>.</summary>
-    public const int CurrentVersion = 5;
+    public const int CurrentVersion = 6;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static string FilePath =>
@@ -1217,6 +1217,12 @@ internal static class DrawingLooseObjectStylesStore
                 // v5 retuned the db fill again to #C2FAD0 — keeps the spring-green hue of the
                 // user's original #46F473 but at the palette's pastel lightness. Drop the
                 // cached entry so the next access reseeds.
+                loaded.Db = null;
+            }
+            if (loaded.Version < 6)
+            {
+                // v6 retuned the db fill again to #9AFAB5. Drop the cached entry so the next
+                // access reseeds.
                 loaded.Db = null;
             }
             loaded.Version = CurrentVersion;
@@ -3641,15 +3647,12 @@ internal sealed partial class DrawingWindow : Window
         }
         else if (kind == "db")
         {
-            // Db cylinder. Fill keeps the original spring-green hue of #46F473 (HSL h≈135°)
-            // but lifts the lightness to ~87% and trims saturation to ~85% — the same pastel
-            // band as the diagrams-improved palette family (#DAE8FC blue, #FFF2CC yellow,
-            // #B0E3E6 cyan), so the green still reads as the user's chosen tone but slots in
-            // visually with the rest of the theme. 16pt Helvetica label sits in the lower
-            // part of the body.
+            // Db cylinder, spring-green fill (#9AFAB5) — same hue family as the diagrams-improved
+            // palette but a touch more vibrant. 16pt Helvetica label sits in the lower part of
+            // the body.
             seed = new ThemeToolStyle
             {
-                Fill = "#C2FAD0",
+                Fill = "#9AFAB5",
                 Stroke = "#000000",
                 TextColor = "#000000",
                 Thickness = 2,
